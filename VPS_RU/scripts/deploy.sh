@@ -155,9 +155,9 @@ echo "[Deploy] ✅ Health-check ок — новая версия работае�
 #     поэтому ложного уведомления при неудаче не будет.
 mkdir -p "$NODE_DIR/volumes/flags" && date +%s > "$NODE_DIR/volumes/flags/was_updating"
 
-# 7. Чистим старые неиспользуемые образы И кэш сборки, чтобы не забивать диск
-#    (build cache копится с каждой пересборкой — на маленьком диске DE это критично).
-docker image prune -f
-docker builder prune -f
+# 7. Полная очистка мусора после деплоя (как на DE): system prune -af сносит неиспользуемые
+#    образы (в т.ч. тегированные), build cache, остановленные контейнеры/сети.
+#    --volumes НЕ добавляем (данные проекта в bind-mount ./volumes).
+docker system prune -af
 
 echo "[Deploy] ✅ Обновление успешно завершено для ноды $(basename "$NODE_DIR")!"
