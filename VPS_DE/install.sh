@@ -47,20 +47,20 @@ SSH_PORT=${SSH_PORT:-22}
 if [ "$SSH_PORT" != "22" ]; then
     echo "🔧 Смена порта SSH на $SSH_PORT..."
     ufw allow $SSH_PORT/tcp
+    # Порт задаём в sshd_config и работаем через ОБЫЧНЫЙ sshd (не сокет-активацию).
+    # На Ubuntu 24.04 sshd часто запущен через ssh.socket — тогда порт берётся из сокета (22),
+    # sshd_config игнорируется, а после апдейта/ребута порт «слетает» на 22 (и ufw его не
+    # пускает → лок-аут). Поэтому глушим и МАСКИРУЕМ ssh.socket (чтобы апдейт не включил его
+    # обратно) и отдаём порт обычному sshd.service из sshd_config — порт задаётся ОДИН раз и
+    # держится всегда, без кастомных сокет-конфигов.
     sed -i "s/^#*Port .*/Port $SSH_PORT/" /etc/ssh/sshd_config
-    # Ubuntu 22.10+/24.04: OpenSSH обычно запускается через сокет-активацию (ssh.socket),
-    # и порт слушается из ListenStream сокета, а НЕ из sshd_config — тогда правка Port выше
-    # игнорируется, sshd остаётся на 22, и после ufw ты запираешь себя снаружи (порт открыт
-    # в фаерволе, но на нём никто не слушает). Явно переносим порт в drop-in сокета: пустой
-    # ListenStream= сбрасывает дефолтные 22, затем добавляем нужный порт.
-    if systemctl cat ssh.socket >/dev/null 2>&1; then
-        mkdir -p /etc/systemd/system/ssh.socket.d
-        printf '[Socket]\nListenStream=\nListenStream=%s\n' "$SSH_PORT" > /etc/systemd/system/ssh.socket.d/port.conf
-        systemctl daemon-reload
-        systemctl restart ssh.socket 2>/dev/null || true
-    fi
-    systemctl restart ssh || systemctl restart sshd
-    echo "✅ Порт SSH успешно изменен на $SSH_PORT!"
+    rm -f /etc/systemd/system/ssh.socket.d/port.conf 2>/dev/null   # старый drop-in — источник конфликта
+    systemctl disable --now ssh.socket 2>/dev/null || true
+    systemctl mask ssh.socket 2>/dev/null || true
+    systemctl daemon-reload 2>/dev/null || true
+    systemctl enable ssh 2>/dev/null || systemctl enable sshd 2>/dev/null || true
+    systemctl restart ssh 2>/dev/null || systemctl restart sshd 2>/dev/null || true
+    echo "✅ Порт SSH → $SSH_PORT (обычный sshd, из sshd_config — не слетит после апдейтов)."
 else
     echo "⚠️ Порт SSH оставлен стандартным (22). Включаем защиту..."
     ufw limit 22/tcp

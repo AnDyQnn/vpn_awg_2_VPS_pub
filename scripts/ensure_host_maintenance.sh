@@ -25,6 +25,17 @@ APT::Periodic::Update-Package-Lists "1";
 APT::Periodic::Unattended-Upgrade "1";
 APT::Periodic::AutocleanInterval "7";
 EOF
+# Авто-обновления — ТОЛЬКО security-патчи и БЕЗ авто-ребута (чтобы обновления не ломали
+# VPN-стек и нода сама не уходила в перезагрузку). Крупные апгрейды всех пакетов делаются
+# только вручную (apt upgrade), автоматика их не трогает.
+cat > /etc/apt/apt.conf.d/52vpn-unattended <<'EOF'
+Unattended-Upgrade::Allowed-Origins {
+    "${distro_id}:${distro_codename}-security";
+    "${distro_id}ESMApps:${distro_codename}-apps-security";
+    "${distro_id}ESM:${distro_codename}-infra-security";
+};
+Unattended-Upgrade::Automatic-Reboot "false";
+EOF
 
 # 2. Переносим таймеры apt на ночь (пустой OnCalendar= сбрасывает вендорный дефолт).
 #    apt-daily — обновление списков + скачивание (~02:30); apt-daily-upgrade — установка (~03:00).
@@ -80,26 +91,7 @@ Persistent=true
 WantedBy=timers.target
 EOF
 
-# 5. SSH-порт: закрепляем в ssh.socket, чтобы он НЕ слетал на 22 после апгрейда openssh/ребута.
-#    На Ubuntu 24.04 sshd часто запущен через сокет-активацию — порт берётся из ListenStream
-#    сокета, а НЕ из sshd_config. Если кастомный порт был задан только в sshd_config, апгрейд
-#    openssh/ребут возвращает 22 (а ufw их не пускает → SSH снаружи пропадает). Пиним порт в
-#    drop-in сокета (пользовательский конфиг, апгрейды его не трогают). Желаемый порт берём из
-#    уже существующего drop-in (источник правды), иначе из sshd_config; на 22 НИКОГДА не откатываем.
-if systemctl cat ssh.socket >/dev/null 2>&1; then
-    _sd=/etc/systemd/system/ssh.socket.d/port.conf
-    _port=$(grep -oE 'ListenStream=[0-9]+' "$_sd" 2>/dev/null | grep -oE '[0-9]+' | tail -1)
-    [ -z "$_port" ] && _port=$(grep -oiE '^[[:space:]]*Port[[:space:]]+[0-9]+' /etc/ssh/sshd_config 2>/dev/null | grep -oE '[0-9]+' | head -1)
-    if [ -n "$_port" ] && [ "$_port" != "22" ] && ! grep -qE "^ListenStream=$_port\$" "$_sd" 2>/dev/null; then
-        mkdir -p /etc/systemd/system/ssh.socket.d
-        printf '[Socket]\nListenStream=\nListenStream=%s\n' "$_port" > "$_sd"
-        systemctl daemon-reload 2>/dev/null || true
-        systemctl restart ssh.socket 2>/dev/null || true
-        echo "[maintenance] SSH-порт $_port закреплён в ssh.socket (не слетит после апдейтов/ребута)."
-    fi
-fi
-
-# 6. Применяем всё.
+# 5. Применяем всё. (SSH-порт закрепляется в install.sh обычным sshd — здесь не трогаем.)
 systemctl daemon-reload 2>/dev/null || true
 systemctl restart apt-daily.timer apt-daily-upgrade.timer 2>/dev/null || true
 systemctl restart systemd-journald 2>/dev/null || true
