@@ -129,6 +129,50 @@ FLAP_MAX_DISTINCT = 3      # ...при этом всего <= стольких �
 # не раздуло AllowedIPs/QR (если сервис рассеян по многим IP — зовём админа вручную).
 MAX_CIDRS_PER_DOMAIN = 10
 
+# ------------------------ АЛЕРТЫ АДМИНУ (+ авто-очистка в 00:00) ------------------------
+async def notify_admin(app, text, **kw):
+    """Шлёт алерт админу И запоминает message_id, чтобы в 00:00 их автоматически удалить из
+    чата (не засорять). Возвращает объект сообщения (или None). chat_id передаём позиционно,
+    чтобы этот helper не попал под массовую замену вызовов."""
+    if not ADMIN_ID:
+        return None
+    try:
+        msg = await app.bot.send_message(ADMIN_ID, text, **kw)
+    except Exception:
+        return None
+    try:
+        cur = await db.get_setting("admin_alert_msgs") or ""
+        ids = [x for x in cur.split(",") if x.strip()]
+        ids.append(str(msg.message_id))
+        await db.set_setting("admin_alert_msgs", ",".join(ids[-1000:]))  # кэп на всякий
+    except Exception:
+        pass
+    return msg
+
+async def midnight_alert_cleanup_loop(app):
+    """В 00:00 МСК удаляет из чата админа все алерты, накопившиеся за сутки (если он их сам
+    не удалил). Telegram позволяет ботам удалять свои сообщения не старше 48ч — суточные
+    удаляются нормально."""
+    while True:
+        now_msk = get_moscow_now()
+        if now_msk.hour == 0 and now_msk.minute < 5:
+            today = now_msk.strftime("%Y-%m-%d")
+            try:
+                if await db.get_setting("last_alert_cleanup") != today:
+                    await db.set_setting("last_alert_cleanup", today)
+                    cur = await db.get_setting("admin_alert_msgs") or ""
+                    for mid in [x for x in cur.split(",") if x.strip()]:
+                        try:
+                            await app.bot.delete_message(ADMIN_ID, int(mid))
+                        except Exception:
+                            pass
+                    await db.set_setting("admin_alert_msgs", "")
+            except Exception as e:
+                print(f"midnight_alert_cleanup error: {e}")
+            await asyncio.sleep(300)
+        else:
+            await asyncio.sleep(120)
+
 # ------------------------ DASHBOARD ------------------------
 async def get_dashboard():
     cpu_ru = psutil.cpu_percent()
@@ -228,7 +272,7 @@ async def resource_monitor_loop(app):
 
         if alerts and ADMIN_ID:
             msg = "⚠️ **Критическая нагрузка на систему!**\n\n" + "\n".join(alerts)
-            try: await app.bot.send_message(chat_id=ADMIN_ID, text=msg, parse_mode="Markdown")
+            try: await notify_admin(app, text=msg, parse_mode="Markdown")
             except: pass
 
 # ------------------------ MONITOR & ANTI-SHARING ------------------------
@@ -246,7 +290,7 @@ async def alert_loop(app):
                 wg_is_down = False
                 if ADMIN_ID:
                     kb_admin = InlineKeyboardMarkup([[InlineKeyboardButton("🛡 В админку", callback_data="back_to_main")]])
-                    await app.bot.send_message(chat_id=ADMIN_ID, text="✅ VPN-сервер снова в сети.", reply_markup=kb_admin)
+                    await notify_admin(app, text="✅ VPN-сервер снова в сети.", reply_markup=kb_admin)
                     await db.log_event("System", "VPN Server is back online.")
 
             now = int(time.time())
@@ -280,14 +324,14 @@ async def alert_loop(app):
                             if pubkey not in ghost_cache or (now - ghost_cache[pubkey] > 3600):
                                 ghost_cache[pubkey] = now
                                 msg = f"🚨 **Несанкционированный доступ!**\n\nНеизвестный ключ (Призрак) попытался подключиться.\n📱 IP: `{endpoint}`\n🔑 PubKey: `{pubkey}`\n\n🛡 Сессия принудительно разорвана."
-                                if ADMIN_ID: await app.bot.send_message(chat_id=ADMIN_ID, text=msg, parse_mode="Markdown")
+                                if ADMIN_ID: await notify_admin(app, text=msg, parse_mode="Markdown")
                                 await db.log_event("Security", f"Killed ghost connection from {endpoint}")
                         elif is_paused_violation:
                             if uuid_val not in paused_cache or (now - paused_cache[uuid_val] > 3600):
                                 paused_cache[uuid_val] = now
                                 u_name = escape_md(users_dict[uuid_val]['name'])
                                 msg = f"🛡 **Блокировка доступа!**\n\nОтключенный пользователь **{u_name}** попытался подключиться.\n📱 IP: `{endpoint}`\n\n⛔️ Доступ отклонен."
-                                if ADMIN_ID: await app.bot.send_message(chat_id=ADMIN_ID, text=msg, parse_mode="Markdown")
+                                if ADMIN_ID: await notify_admin(app, text=msg, parse_mode="Markdown")
                                 await db.log_event("Security", f"Blocked access for paused user {users_dict[uuid_val]['name']}")
                     continue
 
@@ -322,7 +366,7 @@ async def alert_loop(app):
                                 if ADMIN_ID:
                                     safe_name = escape_md(user['name'])
                                     alert_msg = f"🚨 **КЛЮЧ СКОМПРОМЕТИРОВАН!**\n\n👤 Пользователь: **{safe_name}**\n🔄 Устойчивое переключение между {distinct_ips} адресами ({len(events)} смен за 5 мин) — похоже на одновременное использование на нескольких устройствах.\n⛔️ **Ключ заморожен.**"
-                                    await app.bot.send_message(chat_id=ADMIN_ID, text=alert_msg, parse_mode="Markdown")
+                                    await notify_admin(app, text=alert_msg, parse_mode="Markdown")
 
                                 tg_ids = user.get('tg_ids', [])
                                 kb_client = InlineKeyboardMarkup([[InlineKeyboardButton("🆘 Связаться с Админом", callback_data="support_start")]])
@@ -350,7 +394,7 @@ async def alert_loop(app):
                             if not device_set:
                                 await db.execute("UPDATE users SET device=$1, first_connected_at=NOW() WHERE uuid=$2", hostname, uuid_val)
                                 await db.log_event("Connection", f"First connection by {user['name']} from {hostname}")
-                                if ADMIN_ID: await app.bot.send_message(chat_id=ADMIN_ID, text=f"🎉 **Новое подключение!**\n\n👤 {safe_name}\n📱 `{hostname}`\n🆔 `{uuid_val}`", parse_mode="Markdown")
+                                if ADMIN_ID: await notify_admin(app, text=f"🎉 **Новое подключение!**\n\n👤 {safe_name}\n📱 `{hostname}`\n🆔 `{uuid_val}`", parse_mode="Markdown")
 
                                 tg_ids = user.get('tg_ids',[])
                                 if tg_ids:
@@ -368,7 +412,7 @@ async def alert_loop(app):
             if not wg_is_down and isinstance(e, (aiohttp.ClientError, asyncio.TimeoutError)):
                 wg_is_down = True
                 await db.log_event("Error", "VPN API is unreachable")
-                if ADMIN_ID: await app.bot.send_message(chat_id=ADMIN_ID, text="⚠️ VPN-сервер недоступен!")
+                if ADMIN_ID: await notify_admin(app, text="⚠️ VPN-сервер недоступен!")
 
         await asyncio.sleep(10)
 
@@ -387,7 +431,7 @@ async def self_healing_loop(app):
             fail_count = 0
             await db.log_event("Self-Healing", "Interface hang detected. Triggering hard restart of wg0 container.")
             if ADMIN_ID:
-                try: await app.bot.send_message(chat_id=ADMIN_ID, text="⚙️ **Self-Healing:** Зависание VPN. Жесткий перезапуск.")
+                try: await notify_admin(app, text="⚙️ **Self-Healing:** Зависание VPN. Жесткий перезапуск.")
                 except Exception: pass
             
             os.makedirs("/volumes/flags", exist_ok=True)
@@ -418,7 +462,7 @@ async def de_self_healing_loop(app):
 
         if ok:
             if de_down and ADMIN_ID:
-                try: await app.bot.send_message(chat_id=ADMIN_ID, text="✅ Туннель DE снова в норме.")
+                try: await notify_admin(app, text="✅ Туннель DE снова в норме.")
                 except Exception: pass
             de_down = False
             fail_count = 0
@@ -440,7 +484,7 @@ async def de_self_healing_loop(app):
                 msg = ("⚙️ **Self-Healing DE:** туннель лежал — отправил команду пересоздать wg0."
                        if reloaded else
                        "⚠️ **Self-Healing DE:** туннель недоступен, и агент не отвечает — нужен ручной взгляд.")
-                try: await app.bot.send_message(chat_id=ADMIN_ID, text=msg, parse_mode="Markdown")
+                try: await notify_admin(app, text=msg, parse_mode="Markdown")
                 except Exception: pass
 
 # ------------------------ EXPIRATION LOGIC ------------------------
@@ -460,7 +504,7 @@ async def expiration_loop(app):
                     await db.execute("UPDATE users SET is_active=FALSE WHERE uuid=$1", uuid_val)
                     await db.log_event("Expiration", f"Key {u['name']} expired and was paused.")
                     
-                    if ADMIN_ID: await app.bot.send_message(chat_id=ADMIN_ID, text=f"⏳ **Ключ просрочен!**\n\nПользователь: **{safe_name}**", parse_mode="Markdown")
+                    if ADMIN_ID: await notify_admin(app, text=f"⏳ **Ключ просрочен!**\n\nПользователь: **{safe_name}**", parse_mode="Markdown")
                     tg_ids = u.get('tg_ids',[])
                     kb_client = InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Личный кабинет", callback_data="client_menu")]])
                     for tid in tg_ids:
@@ -487,7 +531,7 @@ async def inactivity_loop(app):
                         
                         await db.execute("UPDATE users SET is_active=FALSE WHERE uuid=$1", uuid_val)
                         await db.log_event("Inactivity", f"Key {u['name']} was paused due to 30 days of inactivity.")
-                        if ADMIN_ID: await app.bot.send_message(chat_id=ADMIN_ID, text=f"💤 **Отключен за бездействие!**\n\nКлюч: **{safe_name}**", parse_mode="Markdown")
+                        if ADMIN_ID: await notify_admin(app, text=f"💤 **Отключен за бездействие!**\n\nКлюч: **{safe_name}**", parse_mode="Markdown")
         except Exception as e: print(f"Inactivity loop error: {e}")
         await asyncio.sleep(86400) 
 
@@ -606,11 +650,11 @@ async def auto_reboot_loop(app):
                             await session.post(f"{DE_AGENT_URL}/host/reboot", timeout=5)
                         await db.log_event("System", "Weekly DE auto-reboot triggered.")
                         if ADMIN_ID:
-                            await app.bot.send_message(chat_id=ADMIN_ID, text="🔄 **Плановый ребут DE** (Германия) — применяю накопившиеся обновления.", parse_mode="Markdown")
+                            await notify_admin(app, text="🔄 **Плановый ребут DE** (Германия) — применяю накопившиеся обновления.", parse_mode="Markdown")
                     except Exception:
                         await db.log_event("Error", "Weekly DE auto-reboot: DE agent unreachable.")
                         if ADMIN_ID:
-                            try: await app.bot.send_message(chat_id=ADMIN_ID, text="⚠️ Плановый ребут DE не удался: агент недоступен.")
+                            try: await notify_admin(app, text="⚠️ Плановый ребут DE не удался: агент недоступен.")
                             except Exception: pass
             except Exception as e: print(f"DE auto-reboot error: {e}")
         await asyncio.sleep(60)
@@ -747,7 +791,7 @@ async def _auto_absorb_drift(app=None):
             lines += [f"• `{escape_md(d)}` → `{', '.join(n)}`" for d, n in changed]
             lines.append("\nНовые ключи получат их сразу; существующим — при следующем перевыпуске.")
             try:
-                await app.bot.send_message(chat_id=ADMIN_ID, text="\n".join(lines), parse_mode=ParseMode.MARKDOWN)
+                await notify_admin(app, text="\n".join(lines), parse_mode=ParseMode.MARKDOWN)
             except Exception:
                 pass
 
@@ -758,7 +802,7 @@ async def _auto_absorb_drift(app=None):
                  "чтобы не раздуть конфиг/QR. Проверь в 🌐 Исключения:"]
         lines += [f"• `{escape_md(d)}` → `{', '.join(n)}`" for d, n in overflow]
         try:
-            await app.bot.send_message(chat_id=ADMIN_ID, text="\n".join(lines), parse_mode=ParseMode.MARKDOWN)
+            await notify_admin(app, text="\n".join(lines), parse_mode=ParseMode.MARKDOWN)
         except Exception:
             pass
 

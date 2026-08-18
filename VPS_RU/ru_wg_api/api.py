@@ -76,7 +76,7 @@ if not os.path.exists(CONF_DIR):
 
 class PeerCreate(BaseModel):
     name: str
-    dns_type: str = "adblock"
+    dns_type: str = "classic"
     bypass_cidrs: Optional[List[str]] = None
 
 class BackupData(BaseModel):

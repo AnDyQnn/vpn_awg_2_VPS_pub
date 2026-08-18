@@ -31,7 +31,7 @@ async def _issue_new_config(context, chat_id, user, deliver: bool = True):
     bypass_cidrs = await db.get_all_bypass_cidrs()
     rv = await db.get_routing_version()
 
-    new_uid, c_path, q_path = await create_peer(name, dns_type="adblock", bypass_cidrs=bypass_cidrs)
+    new_uid, c_path, q_path = await create_peer(name, dns_type="classic", bypass_cidrs=bypass_cidrs)
     await db.execute(
         "INSERT INTO users (name, uuid, created_at, expires_at, routing_version) VALUES ($1, $2, NOW(), $3, $4)",
         name, new_uid, exp_at, rv

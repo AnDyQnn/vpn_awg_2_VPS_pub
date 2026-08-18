@@ -20,7 +20,7 @@ async def backup_wg_config():
     except Exception as e:
         print(f"Error backing up wg config: {e}")
 
-async def create_peer(name: str, dns_type: str = "adblock", bypass_cidrs=None):
+async def create_peer(name: str, dns_type: str = "classic", bypass_cidrs=None):
     payload = {"name": name, "dns_type": dns_type}
     if bypass_cidrs:
         payload["bypass_cidrs"] = list(bypass_cidrs)
