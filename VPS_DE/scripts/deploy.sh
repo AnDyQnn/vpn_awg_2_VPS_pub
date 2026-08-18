@@ -46,6 +46,10 @@ if [ -n "${GIT_REPO:-}" ]; then
     git remote set-url origin "$AUTH_URL" 2>/dev/null || git remote add origin "$AUTH_URL"
 fi
 
+# Запоминаем ТЕКУЩИЙ коммит — на случай отката, если новая версия окажется нездоровой.
+PREV_HASH="$(git rev-parse HEAD 2>/dev/null)"
+echo "[Deploy] Текущая версия (для возможного отката): ${PREV_HASH:0:7}"
+
 # Сбрасываем локальные изменения (если файлы правились руками) и тянем свежие
 git fetch --all
 git reset --hard origin/main || git reset --hard origin/master
@@ -98,15 +102,41 @@ fi
 echo "[Deploy] Шаг 4: Применение новых образов (краткий перезапуск)..."
 docker compose up -d --remove-orphans
 
-# 5b. Метка успешного деплоя для RU-бота: он поллит агента (/host/deploy_status) после
-#     команды обновления и по НОВОМУ ts понимает, что DE реально обновилась. Пишем в
-#     volumes/flags — этот каталог примонтирован в контейнер агента (/volumes/flags).
+# 6. HEALTH-CHECK новой версии (как на RU). Если контейнер крашится/рестартит — ОТКАТ на
+#    предыдущую версию: возвращаем код, восстанавливаем .env, пересобираем, поднимаем.
+echo "[Deploy] Шаг 5: Health-check новой версии (даю контейнеру подняться)..."
+sleep 20
+problem=""
+for id in $(docker compose ps -q 2>/dev/null); do
+    name="$(docker inspect -f '{{.Name}}' "$id" 2>/dev/null | sed 's#^/##')"
+    st="$(docker inspect -f '{{.State.Status}}' "$id" 2>/dev/null)"
+    case "$st" in
+        restarting|exited|dead) problem="$problem $name($st)";;
+    esac
+done
+
+if [ -n "$problem" ] && [ -n "$PREV_HASH" ]; then
+    echo "[Deploy] ⛔ Новая версия нездорова:$problem"
+    echo "[Deploy] ↩️  ОТКАТ на предыдущую версию ${PREV_HASH:0:7}..."
+    cd "$PROJECT_ROOT" && git reset --hard "$PREV_HASH"
+    [ ! -f "$NODE_DIR/.env" ] && [ -f "$ENV_BAK" ] && cp -f "$ENV_BAK" "$NODE_DIR/.env"
+    cd "$NODE_DIR"
+    docker compose up -d --build --remove-orphans
+    echo "${PREV_HASH:0:7}" > "$NODE_DIR/volumes/VERSION"
+    docker image prune -f
+    echo "[Deploy] ✅ Откат выполнен — DE снова на рабочей версии ${PREV_HASH:0:7}."
+    exit 1
+fi
+echo "[Deploy] ✅ Health-check ок — новая версия работает."
+
+# 6b. Метка успешного деплоя для RU-бота (ТОЛЬКО при успехе — на откате её нет, поэтому
+#     ложного «✅ DE обновилась» не будет). volumes/flags примонтирован в контейнер агента.
 mkdir -p "$NODE_DIR/volumes/flags"
 printf '%s %s\n' "$(date +%s)" "$NEW_HASH" > "$NODE_DIR/volumes/flags/deploy_done"
 
-# 6. Полная очистка мусора после деплоя (маленький 10-ГБ диск DE): system prune -af сносит
-#    неиспользуемые образы (в т.ч. тегированные, напр. осиротевший postgres:15), build cache,
-#    остановленные контейнеры и сети. --volumes НЕ добавляем (данные проекта в bind-mount).
+# 7. Полная очистка мусора (маленький 10-ГБ диск DE): system prune -af сносит неиспользуемые
+#    образы (в т.ч. тегированные), build cache, остановленные контейнеры/сети.
+#    --volumes НЕ добавляем (данные проекта в bind-mount ./volumes).
 docker system prune -af
 
 echo "[Deploy] ✅ Обновление успешно завершено для ноды $(basename "$NODE_DIR")!"
