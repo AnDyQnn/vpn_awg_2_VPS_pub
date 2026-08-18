@@ -219,7 +219,7 @@ async def generate_key_request(update: Update, context: ContextTypes.DEFAULT_TYP
 async def finish_key_creation(update: Update, context: ContextTypes.DEFAULT_TYPE, tg_id=None):
     name = context.user_data.get("name")
     exp_days = context.user_data.get("expiry_days", 0)
-    dns_type = context.user_data.get("dns_type", "classic")
+    dns_type = context.user_data.get("dns_type", "adblock")
     chat_id = update.effective_chat.id
     menu_id = context.user_data.get("menu_msg_id")
 

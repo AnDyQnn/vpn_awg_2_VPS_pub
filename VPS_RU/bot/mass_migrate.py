@@ -131,7 +131,7 @@ async def main():
         print(f"🔄 Создаем ключ для {name}...")
         try:
             # Создаем в рабочей среде
-            new_uid, c_path, q_path = await create_peer(name, dns_type="classic")
+            new_uid, c_path, q_path = await create_peer(name, dns_type="adblock")
             await db.execute("INSERT INTO users (name, uuid, created_at, expires_at, routing_version) VALUES ($1, $2, NOW(), $3, $4)", name, new_uid, exp_at, ROUTING_VERSION)
             
             for tid in tg_ids:
