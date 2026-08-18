@@ -646,12 +646,25 @@ async def routing_upgrade_loop(app):
                 if await db.get_setting("last_routing_notice") != today:
                     await db.set_setting("last_routing_notice", today)
                     await _send_upgrade_notices(app)
-                    await _auto_absorb_drift(app)
             except Exception as e:
                 print(f"Routing upgrade loop error: {e}")
             await asyncio.sleep(3600)
         else:
             await asyncio.sleep(600)
+
+async def bypass_reresolve_loop(app):
+    """РАЗ В ЧАС перерезолвит домены split-tunnel исключений и авто-абсорбирует дрейф IP в БД
+    (bump=False → без нагона перевыпусков). Держит адреса исключений свежими — по мотивам
+    OpenWRT-шлюза (там домен→ipset по таймеру). ВАЖНО: у уже выданных клиентов bypass запечён
+    в AllowedIPs их .conf — новые IP они получат лишь при ПЕРЕВЫПУСКЕ конфига; здесь свежими
+    остаются БД и все новые/перевыпущенные ключи + авто-добавление «уехавших» /24."""
+    await asyncio.sleep(120)  # дать боту/БД подняться
+    while True:
+        try:
+            await _auto_absorb_drift(app)
+        except Exception as e:
+            print(f"bypass_reresolve_loop error: {e}")
+        await asyncio.sleep(3600)
 
 async def _send_upgrade_notices(app):
     current_version = await db.get_routing_version()

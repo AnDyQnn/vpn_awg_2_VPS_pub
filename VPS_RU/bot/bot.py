@@ -25,7 +25,7 @@ from monitor import (
     de_self_healing_loop,
     expiration_loop, inactivity_loop, weekly_report_loop, log_cleanup_loop,
     auto_reboot_loop, scheduled_update_loop, resource_monitor_loop,
-    routing_upgrade_loop, run_bypass_check_handler, bypass_notify_now_handler,
+    routing_upgrade_loop, bypass_reresolve_loop, run_bypass_check_handler, bypass_notify_now_handler,
     bypass_list_handler, bypass_del_handler, bypass_add_manual_handler, bypass_add_request_handler,
     reconcile_routing_versions
 )
@@ -713,7 +713,8 @@ async def post_init(application):
         asyncio.create_task(auto_reboot_loop(application)),
         asyncio.create_task(scheduled_update_loop(application)),
         asyncio.create_task(resource_monitor_loop(application)),
-        asyncio.create_task(routing_upgrade_loop(application))
+        asyncio.create_task(routing_upgrade_loop(application)),
+        asyncio.create_task(bypass_reresolve_loop(application))
     ]
     state_data["bg_tasks"].update(tasks)
 
