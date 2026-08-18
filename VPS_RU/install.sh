@@ -1,0 +1,163 @@
+#!/bin/bash
+
+if [ "$EUID" -ne 0 ]; then
+  echo "❌ Запустите с правами root: sudo bash install.sh"
+  exit 1
+fi
+
+APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+echo "🚀 Установка VPN Dashboard в: $APP_DIR"
+
+echo "🛡️ Базовая настройка безопасности и обновление системы..."
+apt-get update && apt-get upgrade -y
+apt-get install -y fail2ban ufw curl git unattended-upgrades
+
+systemctl enable fail2ban
+systemctl start fail2ban
+
+# Ночные авто-обновления системы (переносим apt на ночь, чтобы не спайкать нагрузку днём)
+if [ -f "$APP_DIR/../scripts/ensure_host_maintenance.sh" ]; then
+    bash "$APP_DIR/../scripts/ensure_host_maintenance.sh" || true
+fi
+
+echo "🛡️ Настройка защиты ядра от DDoS и флуда (sysctl)..."
+cat <<EOF > /etc/sysctl.d/99-vpn-security.conf
+net.ipv4.tcp_syncookies = 1
+net.ipv4.tcp_max_syn_backlog = 2048
+net.ipv4.tcp_synack_retries = 2
+net.ipv4.icmp_echo_ignore_broadcasts = 1
+net.ipv4.conf.all.rp_filter = 1
+net.ipv4.conf.default.rp_filter = 1
+net.ipv4.tcp_rfc1337 = 1
+net.ipv4.conf.all.accept_redirects = 0
+net.ipv4.conf.default.accept_redirects = 0
+EOF
+sysctl --system >/dev/null 2>&1
+
+echo "💾 Проверка swap (нужен на 1–2 ГБ RAM, чтобы Control Plane/бот не словили OOM)..."
+# единый идемпотентный скрипт — он же вызывается при КАЖДОМ обновлении (deploy.sh),
+# чтобы swap подтягивался сам и через обновление, а не только при первой установке.
+bash "$(dirname "$APP_DIR")/scripts/ensure_swap.sh" || true
+# Секреты Control Plane (SECRET_KEY, пароль админки) CP генерит сам в БД при старте —
+# .env остаётся стоковым, руками ничего дописывать не нужно.
+
+echo ""
+echo "🚨 ЗАЩИТА ОТ БРУТФОРСА (Смена порта SSH)"
+read -p "Введите новый порт для SSH (рекомендуется от 10000 до 65000) или нажмите Enter, чтобы оставить 22: " SSH_PORT
+SSH_PORT=${SSH_PORT:-22}
+
+if [ "$SSH_PORT" != "22" ]; then
+    echo "🔧 Смена порта SSH на $SSH_PORT..."
+    ufw allow $SSH_PORT/tcp
+    sed -i "s/^#*Port .*/Port $SSH_PORT/" /etc/ssh/sshd_config
+    # Ubuntu 22.10+/24.04: OpenSSH обычно запускается через сокет-активацию (ssh.socket),
+    # и порт слушается из ListenStream сокета, а НЕ из sshd_config — тогда правка Port выше
+    # игнорируется, sshd остаётся на 22, и после ufw ты запираешь себя снаружи (порт открыт
+    # в фаерволе, но на нём никто не слушает). Явно переносим порт в drop-in сокета: пустой
+    # ListenStream= сбрасывает дефолтные 22, затем добавляем нужный порт.
+    if systemctl cat ssh.socket >/dev/null 2>&1; then
+        mkdir -p /etc/systemd/system/ssh.socket.d
+        printf '[Socket]\nListenStream=\nListenStream=%s\n' "$SSH_PORT" > /etc/systemd/system/ssh.socket.d/port.conf
+        systemctl daemon-reload
+        systemctl restart ssh.socket 2>/dev/null || true
+    fi
+    systemctl restart ssh || systemctl restart sshd
+    echo "✅ Порт SSH успешно изменен на $SSH_PORT!"
+else
+    echo "⚠️ Порт SSH оставлен стандартным (22). Включаем защиту..."
+    ufw limit 22/tcp
+fi
+
+# Порты для авто-HTTPS Control Plane (Caddy выписывает сертификат Let's Encrypt по
+# <ip>.sslip.io — нужен доступ извне на 80/443). UDP 51820 — сам VPN.
+ufw allow 80/tcp   >/dev/null 2>&1 || true
+ufw allow 443/tcp  >/dev/null 2>&1 || true
+ufw allow 51820/udp >/dev/null 2>&1 || true
+
+echo "📦 Проверка и настройка Docker..."
+if ! command -v docker &> /dev/null; then
+    curl -fsSL https://get.docker.com -o get-docker.sh
+    sh get-docker.sh
+    rm get-docker.sh
+fi
+apt-get update && apt-get install -y docker-compose-plugin git
+systemctl enable docker
+systemctl start docker
+
+echo "🔧 Настройка прав..."
+chmod +x "$APP_DIR/install.sh"
+mkdir -p "$APP_DIR/scripts"
+chmod +x "$APP_DIR/scripts/"*.sh
+mkdir -p "$APP_DIR/volumes/flags"
+mkdir -p "$APP_DIR/volumes/backups"
+mkdir -p "$APP_DIR/volumes/configs"
+mkdir -p "$APP_DIR/volumes/wireguard"
+mkdir -p "$APP_DIR/volumes/database"
+
+# ИСПРАВЛЕНИЕ: Умный поиск Git-репозитория
+cd "$APP_DIR"
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    git rev-parse HEAD | cut -c1-7 > "$APP_DIR/volumes/VERSION"
+else
+    echo "unknown" > "$APP_DIR/volumes/VERSION"
+fi
+
+# 🔗 Автоопределение СВОЕГО GitHub-репозитория: дистрибутивы клиента собираются в
+# твоём Actions/Releases под твой Control Plane — у каждого деплоера свой «блок»,
+# сборки не пересекаются. Если уже задано в .env — не трогаем.
+if ! grep -q '^CP_GITHUB_REPO=' "$APP_DIR/.env" 2>/dev/null; then
+    ORIGIN_URL="$(git config --get remote.origin.url 2>/dev/null || true)"
+    DETECTED_REPO="$(echo "$ORIGIN_URL" | sed -E 's#(git@github.com:|https?://[^/]*/)##; s#\.git$##')"
+    if [ -n "$DETECTED_REPO" ]; then
+        echo "CP_GITHUB_REPO=$DETECTED_REPO" >> "$APP_DIR/.env"
+        echo "🔗 Сборки клиента пойдут в ТВОЙ репозиторий: $DETECTED_REPO"
+    fi
+fi
+
+echo "⚙️ Настройка демона автообновлений..."
+cat <<EOF > /etc/systemd/system/vpn-updater.service
+[Unit]
+Description=VPN Dashboard Auto-Updater Daemon
+After=network-online.target docker.service
+Wants=network-online.target docker.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=$APP_DIR
+ExecStart=/bin/bash $APP_DIR/scripts/host_updater.sh
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable vpn-updater
+systemctl restart vpn-updater
+
+if [ ! -f "$APP_DIR/.env" ]; then
+    touch "$APP_DIR/.env"
+fi
+chmod 600 "$APP_DIR/.env"
+
+echo "🚀 Запуск контейнеров..."
+docker compose up -d --build --remove-orphans
+
+echo "⏳ Ожидание инициализации базы данных и API (15 секунд)..."
+sleep 15
+
+echo "🤖 Автоматическая генерация ключа DE_AGENT..."
+docker exec vpn_bot python init_de_agent.py
+
+if [ -f "$APP_DIR/volumes/DE_AGENT_CONFIG.txt" ]; then
+    mv "$APP_DIR/volumes/DE_AGENT_CONFIG.txt" "$APP_DIR/DE_AGENT_CONFIG.txt"
+    echo "================================================================"
+    echo "🎉 КЛЮЧ ДЛЯ СЕРВЕРА В ГЕРМАНИИ УСПЕШНО СГЕНЕРИРОВАН!"
+    echo "👉 $APP_DIR/DE_AGENT_CONFIG.txt"
+    echo "Скопируй его в Германию по пути: /volumes/wireguard/wg0.conf"
+    echo "================================================================"
+fi
+
+echo "✅ УСТАНОВКА И НАСТРОЙКА ЗАВЕРШЕНА!"

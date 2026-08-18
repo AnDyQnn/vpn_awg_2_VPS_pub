@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.venv/
+venv/
+
+# Локальные артефакты/секреты (на всякий случай)
+*.log
+.env
+.env.local
+
+# Локальный тест жизненного цикла (не в репо)
+_lifecycle_test/
+_graph_test/
+
+# Рантайм-данные и СЕКРЕТЫ на сервере — НИКОГДА в git (keystore, TLS, БД, WG-ключи, конфиги+QR юзеров)
+volumes/
+**/volumes/
+DE_AGENT_CONFIG.txt
+*.keystore
