@@ -438,18 +438,19 @@ async def check_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if is_update_available:
         text += "⚠️ **Доступно новое обновление!**"
-        btn = InlineKeyboardButton("✅ Обновить сейчас", callback_data="do_update")
+        btn = InlineKeyboardButton("🇷🇺 Обновить RU", callback_data="do_update")
     else:
         text += "✅ У вас установлена последняя версия."
-        btn = InlineKeyboardButton("🔄 Переустановить", callback_data="do_update")
-        
+        btn = InlineKeyboardButton("🇷🇺 Переустановить RU", callback_data="do_update")
+
     auto_upd = await db.get_setting("auto_update_enabled")
-    auto_upd_text = "Автообновления ✅" if auto_upd == "true" else "Автообновления ❌"
-        
+    auto_upd_text = "🔔 Автообновления: включены" if auto_upd == "true" else "🔕 Автообновления: выключены"
+
     keyboard = [
-        [btn],
+        [InlineKeyboardButton("🔄 Обновить всё (RU + DE)", callback_data="update_all")],
+        [btn, InlineKeyboardButton("🇩🇪 Обновить DE", callback_data="de_update")],
         [InlineKeyboardButton(auto_upd_text, callback_data="toggle_auto_update")],
-        [InlineKeyboardButton("📅 Запланировать", callback_data="schedule_update")],
+        [InlineKeyboardButton("📅 Запланировать обновление", callback_data="schedule_update")],
         [InlineKeyboardButton("🔙 Главное меню", callback_data="back_to_main")]
     ]
         
@@ -509,6 +510,43 @@ async def do_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
     os.makedirs("/volumes/flags", exist_ok=True)
     # was_updating ставит сам deploy.sh ПОСЛЕ успешного health-check (а на откате — не ставит),
     # поэтому уведомление «✅ Обновление завершено» приходит только на реальный успех.
+    with open("/volumes/flags/do_update", "w") as f: f.write("update_requested")
+
+async def update_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обновить ОБЕ ноды разом: сначала DE (по туннелю через агентский API), затем RU
+    (флаг do_update; RU перезапустит бота). Подтверждение по каждой ноде приходит отдельно."""
+    query = update.callback_query
+    await query.message.edit_reply_markup(reply_markup=None)
+    status = await query.message.reply_text("⏳ Запускаю обновление обеих нод (RU + DE)…")
+
+    # 1) DE — командой по туннелю + фоновое слежение за завершением
+    de_started = False
+    pre_ts = await _get_de_deploy_ts()
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(f"{DE_AGENT_URL}/host/update", timeout=5) as resp:
+                de_started = (resp.status == 200)
+        if de_started:
+            asyncio.create_task(_watch_de_update(context.application, pre_ts))
+    except Exception:
+        de_started = False
+
+    # 2) оповещаем пользователей, бэкап, затем сигнал RU (он перезапустит контейнеры/бота)
+    await broadcast_message(context.application, "⚠️ **Технические работы**\n\nОбновление серверов. Связь может прерваться на 1–2 минуты.", db)
+    try:
+        await update_persistent_backup(context)
+    except Exception:
+        pass
+    await db.log_event("System", "Admin triggered UPDATE ALL (RU + DE).")
+
+    de_txt = "🇩🇪 DE — команда отправлена ✅" if de_started else "🇩🇪 DE — агент не ответил ⚠️ (обнови отдельно)"
+    await status.edit_text(
+        f"🚀 **Обновление запущено на обеих нодах**\n\n{de_txt}\n🇷🇺 RU — сейчас перезапустится\n\n"
+        "Бот вернётся через минуту и пришлёт подтверждение по каждой ноде.",
+        parse_mode=ParseMode.MARKDOWN
+    )
+
+    os.makedirs("/volumes/flags", exist_ok=True)
     with open("/volumes/flags/do_update", "w") as f: f.write("update_requested")
 
 # --- МЕНЮ ТЕХНИЧЕСКОЙ ПОДДЕРЖКИ ---

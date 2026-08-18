@@ -45,7 +45,7 @@ from handlers_admin import (
     restore_file_handler, export_excel, run_audit_handler, schedule_update_menu, toggle_auto_update,
     support_admin_menu, support_user_tickets, support_ticket_detail, support_reply_start, support_close_ticket,
     de_confirm_reboot, do_de_reboot_server, de_read_logs,
-    de_update, de_backup, de_run_audit
+    de_update, de_backup, de_run_audit, update_all
 )
 from handlers_users import (
     users_list_menu, user_detail_menu, confirm_delete_menu, action_delete_user, action_resend_config, 
@@ -506,6 +506,7 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "do_de_reboot_server": await do_de_reboot_server(update, context); return
     if data == "de_read_logs": await de_read_logs(update, context); return
     if data == "de_update": await de_update(update, context); return
+    if data == "update_all": await update_all(update, context); return
     if data == "de_backup": await de_backup(update, context); return
     if data == "de_run_audit": await de_run_audit(update, context); return
     
