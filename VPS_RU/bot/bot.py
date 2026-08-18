@@ -224,7 +224,28 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     state = context.user_data.get("state")
     chat_id = update.message.chat_id
     user_msg_id = update.message.message_id
-    
+
+    # Кастомная рассылка: админ прислал свой текст → шлём его ВСЕМ пользователям.
+    if state == "awaiting_broadcast_text":
+        context.user_data["state"] = None
+        if ADMIN_ID and chat_id != ADMIN_ID:
+            return
+        text = update.message.text
+        if not text or not text.strip():
+            await context.bot.send_message(chat_id=chat_id, text="⚠️ Пустое сообщение — рассылка отменена.")
+            return
+        try:
+            await broadcast_message(context.application, text, db)
+            await db.log_event("System", "Admin sent custom broadcast.")
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="✅ **Рассылка отправлена** всем пользователям.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 В меню", callback_data="back_to_main")]]),
+                parse_mode=ParseMode.MARKDOWN)
+        except Exception as e:
+            await context.bot.send_message(chat_id=chat_id, text=f"❌ Ошибка рассылки: {e}")
+        return
+
     if state == "awaiting_support_message":
         target_uuid = state_data["support_context"].get(chat_id)
         msg_text = update.message.text or "Контент без текста"
@@ -511,8 +532,22 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "de_run_audit": await de_run_audit(update, context); return
     
     if data == "maintenance_warn":
-        kb = [[InlineKeyboardButton("✅ Отправить предупреждение", callback_data="do_maintenance_warn")],[InlineKeyboardButton("🔙 Отмена", callback_data="back_to_main")]]
-        await query.edit_message_text("⚠️ Вы уверены, что хотите разослать всем пользователям предупреждение о тех. обслуживании?", reply_markup=InlineKeyboardMarkup(kb))
+        kb = [
+            [InlineKeyboardButton("✍️ Своя рассылка (свой текст)", callback_data="broadcast_custom")],
+            [InlineKeyboardButton("⚠️ Стандартное: тех. работы", callback_data="do_maintenance_warn")],
+            [InlineKeyboardButton("🔙 Отмена", callback_data="back_to_main")],
+        ]
+        await query.edit_message_text(
+            "📢 **Рассылка всем пользователям**\n\nВыбери, что отправить:",
+            reply_markup=InlineKeyboardMarkup(kb), parse_mode=ParseMode.MARKDOWN)
+        return
+    if data == "broadcast_custom":
+        context.user_data["state"] = "awaiting_broadcast_text"
+        await query.edit_message_text(
+            "✍️ **Своя рассылка**\n\nПришли текст — я разошлю его всем пользователям (у кого привязан Telegram).\n"
+            "Поддерживается *Markdown* (\\*жирный\\*, \\_курсив\\_).\n\nДля отмены нажми «Отмена» или /start.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Отмена", callback_data="back_to_main")]]),
+            parse_mode=ParseMode.MARKDOWN)
         return
     if data == "do_maintenance_warn":
         await broadcast_message(context.application, "⚠️ **Внимание!**\n\nВ настоящий момент проводится техническое обслуживание сервера.\nВозможны временные перебои в работе сервиса в течение ближайших часов.\nСпасибо за понимание!", db)
