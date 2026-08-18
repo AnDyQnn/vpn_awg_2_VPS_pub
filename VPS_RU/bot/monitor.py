@@ -114,7 +114,6 @@ ghost_cache = {}
 paused_cache = {}
 flapping_cache = {}
 resource_alert_cache = {}
-ip_change_cache = {}   # {uuid: (ip, ts последней СМЕНЫ адреса)} — для детекта реально быстрых смен
 
 # --- АНТИ-ШЕРИНГ: отличаем реальный шеринг от легитимной смены сети ---
 # Истинный шеринг = НЕСКОЛЬКО устройств онлайн ОДНОВРЕМЕННО: endpoint пира быстро
@@ -125,7 +124,6 @@ ip_change_cache = {}   # {uuid: (ip, ts последней СМЕНЫ адрес
 FLAP_WINDOW = 300          # окно наблюдения, сек
 FLAP_MIN_JUMPS = 8         # минимум смен адреса в окне (раньше было 3 — ловило легит-свитч)
 FLAP_MAX_DISTINCT = 3      # ...при этом всего <= стольких уникальных адресов (пинг-понг)
-FAST_SWITCH_SEC = 90       # «быстрая смена сети» = прошлая смена адреса была < этого назад
 
 # Авто-абсорбция дрейфа: верхний предел подсетей на один домен, чтобы авто-расширение
 # не раздуло AllowedIPs/QR (если сервис рассеян по многим IP — зовём админа вручную).
@@ -337,23 +335,11 @@ async def alert_loop(app):
                                 continue
 
                         # Трек IP (система доверенных адресов): при смене адреса или раз в ~5 мин.
+                        # Отдельный алерт на смену адреса УБРАН: единичная смена (WiFi↔моб.) — норма.
+                        # Реальный абьюз — пинг-понг между адресами (будто 2 юзера на одном ключе) —
+                        # ловит и БАНИТ detect flapping выше, он же и уведомляет админа.
                         if hostname != prev_ip or (now - prev_time) > 300:
                             await db.track_user_ip(uuid_val, hostname)
-
-                        # Алерт «быстрая смена сети» — ТОЛЬКО когда смена реально быстрая: интервал
-                        # между СМЕНАМИ адреса < FAST_SWITCH_SEC. Одиночная смена (WiFi↔моб.) — норма,
-                        # не спамим. (prev_time для этого не годится — он обновляется каждый цикл из-за
-                        # keepalive, поэтому «менее 5 мин» срабатывало всегда.) В сообщении — реальное время.
-                        if hostname != prev_ip and prev_ip != "":
-                            _, last_change_t = ip_change_cache.get(uuid_val, ("", 0))
-                            delta = (now - last_change_t) if last_change_t else None
-                            ip_change_cache[uuid_val] = (hostname, now)
-                            if ADMIN_ID and delta is not None and delta < FAST_SWITCH_SEC:
-                                safe_name = escape_md(user['name'])
-                                msg = (f"⚠️ **Быстрая смена сети**\n\n👤 {safe_name}\n"
-                                       f"🔄 `{prev_ip}` → `{hostname}`\n⏱ через {delta} сек после прошлой смены")
-                                await app.bot.send_message(chat_id=ADMIN_ID, text=msg, parse_mode="Markdown")
-                                await db.log_event("Security", f"Fast IP switch ({delta}s): {prev_ip}->{hostname} ({user['name']})")
 
                         last_ip_cache[uuid_val] = (hostname, now)
 
