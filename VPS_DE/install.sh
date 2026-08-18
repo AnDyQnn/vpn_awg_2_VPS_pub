@@ -67,15 +67,11 @@ else
 fi
 echo "---------------------------------------------------------"
 
-if [ ! -f /swapfile ]; then
-    echo "--> Создание файла подкачки (Swap) на 2 ГБ..."
-    fallocate -l 2G /swapfile
-    chmod 600 /swapfile
-    mkswap /swapfile
-    swapon /swapfile
-    echo '/swapfile none swap sw 0 0' >> /etc/fstab
-    sysctl vm.swappiness=10
-    echo 'vm.swappiness=10' >> /etc/sysctl.conf
+# Swap через ОБЩИЙ скрипт (как на RU): dd-based, лимит по размеру диска, переживает ребут.
+# Тот же скрипт вызывается и при КАЖДОМ обновлении (deploy.sh) — настройка переприменяется сама.
+echo "💾 Проверка swap..."
+if [ -f "$APP_DIR/../scripts/ensure_swap.sh" ]; then
+    bash "$APP_DIR/../scripts/ensure_swap.sh" || true
 fi
 
 if ! command -v docker &> /dev/null; then
