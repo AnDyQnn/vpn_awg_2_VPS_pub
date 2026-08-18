@@ -114,6 +114,7 @@ ghost_cache = {}
 paused_cache = {}
 flapping_cache = {}
 resource_alert_cache = {}
+ip_change_cache = {}   # {uuid: (ip, ts последней СМЕНЫ адреса)} — для детекта реально быстрых смен
 
 # --- АНТИ-ШЕРИНГ: отличаем реальный шеринг от легитимной смены сети ---
 # Истинный шеринг = НЕСКОЛЬКО устройств онлайн ОДНОВРЕМЕННО: endpoint пира быстро
@@ -124,6 +125,7 @@ resource_alert_cache = {}
 FLAP_WINDOW = 300          # окно наблюдения, сек
 FLAP_MIN_JUMPS = 8         # минимум смен адреса в окне (раньше было 3 — ловило легит-свитч)
 FLAP_MAX_DISTINCT = 3      # ...при этом всего <= стольких уникальных адресов (пинг-понг)
+FAST_SWITCH_SEC = 90       # «быстрая смена сети» = прошлая смена адреса была < этого назад
 
 # Авто-абсорбция дрейфа: верхний предел подсетей на один домен, чтобы авто-расширение
 # не раздуло AllowedIPs/QR (если сервис рассеян по многим IP — зовём админа вручную).
@@ -134,8 +136,9 @@ async def get_dashboard():
     cpu_ru = psutil.cpu_percent()
     ram_ru = psutil.virtual_memory().percent
     disk_ru = psutil.disk_usage("/").percent
-    peers_text = "0"
-    
+
+    # RU: активные VPN-сессии (и жив ли WG-API)
+    active, total, ru_ok = 0, 0, True
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(f"{WG_API_URL}/status", timeout=3) as resp:
@@ -143,19 +146,20 @@ async def get_dashboard():
                     data = await resp.json()
                     total = data.get("peers_count", 0)
                     active = data.get("active_peers", 0)
-                    peers_text = f"{active} [ {total} ]"
                 else:
-                    peers_text = "⚠️ Ошибка API"
+                    ru_ok = False
     except Exception:
-        peers_text = "⚠️ Сервер недоступен"
+        ru_ok = False
 
-    de_status_text = "⚠️ Офлайн / Недоступен"
+    # DE: ресурсы агента (и жив ли он)
+    de_ok, cpu_de, ram_de, disk_de = False, 0, 0, 0
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(f"{DE_AGENT_URL}/system_stats", timeout=3) as resp:
                 if resp.status == 200:
-                    de_data = await resp.json()
-                    de_status_text = f"CPU: {de_data.get('cpu', 0)}% | RAM: {de_data.get('ram', 0)}% | Disk: {de_data.get('disk', 0)}%"
+                    d = await resp.json()
+                    cpu_de, ram_de, disk_de = d.get('cpu', 0), d.get('ram', 0), d.get('disk', 0)
+                    de_ok = True
     except Exception:
         pass
 
@@ -163,20 +167,28 @@ async def get_dashboard():
         bypass_count = len(await db.get_all_bypass_cidrs())
         outdated_count = len(await db.get_outdated_keys(await db.get_routing_version()))
     except Exception:
-        bypass_count = 0
-        outdated_count = 0
+        bypass_count = outdated_count = 0
+
+    # Одна статус-точка на ноду: 🔴 недоступна/перегруз, 🟡 средне, 🟢 ок.
+    def node_dot(ok, *pcts):
+        if not ok:
+            return "🔴"
+        m = max([float(p) for p in pcts] + [0.0])
+        return "🔴" if m >= 90 else "🟡" if m >= 70 else "🟢"
+
+    ru_dot = node_dot(ru_ok, cpu_ru, ram_ru, disk_ru)
+    de_dot = node_dot(de_ok, cpu_de, ram_de, disk_de)
+    de_line = (f"CPU `{cpu_de:.0f}%` · RAM `{ram_de:.0f}%` · Диск `{disk_de:.0f}%`"
+               if de_ok else "_недоступен_")
 
     return (
-        f"📊 **Дашборд Системы**\n\n"
-        f"🇷🇺 **RU Сервер (Master)**\n"
-        f"CPU:   {cpu_ru}%\n"
-        f"RAM:   {ram_ru}%\n"
-        f"Диск:  {disk_ru}%\n\n"
-        f"🇩🇪 **DE Сервер (Agent)**\n"
-        f"{de_status_text}\n\n"
-        f"🔌 **Активных VPN сессий:** {peers_text}\n"
-        f"🚫 **Not-allow addr (мимо VPN):** {bypass_count} диап.\n"
-        f"♻️ **Ключей на старом формате:** {outdated_count}"
+        f"📊 **Дашборд**\n\n"
+        f"{ru_dot} 🇷🇺 **RU** · мастер\n"
+        f"CPU `{cpu_ru:.0f}%` · RAM `{ram_ru:.0f}%` · Диск `{disk_ru:.0f}%`\n\n"
+        f"{de_dot} 🇩🇪 **DE** · агент\n"
+        f"{de_line}\n\n"
+        f"🔌 Сессий: **{active}** / {total}\n"
+        f"🚫 Исключений: {bypass_count} · ♻️ Старых ключей: {outdated_count}"
     )
 
 # ------------------------ СИСТЕМНЫЕ АЛЕРТЫ ------------------------
@@ -324,14 +336,24 @@ async def alert_loop(app):
                                 last_ip_cache[uuid_val] = (hostname, now)
                                 continue
 
+                        # Трек IP (система доверенных адресов): при смене адреса или раз в ~5 мин.
                         if hostname != prev_ip or (now - prev_time) > 300:
-                            is_new_ip = await db.track_user_ip(uuid_val, hostname)
-                            if hostname != prev_ip and prev_ip != "" and (now - prev_time) < 300:
-                                if is_new_ip and ADMIN_ID:
-                                    safe_name = escape_md(user['name'])
-                                    msg = f"⚠️ **Смена сети!**\n\n👤 {safe_name}\n🔄 Прыжок (менее 5 мин):\nС `{prev_ip}` на `{hostname}`"
-                                    await app.bot.send_message(chat_id=ADMIN_ID, text=msg, parse_mode="Markdown")
-                                    await db.log_event("Security", f"IP Jump: {prev_ip} -> {hostname} ({user['name']})")
+                            await db.track_user_ip(uuid_val, hostname)
+
+                        # Алерт «быстрая смена сети» — ТОЛЬКО когда смена реально быстрая: интервал
+                        # между СМЕНАМИ адреса < FAST_SWITCH_SEC. Одиночная смена (WiFi↔моб.) — норма,
+                        # не спамим. (prev_time для этого не годится — он обновляется каждый цикл из-за
+                        # keepalive, поэтому «менее 5 мин» срабатывало всегда.) В сообщении — реальное время.
+                        if hostname != prev_ip and prev_ip != "":
+                            _, last_change_t = ip_change_cache.get(uuid_val, ("", 0))
+                            delta = (now - last_change_t) if last_change_t else None
+                            ip_change_cache[uuid_val] = (hostname, now)
+                            if ADMIN_ID and delta is not None and delta < FAST_SWITCH_SEC:
+                                safe_name = escape_md(user['name'])
+                                msg = (f"⚠️ **Быстрая смена сети**\n\n👤 {safe_name}\n"
+                                       f"🔄 `{prev_ip}` → `{hostname}`\n⏱ через {delta} сек после прошлой смены")
+                                await app.bot.send_message(chat_id=ADMIN_ID, text=msg, parse_mode="Markdown")
+                                await db.log_event("Security", f"Fast IP switch ({delta}s): {prev_ip}->{hostname} ({user['name']})")
 
                         last_ip_cache[uuid_val] = (hostname, now)
 
