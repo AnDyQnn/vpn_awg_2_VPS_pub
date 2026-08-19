@@ -220,6 +220,27 @@ async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not check_admin(update.effective_user.id): return
     await safe_delete(context, update.effective_chat.id, update.message.message_id)
 
+async def _filter_bypass_cidrs(cidrs):
+    """Валидация bypass-подсетей через guard wg-api (route_safe): (safe, rejected_msgs).
+    Отсекает широкие/служебные CIDR. Если wg-api недоступен — не блокируем ввод
+    (на бэке build_split_allowed_ips всё равно отфильтрует небезопасные при выдаче конфига)."""
+    wg_base = WG_API_URL.rsplit("/api", 1)[0]
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.post(f"{wg_base}/routing/bypass-check", json={"cidrs": list(cidrs)}, timeout=8) as r:
+                if r.status != 200:
+                    return list(cidrs), []
+                data = await r.json()
+    except Exception:
+        return list(cidrs), []
+    safe, rejected = [], []
+    for item in data.get("results", []):
+        if item.get("ok"):
+            safe.append(item["cidr"])
+        else:
+            rejected.append(f"{item['cidr']} — {item.get('reason', '')}")
+    return safe, rejected
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     state = context.user_data.get("state")
     chat_id = update.message.chat_id
@@ -359,13 +380,26 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             kb = [[InlineKeyboardButton("🌐 К списку исключений", callback_data="bypass_list")]]
             await context.bot.send_message(chat_id=chat_id, text=f"❌ Не удалось: {escape_md(res.get('error') or 'адрес не разрешился')}", reply_markup=InlineKeyboardMarkup(kb))
             return
-        new_v = await db.add_bypass_exclusion(res["domain"], res["cidrs"], note="добавлено вручную", source="manual")
+        # GUARD (порт route_safe из OpenWRT): отсекаем слишком широкие CIDR (увели бы
+        # весь трафик мимо DE) и пересечения со служебными/внутренними сетями ноды —
+        # иначе можно порвать роутинг/DE-туннель. Проверку делает wg-api (знает свои сети).
+        safe_cidrs, rejected = await _filter_bypass_cidrs(res["cidrs"])
+        if not safe_cidrs:
+            kb = [[InlineKeyboardButton("🌐 К списку исключений", callback_data="bypass_list")]]
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=("❌ Отклонено — подсети небезопасны для обхода (порвали бы маршрутизацию):\n"
+                      f"{escape_md('; '.join(rejected))}"),
+                reply_markup=InlineKeyboardMarkup(kb))
+            return
+        new_v = await db.add_bypass_exclusion(res["domain"], safe_cidrs, note="добавлено вручную", source="manual")
         await db.log_event("Routing", f"Bypass exclusion added manually: {res['domain']} -> v{new_v}.")
+        skipped_line = (f"\n⚠️ Пропущены небезопасные: `{escape_md('; '.join(rejected))}`" if rejected else "")
         kb = [[InlineKeyboardButton("🌐 К списку исключений", callback_data="bypass_list")]]
         await context.bot.send_message(
             chat_id=chat_id,
             text=(f"✅ Добавлено: `{escape_md(res['domain'])}`\n"
-                  f"Подсети: `{', '.join(res['cidrs'])}`\n"
+                  f"Подсети: `{', '.join(safe_cidrs)}`{skipped_line}\n"
                   f"Версия маршрутизации: `{new_v}` — пользователям уйдёт напоминание о перевыпуске."),
             parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(kb)
         )

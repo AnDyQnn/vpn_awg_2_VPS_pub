@@ -445,9 +445,25 @@ async def de_self_healing_loop(app):
     DE-агент пересоздать wg0 (endpoint /wg/reload — он же заново ставит MSS-clamp). Аналог
     self_healing_loop, но для DE и через агентский API (у RU — через флаг на своём хосте).
     Если сам агент не отвечает (например, сетевой обрыв) — авто-починка невозможна, зовём
-    админа. Контейнер агента и так поднимается сам (restart=always) при краше."""
+    админа. Контейнер агента и так поднимается сам (restart=always) при краше.
+
+    DIRECT-FALLBACK (порт vpn-watchdog из OpenWRT-шлюза): пока DE недоступен, мир/РКН-трафик
+    (fwmark 200 → table 200 → dev wg0) попадал бы в чёрную дыру. Поэтому уводим его НАПРЯМУЮ
+    через RU (юзер не теряет интернет: обычные сайты работают; РКН-заблокированные — нет,
+    пока DE не вернётся), а когда DE поднимается — авто-возвращаем маршрут через Германию."""
     de_down = False
     fail_count = 0
+    route_fallback = False
+    wg_base = WG_API_URL.rsplit("/api", 1)[0]   # routing-эндпоинты вне /api
+
+    async def _de_route(action):   # action: 'de-fallback' | 'de-restore'
+        try:
+            async with aiohttp.ClientSession() as s:
+                async with s.post(f"{wg_base}/routing/{action}", timeout=8) as r:
+                    return r.status == 200
+        except Exception:
+            return False
+
     while True:
         await asyncio.sleep(180)
         ok = False
@@ -461,6 +477,12 @@ async def de_self_healing_loop(app):
             ok = False
 
         if ok:
+            if route_fallback:
+                restored = await _de_route("de-restore")
+                route_fallback = not restored
+                if restored and ADMIN_ID:
+                    try: await notify_admin(app, text="🔼 DE вернулся — трафик мир/РКН снова идёт через Германию.")
+                    except Exception: pass
             if de_down and ADMIN_ID:
                 try: await notify_admin(app, text="✅ Туннель DE снова в норме.")
                 except Exception: pass
@@ -480,10 +502,18 @@ async def de_self_healing_loop(app):
                         reloaded = (resp.status == 200)
             except Exception:
                 reloaded = False
+            # DIRECT-FALLBACK: пока DE не поднялся — мир/РКН-трафик напрямую через RU.
+            if not route_fallback:
+                route_fallback = await _de_route("de-fallback")
+                if route_fallback:
+                    await db.log_event("Self-Healing", "DE down — traffic switched to DIRECT via RU (fallback).")
             if ADMIN_ID:
                 msg = ("⚙️ **Self-Healing DE:** туннель лежал — отправил команду пересоздать wg0."
                        if reloaded else
                        "⚠️ **Self-Healing DE:** туннель недоступен, и агент не отвечает — нужен ручной взгляд.")
+                if route_fallback:
+                    msg += ("\n🔻 Мир/РКН-трафик временно идёт **напрямую через RU** — обычные сайты работают, "
+                            "РКН-заблокированные недоступны, пока DE не вернётся (вернётся автоматически).")
                 try: await notify_admin(app, text=msg, parse_mode="Markdown")
                 except Exception: pass
 

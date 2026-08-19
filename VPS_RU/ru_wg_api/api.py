@@ -50,11 +50,63 @@ BYPASS_CIDRS = [
     "185.169.155.0/24",  # vseinstrumenti.ru
 ]
 
+# --- GUARD SPLIT-TUNNEL (порт route_safe/keep_direct из OpenWRT-шлюза) ---------
+# Bypass-диапазон уходит «напрямую» (исключается из AllowedIPs → мимо DE). Два риска:
+#   1) слишком широкий CIDR (напр. 0.0.0.0/1) — увёл бы ПОЧТИ ВЕСЬ трафик мимо DE;
+#   2) CIDR, пересекающий служебную/внутреннюю сеть ноды (RFC1918, loopback, CGNAT,
+#      внутренняя сеть DE-туннеля 10.13.13.0/24, docker/host-подсеть eth0) — это
+#      порвало бы внутренний роутинг/сам туннель.
+# Такие кандидаты отбраковываем. Границы служебных сетей ВЫЧИСЛЯЕМ (не только хардкод):
+# к спец-диапазонам добавляем реальную connected-подсеть eth0 контейнера.
+BYPASS_MIN_PREFIX = 8   # CIDR шире /8 (меньший префикс) — запрещён
+_SPECIAL_PROTECTED = [
+    "0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8",
+    "169.254.0.0/16", "172.16.0.0/12", "192.168.0.0/16",
+    "224.0.0.0/3", "240.0.0.0/4",
+]
+_DE_TUNNEL_NET = "10.13.13.0/24"   # внутренняя сеть RU↔DE (входит в 10/8, но явно)
+
+def _protected_nets():
+    """Служебные/внутренние сети ноды: спец-диапазоны + ВЫЧИСЛЯЕМАЯ подсеть eth0
+    контейнера (docker/host) + сеть DE-туннеля. Возвращает список ip_network."""
+    nets = []
+    for cidr in _SPECIAL_PROTECTED + [_DE_TUNNEL_NET]:
+        try: nets.append(ipaddress.ip_network(cidr))
+        except ValueError: pass
+    try:
+        out = subprocess.run("ip -o -4 addr show dev eth0", shell=True,
+                             capture_output=True, text=True, timeout=5).stdout
+        m = re.search(r"inet\s+([\d.]+/\d+)", out)
+        if m:
+            nets.append(ipaddress.ip_network(m.group(1), strict=False))
+    except Exception:
+        pass
+    return nets
+
+def bypass_safe(cidr, min_prefix=BYPASS_MIN_PREFIX):
+    """(ok, reason). Порт route_safe: отсекает слишком широкие CIDR и пересечения
+    со служебными/внутренними/вычисленными сетями ноды. Идемпотентен, без мутаций."""
+    try:
+        net = ipaddress.ip_network(str(cidr).strip(), strict=False)
+    except ValueError:
+        return False, "не IPv4-подсеть"
+    if net.version != 4:
+        return False, "только IPv4"
+    if net.prefixlen < min_prefix:
+        return False, f"слишком широкий (/{net.prefixlen} < /{min_prefix}) — увёл бы почти весь трафик мимо DE"
+    for p in _protected_nets():
+        if net.overlaps(p):
+            return False, f"пересекает служебную/внутреннюю сеть {p}"
+    return True, "ok"
+
 def build_split_allowed_ips(bypass_cidrs=None):
     """AllowedIPs = весь IPv4 МИНУС bypass-диапазоны, плюс ::/0.
     Клиент гонит в туннель всё, кроме проблемных РФ-сервисов (они идут напрямую).
-    bypass_cidrs — список из БД бота; при отсутствии используется фолбэк BYPASS_CIDRS."""
+    bypass_cidrs — список из БД бота; при отсутствии используется фолбэк BYPASS_CIDRS.
+    ЗАЩИТА: небезопасные bypass (широкие/служебные) молча отбрасываем — даже кривая
+    запись в БД не порвёт роутинг (см. bypass_safe)."""
     cidrs = bypass_cidrs if bypass_cidrs else BYPASS_CIDRS
+    cidrs = [c for c in cidrs if bypass_safe(c)[0]]
     nets = [ipaddress.ip_network("0.0.0.0/0")]
     for cidr in cidrs:
         try:
@@ -364,6 +416,75 @@ def reload_vpn():
         return {"status": "ok"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+# --- DE-FAILOVER (порт vpn-watchdog из OpenWRT) --------------------------------
+# table 200 в норме = `default dev wg0` → мир/РКН-трафик уходит в Германию.
+# Если DE лёг, этот трафик попадает в чёрную дыру. Fallback = зеркалим основной
+# default-маршрут в table 200 → мир-трафик выходит НАПРЯМУЮ через eth0 (NAT уже есть),
+# юзер не теряет интернет (РКН-сайты недоступны, пока DE не вернётся). Restore
+# возвращает `default dev wg0`. Переключение атомарное и полностью обратимое.
+DE_ROUTE_MODE_FILE = "/run/de_route_mode"
+
+def _main_default_route():
+    """Первый default-маршрут основной таблицы (в контейнере: 'via <docker-gw> dev eth0')."""
+    out = subprocess.run("ip route show default", shell=True,
+                         capture_output=True, text=True).stdout.strip()
+    for line in out.splitlines():
+        line = line.strip()
+        if line.startswith("default") and "wg0" not in line:
+            return line
+    return ""
+
+def _set_de_route(mode):
+    """mode='fallback' → мир-трафик напрямую через eth0; mode='vpn' → через DE (wg0)."""
+    if mode == "fallback":
+        dr = _main_default_route()
+        if not dr:
+            return False, "не нашёл основной default-маршрут"
+        spec = dr[len("default"):].strip()   # 'via X dev eth0'
+        subprocess.run(f"ip route replace default {spec} table 200",
+                       shell=True, stderr=subprocess.DEVNULL)
+    else:
+        subprocess.run("ip route replace default dev wg0 table 200",
+                       shell=True, stderr=subprocess.DEVNULL)
+        mode = "vpn"
+    try:
+        with open(DE_ROUTE_MODE_FILE, "w") as f: f.write(mode)
+    except Exception:
+        pass
+    return True, mode
+
+@app.post("/routing/de-fallback")
+def de_fallback():
+    ok, detail = _set_de_route("fallback")
+    if not ok:
+        raise HTTPException(status_code=500, detail=detail)
+    return {"ok": True, "mode": "fallback", "detail": detail}
+
+@app.post("/routing/de-restore")
+def de_restore():
+    ok, detail = _set_de_route("vpn")
+    return {"ok": ok, "mode": "vpn", "detail": detail}
+
+@app.get("/routing/de-mode")
+def de_mode():
+    try:
+        with open(DE_ROUTE_MODE_FILE) as f:
+            return {"mode": f.read().strip() or "vpn"}
+    except Exception:
+        return {"mode": "vpn"}
+
+class BypassCheck(BaseModel):
+    cidrs: List[str]
+
+@app.post("/routing/bypass-check")
+def bypass_check(req: BypassCheck):
+    """Валидация bypass-кандидатов (guard из OpenWRT): бот зовёт перед сохранением,
+    чтобы отбраковать широкие/служебные CIDR с понятной причиной."""
+    return {"results": [
+        {"cidr": c, "ok": (r := bypass_safe(c))[0], "reason": r[1]}
+        for c in req.cidrs
+    ]}
 
 @app.post("/api/peers")
 def create_peer(req: PeerCreate):
