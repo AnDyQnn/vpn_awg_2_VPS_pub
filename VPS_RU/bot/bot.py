@@ -464,7 +464,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         keyboard = [[InlineKeyboardButton("1 День", callback_data="set_exp_1"), InlineKeyboardButton("1 Неделя", callback_data="set_exp_7")],[InlineKeyboardButton("1 Месяц", callback_data="set_exp_30"), InlineKeyboardButton("Навсегда", callback_data="set_exp_0")],[InlineKeyboardButton("🔙 Отмена", callback_data="back_to_main")]]
         if menu_id: await context.bot.edit_message_text(chat_id=chat_id, message_id=menu_id, text=f"Имя: **{escape_md(name)}**\n\nВыберите срок действия ключа:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
-        context.user_data["state"] = "awaiting_expiry"
+        # Срок действия выбирается КНОПКОЙ (set_exp_*), текст больше не ждём → сбрасываем состояние.
+        context.user_data["state"] = None
 
     elif state in["awaiting_tg_link_new_key", "awaiting_tg_link_existing"]:
         result = await extract_tg_id(update.message, context)
