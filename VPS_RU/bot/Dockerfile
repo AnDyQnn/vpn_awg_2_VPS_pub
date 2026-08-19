@@ -2,13 +2,25 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Устанавливаем системные утилиты прямо в образ
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-        curl \
-        git \
-        iputils-ping \
-        postgresql-client && \
+# Устанавливаем системные утилиты прямо в образ.
+# Устойчивость к блокировке зеркала Debian (ТСПУ/провайдер иногда режут deb.debian.org):
+# перебираем зеркала по очереди, первое рабочее выигрывает — сначала штатное из образа,
+# затем RU-дружественные (yandex, ftp.ru.debian.org). Плохое зеркало просто пропускается.
+RUN set -e; \
+    pkgs="curl git iputils-ping postgresql-client"; \
+    cp /etc/apt/sources.list /etc/apt/sources.list.orig 2>/dev/null || true; \
+    ok=0; \
+    for M in "KEEP" "http://mirror.yandex.ru/debian" "http://ftp.ru.debian.org/debian"; do \
+        if [ "$M" = "KEEP" ]; then \
+            [ -f /etc/apt/sources.list.orig ] && cp /etc/apt/sources.list.orig /etc/apt/sources.list; \
+        else \
+            rm -f /etc/apt/sources.list.d/*.sources 2>/dev/null || true; \
+            printf 'deb %s bookworm main\ndeb %s bookworm-updates main\n' "$M" "$M" > /etc/apt/sources.list; \
+        fi; \
+        if apt-get update && apt-get install -y --no-install-recommends $pkgs; then ok=1; break; fi; \
+        echo ">>> apt-зеркало недоступно, пробую следующее..."; \
+    done; \
+    [ "$ok" = "1" ] || { echo "ВСЕ apt-зеркала недоступны" >&2; exit 1; }; \
     rm -rf /var/lib/apt/lists/*
 
 # Настройка Git

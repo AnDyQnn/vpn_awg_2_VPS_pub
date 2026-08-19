@@ -323,16 +323,33 @@ async def send_de_audit_report(context, chat_id, msg_id, report):
                 rf.write(f"{icon} {t['name']}: {t['msg']}\n")
             rf.write("\n")
 
-    summary_text = "🇩🇪 **Итоги Аудита (DE Agent):**\n\n"
+    cat_names = {
+        "network": "🌐 Сеть и маршрутизация",
+        "host": "💻 Ресурсы сервера",
+        "docker": "🐳 Среда Docker",
+        "vpn": "🛡 Ядро VPN (exit-нода)",
+        "storage": "🗄 Хранилище",
+        "security": "🔐 Безопасность",
+    }
+    total_fails = total_warns = 0
+    summary_text = "🇩🇪 **Итоги аудита DE (агент обхода)**\n" + ("━" * 14) + "\n"
     for cat_key, tests in report.items():
         cat_fails = sum(1 for t in tests if t["status"] == "error")
         cat_warns = sum(1 for t in tests if t["status"] == "warning")
+        total_fails += cat_fails; total_warns += cat_warns
         cat_icon = "✅"
         if cat_fails > 0: cat_icon = "❌"
         elif cat_warns > 0: cat_icon = "⚠️"
-        summary_text += f"{cat_icon} **{cat_key.capitalize()}**\n"
+        title = cat_names.get(cat_key, cat_key.capitalize())
+        tail = ""
+        if cat_fails or cat_warns:
+            tail = "  · " + " ".join(([f"❌{cat_fails}"] if cat_fails else []) + ([f"⚠️{cat_warns}"] if cat_warns else []))
+        summary_text += f"{cat_icon} **{title}**{tail}\n"
 
-    summary_text += "\n📄 *Подробности в файле.*"
+    verdict = "🟢 Всё в норме" if not total_fails and not total_warns else (
+        f"🔴 Проблем: {total_fails}" + (f", предупреждений: {total_warns}" if total_warns else "")
+        if total_fails else f"🟡 Предупреждений: {total_warns}")
+    summary_text += ("━" * 14) + f"\n{verdict}\n📄 _Подробности — в файле._"
     
     await safe_delete(context, chat_id, msg_id)
     kb = [[InlineKeyboardButton("🔙 Главное меню", callback_data="back_to_main")]]
@@ -389,21 +406,34 @@ async def online_users_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             async with session.get(f"{WG_API_URL}/peers", timeout=3) as resp:
                 peers_data = await resp.json()
 
+        from monitor import online_since   # старт текущей сессии (не затирается хэндшейками)
+
         db_users = await db.get_all_users()
         uuid_to_name = {u['uuid']: u['name'] for u in db_users}
         active_list =[]
         now = int(time.time())
+
+        def _fmt_dur(secs):
+            secs = int(max(0, secs)); h, rem = divmod(secs, 3600); m, s = divmod(rem, 60)
+            return f"{h}ч {m}м" if h else (f"{m}м" if m else f"{s}с")
+
         for peer in peers_data:
             last_hs = peer.get('latest_handshake', 0)
-            diff = now - last_hs
-            if last_hs > 0 and diff < 180:
+            if last_hs > 0 and (now - last_hs) < 180:
                 uuid_val = peer.get('uuid')
                 name = uuid_to_name.get(uuid_val, "Unknown")
-                date_str = ts_to_moscow(last_hs).strftime('%d.%m.%y %H:%M:%S')
-                diff_str = str(timedelta(seconds=diff)).split('.')[0]
-                active_list.append(f"👤 **{escape_md(name)}**\n🕒 МСК: {date_str} `[{diff_str} назад]`")
+                since = online_since.get(uuid_val, last_hs)   # длительность СЕССИИ, а не с хэндшейка
+                start_str = ts_to_moscow(since).strftime('%H:%M')
+                active_list.append(
+                    f"👤 **{escape_md(name)}**\n"
+                    f"🟢 В сети `{_fmt_dur(now - since)}` · с {start_str} МСК"
+                )
 
-        text = "🟢 **Пользователи онлайн:**\n\n" + "\n\n".join(active_list) if active_list else "💤 **Сейчас никого нет онлайн.**"
+        if active_list:
+            text = (f"🟢 **Онлайн: {len(active_list)}**\n" + ("━" * 14) + "\n\n"
+                    + "\n\n".join(active_list))
+        else:
+            text = "💤 **Сейчас никого нет онлайн.**"
     except Exception as e: text = f"⚠️ Ошибка получения данных: {e}"
     
     try:

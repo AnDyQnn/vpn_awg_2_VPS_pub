@@ -55,6 +55,17 @@ curl -s -m 3 https://api.telegram.org >/dev/null 2>&1
 curl -s -m 3 https://github.com >/dev/null 2>&1
 [ $? -eq 0 ] && add_check CAT_NET "Доступность GitHub" "ok" "Связь есть" || add_check CAT_NET "Доступность GitHub" "warning" "Недоступен"
 
+# RU-дружественная проба (ТСПУ иногда режет 8.8.8.8/1.1.1.1, поэтому проверяем и RU-цель)
+ping -c 1 -W 2 77.88.8.8 >/dev/null 2>&1
+[ $? -eq 0 ] && add_check CAT_NET "Ping Yandex DNS (77.88.8.8)" "ok" "Доступно" || add_check CAT_NET "Ping Yandex DNS (77.88.8.8)" "warning" "Таймаут"
+
+# Резервные зеркала пакетов (заранее видим, если ТСПУ/провайдер их режет — сборка бы упала)
+curl -s -m 4 -o /dev/null https://mirror.yandex.ru 2>/dev/null
+[ $? -eq 0 ] && add_check CAT_NET "Зеркало пакетов (mirror.yandex.ru)" "ok" "Доступно" || add_check CAT_NET "Зеркало пакетов (mirror.yandex.ru)" "warning" "Недоступно"
+
+curl -s -m 4 -o /dev/null https://raw.githubusercontent.com 2>/dev/null
+[ $? -eq 0 ] && add_check CAT_NET "Зеркало списков (raw.githubusercontent)" "ok" "Доступно" || add_check CAT_NET "Зеркало списков (raw.githubusercontent)" "warning" "Недоступно"
+
 FWD=$(sysctl -n net.ipv4.ip_forward 2>/dev/null || echo "0")
 [ "$FWD" = "1" ] && add_check CAT_NET "IPv4 Forwarding (Маршрутизация)" "ok" "Включено" || add_check CAT_NET "IPv4 Forwarding (Маршрутизация)" "error" "Выключено"
 
@@ -163,6 +174,36 @@ OBFUSCATION=$(grep -E "Jc|Jmin|Jmax" "$APP_DIR$CONF_FILE" 2>/dev/null)
 
 MASQ=$(docker exec vpn_wireguard iptables -t nat -S 2>/dev/null | grep MASQUERADE)
 [ -n "$MASQ" ] && add_check CAT_VPN "NAT Masquerade (Трафик)" "ok" "Настроено" || add_check CAT_VPN "NAT Masquerade (Трафик)" "error" "Отсутствует"
+
+# --- ГИБРИДНАЯ МАРШРУТИЗАЦИЯ И DE-FAILOVER (ядро обхода) ---
+FWMARK_RULE=$(docker exec vpn_wireguard sh -c 'ip rule show 2>/dev/null | grep -i "fwmark 0xc8"')
+[ -n "$FWMARK_RULE" ] && add_check CAT_VPN "Правило fwmark→table 200 (обход)" "ok" "На месте" || add_check CAT_VPN "Правило fwmark→table 200 (обход)" "error" "Отсутствует"
+
+DE_ROUTE=$(docker exec vpn_wireguard ip route show table 200 2>/dev/null | grep '^default')
+if echo "$DE_ROUTE" | grep -q "dev wg0"; then
+    add_check CAT_VPN "Маршрут мир/РКН → Германия" "ok" "Через DE (норма)"
+elif [ -n "$DE_ROUTE" ]; then
+    add_check CAT_VPN "Маршрут мир/РКН → Германия" "warning" "FALLBACK: напрямую через RU (DE недоступен)"
+else
+    add_check CAT_VPN "Маршрут мир/РКН → Германия" "error" "table 200 пуста"
+fi
+
+RU_SET=$(docker exec vpn_wireguard ipset list ru_nets 2>/dev/null | grep -cE '^[0-9]+\.')
+[ "${RU_SET:-0}" -ge 100 ] && add_check CAT_VPN "Гео-RU список (ru_nets)" "ok" "${RU_SET} сетей" || add_check CAT_VPN "Гео-RU список (ru_nets)" "warning" "Мало/пусто: ${RU_SET:-0}"
+
+BL_SET=$(docker exec vpn_wireguard ipset list blocked_nets 2>/dev/null | grep -cE '^[0-9]+\.')
+[ "${BL_SET:-0}" -ge 100 ] && add_check CAT_VPN "Блокировки РКН (blocked_nets)" "ok" "${BL_SET} сетей" || add_check CAT_VPN "Блокировки РКН (blocked_nets)" "warning" "Мало/пусто: ${BL_SET:-0}"
+
+MSS=$(docker exec vpn_wireguard iptables -t mangle -S 2>/dev/null | grep -i "TCPMSS")
+[ -n "$MSS" ] && add_check CAT_VPN "MSS-clamping (анти-тормоза)" "ok" "Активно" || add_check CAT_VPN "MSS-clamping (анти-тормоза)" "warning" "Не найдено (возможны тормоза)"
+
+DE_HS=$(docker exec vpn_wireguard wg show wg0 latest-handshakes 2>/dev/null | awk '{if($2>m)m=$2} END{print m+0}')
+if [ "${DE_HS:-0}" -gt 0 ]; then
+    HS_AGE=$(( $(date +%s) - DE_HS ))
+    [ "$HS_AGE" -lt 180 ] && add_check CAT_VPN "Активность туннеля (хэндшейк)" "ok" "Свежий (${HS_AGE}s назад)" || add_check CAT_VPN "Активность туннеля (хэндшейк)" "warning" "Устарел (${HS_AGE}s)"
+else
+    add_check CAT_VPN "Активность туннеля (хэндшейк)" "warning" "Нет свежих хэндшейков"
+fi
 
 WG_DUMP=$(docker exec vpn_wireguard wg show wg0 dump 2>/dev/null | wc -l)
 [ "$WG_DUMP" -ge 1 ] && add_check CAT_VPN "Ответ ядра WireGuard" "ok" "Успешно" || add_check CAT_VPN "Ответ ядра WireGuard" "error" "Ядро зависло/не отвечает"
