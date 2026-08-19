@@ -114,6 +114,11 @@ ghost_cache = {}
 paused_cache = {}
 flapping_cache = {}
 resource_alert_cache = {}
+# online_since[uuid] = ts начала ТЕКУЩЕЙ сессии (первый раз, когда увидели пира онлайн).
+# Ведётся в alert_loop (always-on, каждые 10с): не затирается свежими хэндшейками, поэтому
+# длительность онлайна растёт корректно (баг: раньше показывали «сколько прошло с хэндшейка»,
+# а он обновляется keepalive каждые ~2 мин → всегда 0–3 мин). Чистится, когда пир ушёл офлайн.
+online_since = {}
 
 # --- АНТИ-ШЕРИНГ: отличаем реальный шеринг от легитимной смены сети ---
 # Истинный шеринг = НЕСКОЛЬКО устройств онлайн ОДНОВРЕМЕННО: endpoint пира быстро
@@ -174,6 +179,26 @@ async def midnight_alert_cleanup_loop(app):
             await asyncio.sleep(120)
 
 # ------------------------ DASHBOARD ------------------------
+def _bar(pct, width=10):
+    """Юникод-шкала загрузки для моноширинного блока Telegram: ██████░░░░."""
+    try:
+        pct = max(0.0, min(100.0, float(pct)))
+    except (TypeError, ValueError):
+        pct = 0.0
+    filled = int(round(pct / 100.0 * width))
+    return "█" * filled + "░" * (width - filled)
+
+def _metrics_block(cpu, ram, disk):
+    """Три ровные моноширинные строки метрик со шкалами (колонки не пляшут)."""
+    def _f(x):
+        try: return float(x)
+        except (TypeError, ValueError): return 0.0
+    return (
+        f"`CPU  {_bar(cpu)} {_f(cpu):3.0f}%`\n"
+        f"`RAM  {_bar(ram)} {_f(ram):3.0f}%`\n"
+        f"`Диск {_bar(disk)} {_f(disk):3.0f}%`"
+    )
+
 async def get_dashboard():
     cpu_ru = psutil.cpu_percent()
     ram_ru = psutil.virtual_memory().percent
@@ -220,17 +245,20 @@ async def get_dashboard():
 
     ru_dot = node_dot(ru_ok, cpu_ru, ram_ru, disk_ru)
     de_dot = node_dot(de_ok, cpu_de, ram_de, disk_de)
-    de_line = (f"CPU `{cpu_de:.0f}%` · RAM `{ram_de:.0f}%` · Диск `{disk_de:.0f}%`"
-               if de_ok else "_недоступен_")
+    ru_block = _metrics_block(cpu_ru, ram_ru, disk_ru) if ru_ok else "_мастер недоступен_"
+    de_block = _metrics_block(cpu_de, ram_de, disk_de) if de_ok else "_агент недоступен_"
+    sep = "━━━━━━━━━━━━━━"
 
     return (
-        f"📊 **Дашборд**\n\n"
+        f"📊 **Дашборд** · RU + DE\n"
+        f"{sep}\n"
         f"{ru_dot} 🇷🇺 **RU** · мастер\n"
-        f"CPU `{cpu_ru:.0f}%` · RAM `{ram_ru:.0f}%` · Диск `{disk_ru:.0f}%`\n\n"
-        f"{de_dot} 🇩🇪 **DE** · агент\n"
-        f"{de_line}\n\n"
-        f"🔌 Сессий: **{active}** / {total}\n"
-        f"🚫 Исключений: {bypass_count} · ♻️ Старых ключей: {outdated_count}"
+        f"{ru_block}\n\n"
+        f"{de_dot} 🇩🇪 **DE** · агент обхода\n"
+        f"{de_block}\n"
+        f"{sep}\n"
+        f"🔌 Сессий: **{active}** из {total}\n"
+        f"🌐 Исключений: **{bypass_count}**   ♻️ Старых ключей: **{outdated_count}**"
     )
 
 # ------------------------ СИСТЕМНЫЕ АЛЕРТЫ ------------------------
@@ -339,6 +367,7 @@ async def alert_loop(app):
 
                 if handshake > 0 and (now - handshake) < 180 and hostname:
                     active_uuids.add(uuid_val)
+                    online_since.setdefault(uuid_val, now)   # старт сессии — только при первом появлении
                     user = users_dict.get(uuid_val)
 
                     if user:
@@ -407,6 +436,9 @@ async def alert_loop(app):
 
             disconnected_uuids = notified_cache - active_uuids
             for uid in disconnected_uuids: notified_cache.remove(uid)
+            # Пир ушёл офлайн — сбрасываем старт сессии (при возврате начнётся заново).
+            for uid in [u for u in online_since if u not in active_uuids]:
+                online_since.pop(uid, None)
 
         except Exception as e:
             if not wg_is_down and isinstance(e, (aiohttp.ClientError, asyncio.TimeoutError)):

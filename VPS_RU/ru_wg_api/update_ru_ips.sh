@@ -47,7 +47,8 @@ fetch_geo_ru () {
     local url
     for url in \
         "https://www.ipdeny.com/ipblocks/data/aggregated/ru-aggregated.zone" \
-        "https://raw.githubusercontent.com/dvershinin/ip-country-cidr/master/ru-ipv4.cidr"
+        "https://raw.githubusercontent.com/dvershinin/ip-country-cidr/master/ru-ipv4.cidr" \
+        "https://raw.githubusercontent.com/herrbischoff/country-ip-blocks/master/ipv4/ru.cidr"
     do
         if curl -sSfL --max-time 30 "$url" 2>/dev/null | grep -E "$CIDR_RE" > "$tmp"; then
             if [ "$(wc -l < "$tmp")" -ge 100 ]; then
@@ -74,12 +75,26 @@ fetch_blocked () {
             return 0
         fi
     fi
-    # Фолбэк: собрать из частей, если allyouneed недоступен
+    # Фолбэк 1: собрать из частей antifilter, если allyouneed недоступен
     : > "$tmp"
     local url
     for url in \
         "https://antifilter.download/list/ipsum.lst" \
         "https://antifilter.download/list/subnet.lst"
+    do
+        curl -sSfL --max-time 30 "$url" 2>/dev/null | grep -E "$CIDR_RE" >> "$tmp" || true
+    done
+    if [ "$(wc -l < "$tmp")" -ge 100 ]; then
+        sort -u "$tmp" > "$BL_CACHE"
+        rm -f "$tmp"
+        return 0
+    fi
+    # Фолбэк 2: github-зеркало (raw.githubusercontent обычно доступен, даже когда
+    # antifilter.download режут ТСПУ/провайдером). Re-filter — сообществное зеркало реестра.
+    : > "$tmp"
+    for url in \
+        "https://raw.githubusercontent.com/1andrevich/Re-filter-lists/main/ipsum.lst" \
+        "https://raw.githubusercontent.com/1andrevich/Re-filter-lists/main/subnet.lst"
     do
         curl -sSfL --max-time 30 "$url" 2>/dev/null | grep -E "$CIDR_RE" >> "$tmp" || true
     done

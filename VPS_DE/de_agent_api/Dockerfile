@@ -2,19 +2,20 @@
 FROM amneziavpn/amnezia-wg:latest
 
 # Устанавливаем Python и системные зависимости (включая компиляторы для psutil)
-RUN apk add --no-cache \
-    python3 \
-    py3-pip \
-    iproute2 \
-    iptables \
-    curl \
-    bash \
-    procps \
-    iputils \
-    gcc \
-    musl-dev \
-    python3-dev \
-    linux-headers
+# Устойчивость к блокировке зеркала Alpine (ТСПУ/провайдер иногда режут dl-cdn):
+# перебираем зеркала, меняя только ХОСТ (версия Alpine сохраняется через sed) —
+# сначала штатное, затем RU-дружественные (yandex, aliyun). Плохое зеркало пропускается.
+RUN set -e; \
+    pkgs="python3 py3-pip iproute2 iptables curl bash procps iputils gcc musl-dev python3-dev linux-headers"; \
+    cp /etc/apk/repositories /etc/apk/repositories.orig; \
+    ok=0; \
+    for M in "KEEP" "https://mirror.yandex.ru/mirrors/alpine" "https://mirrors.aliyun.com/alpine"; do \
+        if [ "$M" = "KEEP" ]; then cp /etc/apk/repositories.orig /etc/apk/repositories; \
+        else sed -E "s#https?://[^/]+/alpine#$M#g" /etc/apk/repositories.orig > /etc/apk/repositories; fi; \
+        if apk add --no-cache $pkgs; then ok=1; break; fi; \
+        echo ">>> apk-зеркало недоступно, пробую следующее..."; \
+    done; \
+    [ "$ok" = "1" ] || { echo "ВСЕ apk-зеркала недоступны" >&2; exit 1; }
 
 # Создаем виртуальное окружение и ставим пакеты.
 # Устойчивость к блокировке/недоступности индекса пакетов (даунтайм в проде недопустим):

@@ -7,7 +7,29 @@ import pandas as pd
 from openpyxl import Workbook
 from openpyxl.drawing.image import Image as ExcelImage
 from openpyxl.utils import get_column_letter
-from openpyxl.styles import Alignment
+from openpyxl.styles import Alignment, Font, PatternFill, Border, Side
+
+# --- Единый аккуратный стиль Excel-выгрузок ---
+_HDR_FILL = PatternFill("solid", fgColor="1F4E78")   # тёмно-синяя шапка
+_HDR_FONT = Font(bold=True, color="FFFFFF", size=11)
+_OK_FILL = PatternFill("solid", fgColor="E2EFDA")    # мягкий зелёный (актив)
+_OFF_FILL = PatternFill("solid", fgColor="FCE4E4")   # мягкий красный (пауза)
+_TOT_FILL = PatternFill("solid", fgColor="FFF2CC")   # мягкий жёлтый (итоги)
+_THIN = Side(style="thin", color="D9D9D9")
+_BORDER = Border(left=_THIN, right=_THIN, top=_THIN, bottom=_THIN)
+
+def _style_sheet(ws, header_row=1, autofilter=True):
+    """Оформляет шапку: жирный белый текст на синем, по центру, рамка; замораживает
+    строку заголовка и включает автофильтр — чтобы таблица была читаемой и удобной."""
+    for cell in ws[header_row]:
+        cell.fill = _HDR_FILL
+        cell.font = _HDR_FONT
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        cell.border = _BORDER
+    ws.row_dimensions[header_row].height = 22
+    ws.freeze_panes = ws.cell(row=header_row + 1, column=1).coordinate
+    if autofilter and ws.max_column >= 1 and ws.max_row >= 1:
+        ws.auto_filter.ref = ws.dimensions
 from utils import dt_to_moscow, BASE_BYPASS, ROUTING_VERSION
 
 CONFIGS_DIR = Path("/volumes/configs")
@@ -395,7 +417,9 @@ class Database:
             ws.cell(row=index, column=1, value=u['name'])
             ws.cell(row=index, column=2, value=u['uuid'])
             ws.cell(row=index, column=3, value=u['device'] or "")
-            ws.cell(row=index, column=4, value=status_text)
+            st_cell = ws.cell(row=index, column=4, value=status_text)
+            st_cell.fill = _OK_FILL if u['is_active'] else _OFF_FILL
+            st_cell.alignment = Alignment(horizontal="center")
             ws.cell(row=index, column=5, value=exp_text)
             
             tg_ids_str = ", ".join(map(str, u.get('tg_ids',[])))
@@ -431,15 +455,18 @@ class Database:
             else:
                 ws.row_dimensions[index].height = 120
 
-        ws_events = wb.create_sheet(title="System Events (Last 7 Days)")
-        ws_events.append(["Дата и Время (МСК)", "Тип события", "Сообщение"])
+        _style_sheet(ws)
+
+        ws_events = wb.create_sheet(title="События системы")
+        ws_events.append(["Дата и время (МСК)", "Тип события", "Сообщение"])
         ws_events.column_dimensions['A'].width = 25
         ws_events.column_dimensions['B'].width = 20
         ws_events.column_dimensions['C'].width = 70
-        
+
         logs = await self.fetch_all("SELECT timestamp, event_type, message FROM events_log ORDER BY timestamp DESC")
         for row in logs:
             ws_events.append([dt_to_moscow(row['timestamp']).strftime("%Y-%m-%d %H:%M:%S"), row['event_type'], row['message']])
+        _style_sheet(ws_events)
 
         ws_wg = wb.create_sheet(title="wg0.conf")
         ws_wg.column_dimensions['A'].width = 120
@@ -460,41 +487,60 @@ class Database:
         wb.remove(wb.active)
 
         if not users:
-            ws = wb.create_sheet("Empty")
+            ws = wb.create_sheet("Пусто")
             ws.append(["Нет пользователей"])
             wb.save(path)
             return path
 
+        # Лист-сводка (общая картина по всем) — идёт первым, чтобы сразу видеть итоги
+        summary = wb.create_sheet("Сводка")
+        summary.append(["Пользователь", "Скачано, MB", "Отправлено, MB", "Всего, MB", "Точек"])
+        for col, w in zip("ABCDE", (28, 16, 16, 16, 10)):
+            summary.column_dimensions[col].width = w
+
         for u in users:
             safe_name = "".join([c for c in u['name'] if c.isalnum() or c == '_'])[:30]
             if not safe_name: safe_name = u['uuid'][:8]
-            
+
             ws = wb.create_sheet(title=safe_name)
-            ws.append(["Время МСК", "Скачано (MB)", "Отправлено (MB)", "Активность (MB)"])
-            
-            ws.column_dimensions['A'].width = 20
-            ws.column_dimensions['B'].width = 15
-            ws.column_dimensions['C'].width = 15
-            ws.column_dimensions['D'].width = 30
+            ws.append(["Время МСК", "Скачано, MB", "Отправлено, MB", "Прирост, MB"])
+            for col, w in zip("ABCD", (20, 16, 16, 16)):
+                ws.column_dimensions[col].width = w
 
             query = "SELECT bytes_in, bytes_out, last_seen FROM stats WHERE user_uuid=$1 ORDER BY last_seen ASC"
             user_stats = await self.fetch_all(query, u['uuid'])
-            
+
             prev_total = 0
+            n_points = 0
+            last_in = last_out = 0
             for row in user_stats:
                 total_bytes = row['bytes_in'] + row['bytes_out']
                 delta_bytes = total_bytes - prev_total
                 if delta_bytes < 0: delta_bytes = total_bytes
                 if prev_total == 0: delta_bytes = 0
                 prev_total = total_bytes
-                
+                last_in, last_out = row['bytes_in'], row['bytes_out']
+                n_points += 1
+
                 ws.append([
                     dt_to_moscow(row['last_seen']).strftime("%Y-%m-%d %H:%M:%S"),
                     round(row['bytes_in'] / (1024 * 1024), 2),
                     round(row['bytes_out'] / (1024 * 1024), 2),
                     round(delta_bytes / (1024 * 1024), 2)
                 ])
-                
+
+            # Итоговая строка по пользователю (выделена)
+            tin = round(last_in / (1024 * 1024), 2)
+            tout = round(last_out / (1024 * 1024), 2)
+            tot_row = ws.max_row + 1
+            ws.append(["ИТОГО", tin, tout, round(tin + tout, 2)])
+            for cell in ws[tot_row]:
+                cell.font = Font(bold=True)
+                cell.fill = _TOT_FILL
+            _style_sheet(ws)
+            summary.append([u['name'], tin, tout, round(tin + tout, 2), n_points])
+
+        _style_sheet(summary)
         wb.save(path)
         return path
 
