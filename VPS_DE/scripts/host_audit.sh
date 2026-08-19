@@ -60,6 +60,14 @@ MTU=$(cat /sys/class/net/$DEF_IFACE/mtu 2>/dev/null)
 
 curl -s -m 4 -o /dev/null https://mirror.yandex.ru 2>/dev/null
 [ $? -eq 0 ] && add_check CAT_NET "Зеркало пакетов (mirror.yandex.ru)" "ok" "Доступно" || add_check CAT_NET "Зеркало пакетов (mirror.yandex.ru)" "warning" "Недоступно"
+
+# conntrack: для exit-ноды критично (весь клиентский трафик через NAT). Переполнение = обрывы.
+CT_COUNT=$(cat /proc/sys/net/netfilter/nf_conntrack_count 2>/dev/null)
+CT_MAX=$(cat /proc/sys/net/netfilter/nf_conntrack_max 2>/dev/null)
+if [ -n "$CT_COUNT" ] && [ -n "$CT_MAX" ] && [ "${CT_MAX:-0}" -gt 0 ]; then
+    CT_PCT=$(( CT_COUNT * 100 / CT_MAX ))
+    [ "$CT_PCT" -lt 80 ] && add_check CAT_NET "Таблица соединений (conntrack)" "ok" "${CT_COUNT}/${CT_MAX} (${CT_PCT}%)" || add_check CAT_NET "Таблица соединений (conntrack)" "warning" "Заполнена ${CT_PCT}% — риск обрывов"
+fi
 sleep 1
 
 # ---------------- ХОСТ ----------------
@@ -87,6 +95,12 @@ TIMEDATE=$(timedatectl show 2>/dev/null | grep NTPSynchronized | cut -d= -f2)
 KERNEL=$(uname -r)
 add_check CAT_HOST "Версия ядра Linux" "ok" "$KERNEL"
 
+CORES=$(nproc 2>/dev/null || echo "?")
+add_check CAT_HOST "Ядер CPU" "ok" "$CORES"
+
+RAM_TOTAL=$(free -m | awk 'NR==2{print $2}')
+add_check CAT_HOST "Всего RAM" "ok" "${RAM_TOTAL:-?} MB"
+
 OOM=$(dmesg 2>/dev/null | grep -i "killed process" | wc -l)
 [ "$OOM" -eq 0 ] && add_check CAT_HOST "OOM Killer (нехватка памяти)" "ok" "Не зафиксировано" || add_check CAT_HOST "OOM Killer (нехватка памяти)" "warning" "Были случаи"
 sleep 1
@@ -108,6 +122,9 @@ EXITED=$(docker ps -aq -f status=exited | wc -l)
 
 D_SPACE=$(docker system df --format '{{.Size}}' | head -n 1)
 add_check CAT_DOCKER "Объём данных Docker" "ok" "${D_SPACE:-?}"
+
+IMG_COUNT=$(docker images -q 2>/dev/null | wc -l)
+[ "${IMG_COUNT:-0}" -le 10 ] && add_check CAT_DOCKER "Docker-образов" "ok" "${IMG_COUNT} шт." || add_check CAT_DOCKER "Docker-образов" "warning" "${IMG_COUNT} шт. (prune)"
 
 DE_ERR=$(docker logs --tail 150 "$CONT" 2>&1 | grep -iE "error|fatal|exception|traceback" | grep -viE "CancelledError" | tail -n 1)
 if [ -n "$DE_ERR" ]; then
@@ -137,6 +154,12 @@ MSS=$(docker exec "$CONT" iptables -t mangle -S 2>/dev/null | grep -i "TCPMSS")
 
 WG_DUMP=$(docker exec "$CONT" wg show wg0 dump 2>/dev/null | wc -l)
 [ "${WG_DUMP:-0}" -ge 1 ] && add_check CAT_VPN "Ответ ядра WireGuard" "ok" "Успешно" || add_check CAT_VPN "Ответ ядра WireGuard" "error" "Ядро не отвечает"
+
+RP=$(docker exec "$CONT" sysctl -n net.ipv4.conf.all.rp_filter 2>/dev/null)
+[ "$RP" = "0" ] && add_check CAT_VPN "rp_filter (асимм. маршрутизация)" "ok" "0 (верно)" || add_check CAT_VPN "rp_filter (асимм. маршрутизация)" "warning" "${RP:-?} — должно быть 0"
+
+PEERS_TOTAL=$(docker exec "$CONT" wg show wg0 peers 2>/dev/null | grep -c .)
+add_check CAT_VPN "Пиры WireGuard" "ok" "Всего: ${PEERS_TOTAL:-0} (ожидается 1 — мастер RU)"
 
 # Свежесть хэндшейка с RU (мастер — единственный пир exit-ноды)
 DE_HS=$(docker exec "$CONT" wg show wg0 latest-handshakes 2>/dev/null | awk '{if($2>m)m=$2} END{print m+0}')

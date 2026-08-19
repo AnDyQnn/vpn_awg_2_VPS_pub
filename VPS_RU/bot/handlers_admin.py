@@ -181,13 +181,13 @@ async def de_read_logs(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         f.write("=== LOGS FROM DE AGENT ===\n\n")
                         f.write(logs)
                         
+                    await safe_delete(context, update.callback_query.message.chat_id, update.callback_query.message.message_id)
                     await context.bot.send_document(
-                        chat_id=update.effective_chat.id, 
-                        document=open(log_path, "rb"), 
+                        chat_id=update.effective_chat.id,
+                        document=open(log_path, "rb"),
                         caption="📑 Системные логи агента в Германии",
                         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Главное меню", callback_data="back_to_main")]])
                     )
-                    await safe_delete(context, update.callback_query.message.chat_id, update.callback_query.message.message_id)
                 else:
                     await update.callback_query.edit_message_text(f"❌ **Ошибка API агента:** HTTP {resp.status}", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Главное меню", callback_data="back_to_main")]]), parse_mode=ParseMode.MARKDOWN)
     except Exception as e:
@@ -262,14 +262,14 @@ async def de_backup(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     with open(backup_path, 'wb') as f:
                         f.write(await resp.read())
                     
+                    await safe_delete(context, update.callback_query.message.chat_id, update.callback_query.message.message_id)
                     await context.bot.send_document(
-                        chat_id=update.effective_chat.id, 
-                        document=open(backup_path, "rb"), 
+                        chat_id=update.effective_chat.id,
+                        document=open(backup_path, "rb"),
                         caption="💾 **Бэкап конфигурации сервера DE (Агент)**",
                         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Главное меню", callback_data="back_to_main")]]),
                         parse_mode=ParseMode.MARKDOWN
                     )
-                    await safe_delete(context, update.callback_query.message.chat_id, update.callback_query.message.message_id)
                 else:
                     await update.callback_query.edit_message_text(f"❌ **Ошибка агента:** HTTP {resp.status}", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Главное меню", callback_data="back_to_main")]]), parse_mode=ParseMode.MARKDOWN)
     except Exception as e:
@@ -821,8 +821,8 @@ async def run_audit_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             rf.write("\n")
 
     total_tests = sum(len(tests) for tests in report.values())
-    summary_text = f"📊 **Итоги Глобального Аудита (RU Master):**\n⏳ Всего проверок: {total_tests}\n\n"
-    
+    summary_text = f"🛡 **Итоги аудита RU · мастер**  ·  {total_tests} проверок\n" + ("━" * 14) + "\n"
+
     total_fails = 0
     total_warns = 0
 
@@ -831,24 +831,27 @@ async def run_audit_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         cat_fails = sum(1 for t in tests if t["status"] == "error")
         cat_warns = sum(1 for t in tests if t["status"] == "warning")
         cat_ok = sum(1 for t in tests if t["status"] == "ok")
-        
+
         total_fails += cat_fails
         total_warns += cat_warns
-        
+
         cat_icon = "✅"
         if cat_fails > 0: cat_icon = "❌"
         elif cat_warns > 0: cat_icon = "⚠️"
-        
-        cat_name = stages.get(cat_key, cat_key)
-        summary_text += f"{cat_icon} **{cat_name}** `[{cat_ok}/{cat_total} OK]`\n"
 
-    summary_text += "\n"
-    
+        tail = ""
+        if cat_fails or cat_warns:
+            tail = "  " + " ".join(([f"❌{cat_fails}"] if cat_fails else []) + ([f"⚠️{cat_warns}"] if cat_warns else []))
+        cat_name = stages.get(cat_key, cat_key)
+        summary_text += f"{cat_icon} **{cat_name}** `{cat_ok}/{cat_total}`{tail}\n"
+
+    summary_text += ("━" * 14) + "\n"
+
     if total_fails == 0 and total_warns == 0:
-        summary_text += "🚀 **Вердикт:** Сервер в идеальном состоянии!"
+        summary_text += "🟢 **Вердикт:** сервер в идеальном состоянии."
     else:
-        summary_text += f"⚠️ **Вердикт:** Ошибок: {total_fails}, Предупреждений: {total_warns}\n"
-        summary_text += "📄 *Подробности по каждому тесту читайте в файле ниже 👇*"
+        summary_text += f"{'🔴' if total_fails else '🟡'} **Вердикт:** ошибок {total_fails}, предупреждений {total_warns}\n"
+        summary_text += "📄 _Подробности по каждому тесту — в файле ниже._"
 
     if len(summary_text) > 1000:
         summary_text = summary_text[:950] + "...\n📄 *Полный отчет в файле.*"
