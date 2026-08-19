@@ -608,7 +608,10 @@ async def support_ticket_detail(update: Update, context: ContextTypes.DEFAULT_TY
     
     text = f"🎫 **Обращение #{ticket_id}**\n👤 Пользователь: `{escape_md(name)}`\n🕒 Время: `{date_str}`\n\n📝 **Текст:**\n_{escape_md(t['message'])}_"
     
-    keyboard = [[InlineKeyboardButton("✍️ Ответить", callback_data=f"supp_rep_{ticket_id}")],[InlineKeyboardButton("✅ Закрыть (Без ответа)", callback_data=f"supp_clo_{ticket_id}")],[InlineKeyboardButton("🔙 Назад к пользователю", callback_data=f"supp_usr_{t['user_uuid']}")]
+    keyboard = [
+        [InlineKeyboardButton("✍️ Ответить", callback_data=f"supp_rep_{ticket_id}"),
+         InlineKeyboardButton("✅ Закрыть без ответа", callback_data=f"supp_clo_{ticket_id}")],
+        [InlineKeyboardButton("🔙 К пользователю", callback_data=f"supp_usr_{t['user_uuid']}")],
     ]
     await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
 
