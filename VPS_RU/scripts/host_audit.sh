@@ -76,6 +76,15 @@ TCP_CONN=$(ss -s 2>/dev/null | grep TCP: | grep -oP 'estab \K\d+')
 [ -z "$TCP_CONN" ] && TCP_CONN=0
 [ "$TCP_CONN" -lt 1000 ] && add_check CAT_NET "Активные TCP сессии" "ok" "$TCP_CONN" || add_check CAT_NET "Активные TCP сессии" "warning" "Высокая нагрузка: $TCP_CONN"
 
+# conntrack: таблица отслеживания соединений NAT. Для VPN-шлюза критично — при переполнении
+# новые соединения молча дропаются («интернет пропал» у части клиентов).
+CT_COUNT=$(cat /proc/sys/net/netfilter/nf_conntrack_count 2>/dev/null)
+CT_MAX=$(cat /proc/sys/net/netfilter/nf_conntrack_max 2>/dev/null)
+if [ -n "$CT_COUNT" ] && [ -n "$CT_MAX" ] && [ "${CT_MAX:-0}" -gt 0 ]; then
+    CT_PCT=$(( CT_COUNT * 100 / CT_MAX ))
+    [ "$CT_PCT" -lt 80 ] && add_check CAT_NET "Таблица соединений (conntrack)" "ok" "${CT_COUNT}/${CT_MAX} (${CT_PCT}%)" || add_check CAT_NET "Таблица соединений (conntrack)" "warning" "Заполнена ${CT_PCT}% — риск обрыва новых соединений"
+fi
+
 DEF_IFACE=$(ip route show default | awk '{print $5}' | head -n 1)
 MTU=$(cat /sys/class/net/$DEF_IFACE/mtu 2>/dev/null)
 [ -n "$MTU" ] && add_check CAT_NET "MTU внешнего интерфейса ($DEF_IFACE)" "ok" "$MTU" || add_check CAT_NET "MTU внешнего интерфейса" "warning" "Не определен"
@@ -117,6 +126,12 @@ TIMEDATE=$(timedatectl show 2>/dev/null | grep NTPSynchronized | cut -d= -f2)
 KERNEL=$(uname -r)
 add_check CAT_HOST "Версия Ядра Linux" "ok" "$KERNEL"
 
+CORES=$(nproc 2>/dev/null || echo "?")
+add_check CAT_HOST "Ядер CPU" "ok" "$CORES"
+
+RAM_TOTAL=$(free -m | awk 'NR==2{print $2}')
+add_check CAT_HOST "Всего RAM" "ok" "${RAM_TOTAL:-?} MB"
+
 sleep 1
 
 echo "docker" > "$STATUS_FILE"
@@ -141,6 +156,9 @@ NET_EXISTS=$(docker network ls | grep vpn)
 
 D_SPACE=$(docker system df --format '{{.Size}}' | head -n 1)
 add_check CAT_DOCKER "Объем данных Docker" "ok" "$D_SPACE"
+
+IMG_COUNT=$(docker images -q 2>/dev/null | wc -l)
+[ "${IMG_COUNT:-0}" -le 12 ] && add_check CAT_DOCKER "Docker-образов" "ok" "${IMG_COUNT} шт." || add_check CAT_DOCKER "Docker-образов" "warning" "${IMG_COUNT} шт. (лишние тратят диск — prune)"
 
 EXITED=$(docker ps -aq -f status=exited | wc -l)
 [ "$EXITED" -eq 0 ] && add_check CAT_DOCKER "Остановленные контейнеры" "ok" "0" || add_check CAT_DOCKER "Остановленные контейнеры" "warning" "$EXITED шт. (Тратят место)"
@@ -197,6 +215,15 @@ BL_SET=$(docker exec vpn_wireguard ipset list blocked_nets 2>/dev/null | grep -c
 MSS=$(docker exec vpn_wireguard iptables -t mangle -S 2>/dev/null | grep -i "TCPMSS")
 [ -n "$MSS" ] && add_check CAT_VPN "MSS-clamping (анти-тормоза)" "ok" "Активно" || add_check CAT_VPN "MSS-clamping (анти-тормоза)" "warning" "Не найдено (возможны тормоза)"
 
+# rp_filter должен быть 0: гибридная маршрутизация асимметрична (ответы из мира приходят
+# через туннель), при rp_filter=1 ядро их дропает и обход ломается.
+RP=$(docker exec vpn_wireguard sysctl -n net.ipv4.conf.all.rp_filter 2>/dev/null)
+[ "$RP" = "0" ] && add_check CAT_VPN "rp_filter (асимм. маршрутизация)" "ok" "0 (верно)" || add_check CAT_VPN "rp_filter (асимм. маршрутизация)" "warning" "${RP:-?} — должно быть 0, иначе рвётся обход"
+
+PEERS_TOTAL=$(docker exec vpn_wireguard wg show wg0 peers 2>/dev/null | grep -c .)
+PEERS_ACT=$(docker exec vpn_wireguard wg show wg0 latest-handshakes 2>/dev/null | awk -v n="$(date +%s)" '$2>0 && (n-$2)<180{c++} END{print c+0}')
+add_check CAT_VPN "Пиры WireGuard" "ok" "Всего: ${PEERS_TOTAL:-0}, онлайн: ${PEERS_ACT:-0}"
+
 DE_HS=$(docker exec vpn_wireguard wg show wg0 latest-handshakes 2>/dev/null | awk '{if($2>m)m=$2} END{print m+0}')
 if [ "${DE_HS:-0}" -gt 0 ]; then
     HS_AGE=$(( $(date +%s) - DE_HS ))
@@ -231,6 +258,12 @@ touch /tmp/audit_rw_test 2>/dev/null && rm /tmp/audit_rw_test 2>/dev/null
 # ИСПРАВЛЕНО: проверяем коннект с правильным пользователем БД vpn_admin
 docker exec vpn_db pg_isready -U vpn_admin -d vpndb >/dev/null 2>&1
 [ $? -eq 0 ] && add_check CAT_STORAGE "Соединение с PostgreSQL" "ok" "Принимает запросы" || add_check CAT_STORAGE "Соединение с PostgreSQL" "error" "Отказ в обслуживании"
+
+DB_SIZE=$(docker exec vpn_db sh -c 'psql -U vpn_admin -d vpndb -tAc "SELECT pg_size_pretty(pg_database_size(current_database()))"' 2>/dev/null | tr -d ' \r')
+[ -n "$DB_SIZE" ] && add_check CAT_STORAGE "Размер базы данных" "ok" "$DB_SIZE" || add_check CAT_STORAGE "Размер базы данных" "warning" "Не удалось получить"
+
+BK_COUNT=$(ls -1 "$APP_DIR/volumes/backups"/*.sql.gz "$APP_DIR/volumes/backups"/*.tar.gz 2>/dev/null | wc -l)
+[ "${BK_COUNT:-0}" -ge 1 ] && add_check CAT_STORAGE "Файлов бэкапов" "ok" "${BK_COUNT} шт." || add_check CAT_STORAGE "Файлов бэкапов" "warning" "Нет файлов бэкапа"
 
 [ -d "$APP_DIR/volumes/backups" ] && add_check CAT_STORAGE "Директория резервных копий" "ok" "Существует" || add_check CAT_STORAGE "Директория резервных копий" "warning" "Отсутствует"
 
