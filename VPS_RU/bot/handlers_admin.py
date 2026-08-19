@@ -462,19 +462,21 @@ async def check_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
     safe_local_ver = escape_md(str(local_version))
     safe_remote_ver = escape_md(str(remote_version))
         
-    text = f"📦 **Обновления RU Master**\n\n"
-    text += f"Текущая версия: `{safe_local_ver}` (Хэш: `{local_hash}`)\n"
-    text += f"Доступна версия: `{safe_remote_ver}` (Хэш: `{remote_hash}`)\n\n"
-    
+    text = "📦 **Обновления**\n" + ("━" * 14) + "\n"
+    text += f"🖥 Установлено: `{safe_local_ver}` · `{local_hash}`\n"
+    text += f"☁️ В репозитории: `{safe_remote_ver}` · `{remote_hash}`\n\n"
+
     if is_update_available:
-        text += "⚠️ **Доступно новое обновление!**"
+        text += "⚠️ **Доступна новая версия.**\n"
         btn = InlineKeyboardButton("🇷🇺 Обновить RU", callback_data="do_update")
     else:
-        text += "✅ У вас установлена последняя версия."
+        text += "✅ Установлена последняя версия.\n"
         btn = InlineKeyboardButton("🇷🇺 Переустановить RU", callback_data="do_update")
 
+    text += "🛡 Любое обновление — с проверкой и авто-откатом при сбое."
+
     auto_upd = await db.get_setting("auto_update_enabled")
-    auto_upd_text = "🔔 Автообновления: включены" if auto_upd == "true" else "🔕 Автообновления: выключены"
+    auto_upd_text = "🔔 Автообновления: ВКЛ" if auto_upd == "true" else "🔕 Автообновления: ВЫКЛ"
 
     keyboard = [
         [InlineKeyboardButton("🔄 Обновить всё (RU + DE)", callback_data="update_all")],
