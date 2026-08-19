@@ -14,7 +14,8 @@ from telegram.ext import ContextTypes
 from database import db
 from utils import (
     get_moscow_now, dt_to_moscow, broadcast_message, DE_AGENT_URL, WG_API_URL,
-    ADMIN_ID, escape_md, GOSUSLUGI_APP_WARNING, analyze_resource, CONFIGS_DIR, ROUTING_VERSION
+    ADMIN_ID, escape_md, GOSUSLUGI_APP_WARNING, analyze_resource, CONFIGS_DIR, ROUTING_VERSION,
+    get_update_info
 )
 
 # --- SPLIT-TUNNEL: дата-центро-враждебные РФ-сервисы (мимо VPN, через домашний канал) ---
@@ -738,6 +739,46 @@ async def scheduled_update_loop(app):
                     with open("/volumes/flags/do_update", "w") as f: f.write("update_requested")
         except Exception as e: pass
         await asyncio.sleep(60)
+
+async def auto_update_check_loop(app):
+    """АВТООБНОВЛЕНИЯ «когда выходят обновы»: если тумблер включён (auto_update_enabled=true),
+    раз в 6 часов сверяет локальную версию с репозиторием и при новой версии САМ запускает
+    БЕЗОПАСНОЕ обновление ОБЕИХ нод — тем же путём, что и «Обновить всё»: команда DE по туннелю
+    + флаг do_update для RU. Даунтайма-риска нет: deploy.sh делает health-check и авто-откат на
+    прошлый коммит при сбое. По умолчанию ВЫКЛЮЧЕНО — тогда обновления только вручную/по расписанию."""
+    await asyncio.sleep(300)   # дать боту/БД подняться
+    while True:
+        try:
+            if (await db.get_setting("auto_update_enabled")) == "true":
+                local_hash, local_ver, remote_hash, remote_ver = await asyncio.to_thread(get_update_info)
+                new_available = (remote_hash not in ("unknown", "")
+                                 and local_hash not in ("unknown", "")
+                                 and remote_hash != local_hash)
+                if new_available:
+                    await db.log_event("Update", f"Auto-update: new version {remote_ver} ({remote_hash}) — applying (RU+DE).")
+                    # DE — командой по туннелю (не критично, если агент не ответил)
+                    try:
+                        async with aiohttp.ClientSession() as session:
+                            await session.post(f"{DE_AGENT_URL}/host/update", timeout=5)
+                    except Exception:
+                        pass
+                    # оповещаем пользователей и запускаем RU (deploy.sh сам сделает бэкап+откат)
+                    try:
+                        await broadcast_message(app, "⚠️ **Техработы**\n\nАвтообновление серверов. Связь может прерваться на 1–2 минуты.", db)
+                    except Exception:
+                        pass
+                    if ADMIN_ID:
+                        try:
+                            await notify_admin(app, text=(f"🔄 **Автообновление**\n\nВышла версия `{remote_ver}` — применяю на обеих нодах.\n"
+                                                          "Идёт с health-check и авто-откатом при сбое."), parse_mode="Markdown")
+                        except Exception:
+                            pass
+                    os.makedirs("/volumes/flags", exist_ok=True)
+                    with open("/volumes/flags/was_updating", "w") as f: f.write("true")
+                    with open("/volumes/flags/do_update", "w") as f: f.write("update_requested")
+        except Exception as e:
+            print(f"auto_update_check_loop error: {e}")
+        await asyncio.sleep(6 * 3600)   # проверка раз в 6 часов
 
 # ------------------------ ROUTING UPGRADE (split-tunnel напоминания) ------------------------
 async def routing_upgrade_loop(app):
