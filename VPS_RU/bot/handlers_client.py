@@ -159,7 +159,12 @@ async def send_client_menu(context: ContextTypes.DEFAULT_TYPE, user_id: int, fir
 
     text = f"👋 Привет, **{escape_md(first_name)}**!\n\nУ вас привязано ключей: **{len(keys)}**.\n"
     
-    keyboard = [[InlineKeyboardButton("🔑 Мои ключи", callback_data="client_my_keys")],[InlineKeyboardButton("⚡️ Проверить соединение", callback_data="client_select_check")],[InlineKeyboardButton("📊 Моя статистика", callback_data="client_stats")],[InlineKeyboardButton("🌐 Рос. сервисы (исключения)", callback_data="client_bypass_info")],[InlineKeyboardButton("🆘 Сообщить о проблеме", callback_data="support_start")]
+    keyboard = [
+        [InlineKeyboardButton("🔑 Мои ключи", callback_data="client_my_keys"),
+         InlineKeyboardButton("📊 Статистика", callback_data="client_stats")],
+        [InlineKeyboardButton("⚡️ Проверить связь", callback_data="client_select_check"),
+         InlineKeyboardButton("🌐 Рос. сервисы", callback_data="client_bypass_info")],
+        [InlineKeyboardButton("🆘 Сообщить о проблеме", callback_data="support_start")],
     ]
     if check_admin(user_id):
         keyboard.append([InlineKeyboardButton("🚪 Выйти из режима клиента", callback_data="back_to_main")])
@@ -189,7 +194,12 @@ async def client_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text = f"👋 Привет, **{escape_md(first_name)}**!\n\nУ вас привязано ключей: **{len(keys)}**.\n"
     
-    keyboard = [[InlineKeyboardButton("🔑 Мои ключи", callback_data="client_my_keys")],[InlineKeyboardButton("⚡️ Проверить соединение", callback_data="client_select_check")],[InlineKeyboardButton("📊 Моя статистика", callback_data="client_stats")],[InlineKeyboardButton("🌐 Рос. сервисы (исключения)", callback_data="client_bypass_info")],[InlineKeyboardButton("🆘 Сообщить о проблеме", callback_data="support_start")]
+    keyboard = [
+        [InlineKeyboardButton("🔑 Мои ключи", callback_data="client_my_keys"),
+         InlineKeyboardButton("📊 Статистика", callback_data="client_stats")],
+        [InlineKeyboardButton("⚡️ Проверить связь", callback_data="client_select_check"),
+         InlineKeyboardButton("🌐 Рос. сервисы", callback_data="client_bypass_info")],
+        [InlineKeyboardButton("🆘 Сообщить о проблеме", callback_data="support_start")],
     ]
     if check_admin(user_id):
         keyboard.append([InlineKeyboardButton("🚪 Выйти из режима клиента", callback_data="back_to_main")])
@@ -256,7 +266,10 @@ async def client_key_manage_handler(update: Update, context: ContextTypes.DEFAUL
            f"⏳ **Срок действия:** {exp}\n\n" \
            f"Выберите действие:"
            
-    keyboard = [[InlineKeyboardButton("📥 Скачать конфиг", callback_data=f"client_download_{uuid_val}")],[InlineKeyboardButton("🔄 Перевыпустить ключ", callback_data=f"client_regen_{uuid_val}")],[InlineKeyboardButton("🔙 Назад к списку", callback_data="client_my_keys")]
+    keyboard = [
+        [InlineKeyboardButton("📥 Скачать конфиг", callback_data=f"client_download_{uuid_val}"),
+         InlineKeyboardButton("🔄 Перевыпустить", callback_data=f"client_regen_{uuid_val}")],
+        [InlineKeyboardButton("🔙 К списку ключей", callback_data="client_my_keys")],
     ]
     
     await query.edit_message_text(text=text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
