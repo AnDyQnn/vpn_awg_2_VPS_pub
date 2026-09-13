@@ -64,14 +64,13 @@ async def ask_backup_password(update: Update, context: ContextTypes.DEFAULT_TYPE
         parse_mode=ParseMode.MARKDOWN)
 
 
-async def return_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, message_id=None, chat_id=None):
-    await stop_bg_tasks()
-    bot = context.bot if hasattr(context, 'bot') else context.bot
+async def main_menu_view(context=None, chat_id=None):
+    """Собирает главное меню: текст сводки и кнопки.
 
-    if not chat_id and update and update.effective_chat:
-        chat_id = update.effective_chat.id
-    if not message_id and update and update.callback_query:
-        message_id = update.callback_query.message.message_id
+    Одна сборка на два места — экран по кнопке и фоновое обновление.
+    Раньше фоновый опрос строил клавиатуру сам и терял счётчик на кнопке
+    «Администрирование», а текст сводки не трогал вовсе."""
+
     
     active_count = 0
     try:
@@ -87,9 +86,6 @@ async def return_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
         support_count = 0
 
     # Пока пароль архива не задан — дальше меню не пускаем.
-    if await backup_password_gate(context, chat_id, message_id):
-        return
-
     try:
         from handlers_service import admin_counter
         admin_count = await admin_counter()
@@ -138,6 +134,23 @@ async def return_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
     text = "\n".join(lines)
     markup = main_menu(active_count=active_count, support_count=support_count,
                        admin_count=admin_count)
+    return text, markup, admin_count
+
+
+async def return_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, message_id=None, chat_id=None):
+    await stop_bg_tasks()
+    bot = context.bot
+
+    if not chat_id and update and update.effective_chat:
+        chat_id = update.effective_chat.id
+    if not message_id and update and update.callback_query:
+        message_id = update.callback_query.message.message_id
+
+    # Пока пароль архива не задан — дальше меню не пускаем.
+    if await backup_password_gate(context, chat_id, message_id):
+        return
+
+    text, markup, _ = await main_menu_view(context, chat_id)
     sent_msg = None
 
     if not message_id:
