@@ -353,3 +353,69 @@ async def whats_new(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text(text[:4000], reply_markup=InlineKeyboardMarkup(kb),
                                   parse_mode=ParseMode.MARKDOWN)
 
+
+
+# ------------------------ ТОКЕН ПАНЕЛЕЙ ------------------------
+# Токен должен совпадать на обеих нодах. Прописывать его руками в двух .env —
+# ровно то, чего администратор делать не должен: бот генерирует его сам и
+# раскладывает по нодам, а от человека нужно одно нажатие.
+
+async def api_token_notice(app):
+    """Разовое уведомление при старте, если токен ещё не выдан."""
+    from utils import API_TOKEN, ADMIN_ID
+    if API_TOKEN or not ADMIN_ID:
+        return
+    try:
+        await app.bot.send_message(
+            chat_id=ADMIN_ID,
+            text=(
+                "🔑 **Токен панелей не задан**\n\n"
+                "Панели узлов сейчас защищены только правилами файрвола. Токен — "
+                "второй рубеж на случай, если правила однажды слетят.\n\n"
+                "Бот сгенерирует его сам и пропишет на обеих нодах. Вручную в `.env` "
+                "лазить не нужно.\n\n"
+                "⚠️ При применении узел пересоздаётся — соединение у всех прервётся "
+                "на несколько секунд."
+            ),
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🔑 Выдать токен", callback_data="svc_issue_token")]]),
+            parse_mode=ParseMode.MARKDOWN)
+    except Exception as e:
+        print(f"Уведомление о токене: {e}")
+
+
+async def issue_api_token(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Генерирует токен и раскладывает по обеим нодам.
+
+    Порядок здесь не важен: агент принимает мастера по адресу в туннеле и без токена,
+    поэтому те несколько секунд, пока ноды применяют настройку не одновременно, связь
+    между ними не рвётся.
+    """
+    import secrets
+    from utils import request_env_change, DE_AGENT_URL, api_session
+
+    query = update.callback_query
+    await query.answer("Генерирую…")
+    token = secrets.token_urlsafe(24)
+
+    de_ok = False
+    try:
+        async with api_session() as session:
+            async with session.post(f"{DE_AGENT_URL}/host/set_env",
+                                    json={"key": "API_TOKEN", "value": token},
+                                    timeout=10) as r:
+                de_ok = r.status == 200
+    except Exception as e:
+        print(f"Токен на агента: {e}")
+
+    request_env_change("API_TOKEN", token)
+    await db.log_event("Security", "Выдан новый токен панелей узлов")
+
+    text = (
+        "🔑 **Токен выдан**\n\n"
+        f"Мастер: записан, контейнеры пересоздаются.\n"
+        f"Агент: {'записан' if de_ok else '⚠️ не удалось — проверьте связь с Германией'}.\n\n"
+        "Бот сейчас перезапустится. Если агент не получил токен, повторите позже — "
+        "до тех пор панели остаются под защитой файрвола."
+    )
+    await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN)
