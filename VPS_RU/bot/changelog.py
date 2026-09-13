@@ -38,7 +38,10 @@ def parse_releases(limit=SHOW_RELEASES):
     releases = []
     current = None
     for line in text.splitlines():
-        m = re.match(r"^##\s+(\d+\.\d+\.\d+)\s*(?:—|-)?\s*(.*)$", line.strip())
+        # Суффикс вида -alpha.1 — часть номера: версия, которую катают на бою,
+        # должна показываться в боте так же, как обычная.
+        m = re.match(r"^##\s+(\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?)\s*(?:—|-)?\s*(.*)$",
+                     line.strip())
         if m:
             if current:
                 releases.append(current)
