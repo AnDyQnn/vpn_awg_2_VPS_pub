@@ -1039,13 +1039,37 @@ def save_proto_state(state):
 
 
 def xray_running():
+    """Жив ли процесс.
+
+    Сигналом 0 проверять нельзя: он проходит и для зомби — процесса, который
+    уже умер, но ещё не прибран родителем. Упавший Xray выглядел бы живым.
+    Поэтому смотрим состояние в /proc: «Z» значит мёртв."""
     try:
         with open(XRAY_PID) as f:
             pid = int(f.read().strip())
-        os.kill(pid, 0)
-        return True
+        with open(f"/proc/{pid}/stat") as f:
+            # имя процесса в скобках может содержать пробелы, поэтому режем
+            # по последней скобке, а не по первому пробелу
+            state = f.read().rsplit(")", 1)[1].split()[0]
+        return state != "Z"
     except Exception:
         return False
+
+
+def xray_check(path):
+    """Проверяет конфиг силами самого Xray, ничего не запуская.
+
+    Смысл в порядке действий: ошибка генератора обнаруживается ДО того, как
+    рабочий процесс будет остановлен, — связь у людей не прерывается вовсе."""
+    try:
+        res = subprocess.run([XRAY_BIN, "run", "-test", "-c", path],
+                             capture_output=True, text=True, timeout=20)
+    except Exception as e:
+        return False, f"проверка не выполнилась: {e}"
+    if res.returncode == 0:
+        return True, "конфиг корректен"
+    lines = (res.stderr or res.stdout or "").strip().splitlines()
+    return False, (lines[-1].strip() if lines else "Xray не принял конфиг")
 
 
 def xray_stop():
@@ -1082,26 +1106,40 @@ def xray_start():
 def xray_apply(config):
     """Записывает конфиг от бота и перезапускает процесс.
 
-    Старый конфиг сохраняется рядом: если новый окажется битым, Xray не
-    поднимется, и вернуться надо мгновенно, а не идти за бэкапом."""
+    Две ступени защиты, потому что цена ошибки — связь у всех сразу:
+      1. новый конфиг проверяется во временном файле, рабочий не трогается;
+      2. если конфиг верен, а процесс всё равно не встал (занят порт, нет
+         прав) — возвращается прежний конфиг и поднимается на нём."""
     prev = None
     if os.path.exists(XRAY_CONF):
         with open(XRAY_CONF) as f:
             prev = f.read()
 
-    with open(XRAY_CONF, "w") as f:
+    # Имя временного файла обязано кончаться на .json: Xray определяет формат
+    # конфига по расширению и «.json.new» просто не понимает.
+    tmp = XRAY_CONF[:-5] + ".new.json"
+    with open(tmp, "w") as f:
         json.dump(config, f, indent=2)
-    os.chmod(XRAY_CONF, 0o600)
+    os.chmod(tmp, 0o600)
+
+    ok, note = xray_check(tmp)
+    if not ok:
+        os.remove(tmp)
+        raise RuntimeError(f"конфиг не принят: {note}")
+
+    os.replace(tmp, XRAY_CONF)
 
     if not proto_state()["xray"]:
         return {"status": "ok", "note": "конфиг записан, протокол выключен"}
 
     ok, note = xray_start()
-    if not ok and prev is not None:
-        with open(XRAY_CONF, "w") as f:
-            f.write(prev)
-        xray_start()
-        raise RuntimeError(f"новый конфиг не принят ({note}), вернул прежний")
+    if not ok:
+        if prev is not None:
+            with open(XRAY_CONF, "w") as f:
+                f.write(prev)
+            xray_start()
+            raise RuntimeError(f"процесс не поднялся ({note}), вернул прежний конфиг")
+        raise RuntimeError(f"процесс не поднялся: {note}")
     return {"status": "ok", "note": note}
 
 
