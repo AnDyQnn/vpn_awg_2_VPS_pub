@@ -228,6 +228,27 @@ class Database:
             await self.execute(
                 "CREATE INDEX IF NOT EXISTS idx_traffic_hourly_hour ON traffic_hourly(hour);")
 
+            # --- ДОСТАВКА КЛЮЧА ---
+            # Telegram не даёт отметок «прочитано» — их нет в API вовсе, и спорить
+            # с этим бесполезно. Поэтому следим не за чтением, а за действиями,
+            # каждое из которых видно боту: отправлено → не дошло (бот заблокирован)
+            # → человек нажал кнопку → скачал файл → подключился.
+            # Запись одна на ключ: при перевыпуске стадии обнуляются, потому что
+            # доставлять начинают заново.
+            await self.execute("""
+                CREATE TABLE IF NOT EXISTS key_delivery (
+                    user_uuid TEXT PRIMARY KEY REFERENCES users(uuid) ON DELETE CASCADE,
+                    tg_id BIGINT,
+                    sent_at TIMESTAMP,
+                    blocked_at TIMESTAMP,
+                    opened_at TIMESTAMP,
+                    downloaded_at TIMESTAMP,
+                    connected_at TIMESTAMP,
+                    last_error TEXT,
+                    updated_at TIMESTAMP DEFAULT NOW()
+                );
+            """)
+
             # --- СРОК И СПЯЧКА КЛЮЧА ---
             # Решение о судьбе ключа принимает владелец, а не таймер. Поэтому оно
             # живёт в базе, а не в сообщении Telegram: перезапуск бота не должен
@@ -340,6 +361,66 @@ class Database:
         await self.execute("DELETE FROM pending_retire WHERE old_uuid=$1", old_uuid)
 
     # ------------------------ КОНТРОЛЬ НАГРУЗКИ ------------------------
+    # --- ДОСТАВКА КЛЮЧА --------------------------------------------------
+    async def delivery_sent(self, uuid, tg_id):
+        """Конфиг ушёл в чат. Стадии сбрасываются: доставка началась заново
+        (перевыпуск, повторная отправка), и старые отметки к ней не относятся."""
+        await self.execute(
+            "INSERT INTO key_delivery (user_uuid, tg_id, sent_at, updated_at) "
+            "VALUES ($1,$2,NOW(),NOW()) ON CONFLICT (user_uuid) DO UPDATE SET "
+            "tg_id=$2, sent_at=NOW(), blocked_at=NULL, opened_at=NULL, "
+            "downloaded_at=NULL, connected_at=NULL, last_error=NULL, updated_at=NOW()",
+            uuid, tg_id)
+
+    async def delivery_blocked(self, uuid, tg_id, error):
+        """Telegram не принял сообщение: чаще всего человек не запускал бота
+        или заблокировал его. Это не ошибка отправки, а состояние доставки."""
+        await self.execute(
+            "INSERT INTO key_delivery (user_uuid, tg_id, blocked_at, last_error, updated_at) "
+            "VALUES ($1,$2,NOW(),$3,NOW()) ON CONFLICT (user_uuid) DO UPDATE SET "
+            "tg_id=$2, blocked_at=NOW(), last_error=$3, updated_at=NOW()",
+            uuid, tg_id, str(error)[:400])
+
+    async def delivery_opened(self, tg_id):
+        """Человек нажал кнопку в боте — значит сообщение он увидел.
+        Отмечаем только первый раз и только то, что ещё не отмечено."""
+        await self.execute(
+            "UPDATE key_delivery SET opened_at=NOW(), updated_at=NOW() "
+            "WHERE tg_id=$1 AND sent_at IS NOT NULL AND opened_at IS NULL", tg_id)
+
+    async def delivery_downloaded(self, uuid):
+        await self.execute(
+            "UPDATE key_delivery SET downloaded_at=NOW(), "
+            "opened_at=COALESCE(opened_at, NOW()), updated_at=NOW() "
+            "WHERE user_uuid=$1 AND downloaded_at IS NULL", uuid)
+
+    async def delivery_connected(self, uuid):
+        """Ставится по живому рукопожатию — единственная стадия, которую
+        подтверждает не Telegram, а сам туннель."""
+        await self.execute(
+            "UPDATE key_delivery SET connected_at=NOW(), updated_at=NOW() "
+            "WHERE user_uuid=$1 AND connected_at IS NULL", uuid)
+
+    async def get_delivery(self, uuid):
+        rows = await self.fetch_all(
+            "SELECT tg_id, sent_at, blocked_at, opened_at, downloaded_at, "
+            "connected_at, last_error FROM key_delivery WHERE user_uuid=$1", uuid)
+        return dict(rows[0]) if rows else None
+
+    async def get_stuck_deliveries(self, hours=24):
+        """Кому отправили, но дело не дошло до подключения. Это и есть ответ на
+        вопрос «дошёл ли ключ» — без отметок о прочтении, по действиям."""
+        rows = await self.fetch_all("""
+            SELECT d.user_uuid, u.name, d.tg_id, d.sent_at, d.blocked_at,
+                   d.opened_at, d.downloaded_at, d.last_error
+            FROM key_delivery d JOIN users u ON u.uuid = d.user_uuid
+            WHERE d.connected_at IS NULL
+              AND (d.blocked_at IS NOT NULL
+                   OR d.sent_at < NOW() - ($1 || ' hours')::INTERVAL)
+            ORDER BY COALESCE(d.sent_at, d.blocked_at)
+        """, str(hours))
+        return [dict(r) for r in rows]
+
     # --- СРОК И СПЯЧКА КЛЮЧА --------------------------------------------
     async def add_pending_decision(self, uuid, reason, last_handshake=None,
                                    was_expires_at=None):
