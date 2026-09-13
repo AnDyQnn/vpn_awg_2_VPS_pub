@@ -86,6 +86,10 @@ services:
       GIT_USERNAME: ${GIT_USERNAME}
       GIT_TOKEN: ${GIT_TOKEN}
       API_TOKEN: ${API_TOKEN:-}
+      # Пароль архива бэкапов. Без этой строки он оставался в .env и до
+      # бота не доезжал: compose передаёт в контейнер только то, что
+      # перечислено здесь. Бот считал, что пароль не задан, и просил снова.
+      BACKUP_PASSWORD: ${BACKUP_PASSWORD:-}
       WG_API_URL: http://127.0.0.1:8000/api
       # IP адрес агента в Германии внутри туннеля
       DE_AGENT_URL: http://10.13.13.254:8000/api

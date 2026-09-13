@@ -970,6 +970,20 @@ async def post_init(application):
     except Exception as e:
         print(f"Роли: не удалось применить доступы: {e}")
 
+    # Пароль архива: напоминаем сразу при запуске, не дожидаясь, пока владелец
+    # сам откроет меню. Архив уносит ключ сервера и конфиги всех людей — молчать
+    # о том, что он лежит открытым, нельзя.
+    try:
+        from handlers_admin import backup_password_gate
+
+        class _StartCtx:
+            bot = application.bot
+
+        await backup_password_gate(_StartCtx, ADMIN_ID)
+    except Exception as e:
+        print(f"Пароль архива: не удалось напомнить: {e}")
+
+
     # Своё имя в Telegram бот узнаёт только у самого Telegram — запоминаем его
     # для страницы отказа, где человеку нужна ссылка «спросить владельца».
     try:
