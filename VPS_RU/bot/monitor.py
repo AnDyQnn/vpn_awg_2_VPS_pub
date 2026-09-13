@@ -20,6 +20,18 @@ from utils import (
     get_update_info, state_data
 )
 
+async def _xray_sync(reason=""):
+    """Отражает изменение состояния человека в конфиге Xray.
+
+    Обёрнуто в try: автоматика не должна падать из-за второго протокола — её
+    главное дело (пауза на AmneziaWG) к этому моменту уже сделано."""
+    try:
+        from xray import sync_person
+        await sync_person(reason)
+    except Exception as e:
+        print(f"Xray: конфиг не пересобран ({reason}): {e}")
+
+
 # --- SPLIT-TUNNEL: дата-центро-враждебные РФ-сервисы (мимо VPN, через домашний канал) ---
 # Источник правды — БД (таблица bypass_exclusions, см. database.py). Здесь только
 # логика проверки дрейфа и формирования уведомлений.
@@ -393,6 +405,7 @@ async def alert_loop(app):
                                 except Exception: pass
                                 
                                 await db.execute("UPDATE users SET is_active=FALSE WHERE uuid=$1", uuid_val)
+                                await _xray_sync("ключ заморожен")
                                 await db.log_event("Security", f"KEY COMPROMISED (Flapping): {user['name']}")
                                 
                                 if ADMIN_ID:
@@ -569,6 +582,7 @@ async def _ask_owner(app, uuid_val, reason, last_handshake=None, was_expires_at=
     except Exception:
         pass
     await db.execute("UPDATE users SET is_active=FALSE WHERE uuid=$1", uuid_val)
+    await _xray_sync(f"пауза: {reason}")
     await db.add_pending_decision(uuid_val, reason, last_handshake, was_expires_at)
 
     if not ADMIN_ID:
