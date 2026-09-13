@@ -87,6 +87,30 @@ API_TOKEN = os.getenv("API_TOKEN", "").strip()
 API_HEADERS = {"X-Api-Key": API_TOKEN} if API_TOKEN else {}
 
 
+# Пароль архива бэкапа. Живёт ТОЛЬКО в .env на хосте: в базе он оказался бы внутри
+# того самого архива, который защищает, и, потеряв сервер, ты получил бы зашифрованную
+# копию с паролем внутри неё. В архив .env не входит.
+BACKUP_PASSWORD = os.getenv("BACKUP_PASSWORD", "").strip()
+
+FLAGS_DIR = Path("/volumes/flags")
+
+
+def request_env_change(key: str, value: str):
+    """Просит демон на хосте записать переменную в .env и пересоздать контейнеры.
+
+    Сам бот .env не видит: он получает переменные окружения, а не файл. Поэтому
+    кладём строку во флаг, демон её применяет и сразу затирает файл.
+    """
+    FLAGS_DIR.mkdir(parents=True, exist_ok=True)
+    flag = FLAGS_DIR / "set_env"
+    with open(flag, "w") as f:
+        f.write(f"{key}={value}\n")
+    try:
+        os.chmod(flag, 0o600)
+    except OSError:
+        pass
+
+
 def api_session(**kwargs):
     """Сессия для запросов к панелям узлов — с токеном, если он задан."""
     import aiohttp

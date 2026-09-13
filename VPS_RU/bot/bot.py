@@ -14,12 +14,14 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, Cal
 from telegram.constants import ParseMode
 
 from utils import (
+    request_env_change,
     api_session,
     BOT_TOKEN, ADMIN_ID, WG_API_URL, DE_AGENT_URL, escape_md, state_data, stop_bg_tasks, deregister_menu,
     safe_delete, get_current_version, broadcast_message, extract_tg_id, check_admin, sanitize_name,
     analyze_resource, CONFIGS_DIR
 )
 from database import db
+from backup_manager import fetch_de_backup, test_restore
 from ui import main_menu
 from monitor import (
     alert_loop, cleanup_peers, stats_collector_loop, self_healing_loop,
@@ -27,7 +29,7 @@ from monitor import (
     expiration_loop, inactivity_loop, weekly_report_loop, log_cleanup_loop,
     auto_reboot_loop, scheduled_update_loop, auto_update_check_loop, resource_monitor_loop,
     routing_upgrade_loop, bypass_reresolve_loop, run_bypass_check_handler, bypass_notify_now_handler,
-    load_collector_loop, retire_watch_loop,
+    load_collector_loop, retire_watch_loop, notify_admin,
     bypass_list_handler, bypass_del_handler, bypass_add_manual_handler, bypass_add_request_handler,
     reconcile_routing_versions
 )
@@ -42,6 +44,7 @@ from handlers_client import (
     cmd_keys, cmd_status, cmd_support, cmd_help
 )
 from handlers_admin import (
+    ask_backup_password,
     return_to_main_menu, update_persistent_backup, start_dashboard, confirm_reboot, do_reboot_server, 
     send_vpn_graph, online_users_menu, check_update, do_update, backup_now, download_logs, restore_cmd, 
     restore_file_handler, export_excel, run_audit_handler, schedule_update_menu, toggle_auto_update,
@@ -191,12 +194,40 @@ async def check_update_completion(app):
             print(f"Check update completion error: {e}")
 
 async def auto_backup_loop(app):
+    """Раз в 12 часов: копия мастера, копия немецкой ноды и — раз в неделю — пробное
+    восстановление дампа в отдельную базу.
+
+    Раньше здесь была только копия мастера. Немецкая нода не бэкапилась вообще, хотя
+    ручка у агента есть, а проверялось ли хоть что-то — не проверялось: архив мог
+    неделями собираться битым, и узнали бы об этом в худший момент."""
+    cycles = 0
     while True:
         await asyncio.sleep(43200)
+        cycles += 1
         try:
             await update_persistent_backup(app)
         except Exception as e:
-            print(f"Auto-backup error: {e}")
+            print(f"Автобэкап мастера: {e}")
+
+        try:
+            path = await fetch_de_backup(DE_AGENT_URL)
+            print(f"💾 Копия немецкой ноды сохранена: {path}")
+        except Exception as e:
+            print(f"Автобэкап агента: {e}")
+
+        if cycles % 14 == 0:            # примерно раз в неделю
+            try:
+                ok, why = await test_restore()
+                print(f"🧪 Пробное восстановление: {why}")
+                if not ok and ADMIN_ID:
+                    await notify_admin(
+                        app,
+                        text=("⚠️ **Резервная копия не восстанавливается**\n\n"
+                              f"{why}\n\nАрхив собирается, но из него нельзя подняться — "
+                              "разберитесь до того, как он понадобится."),
+                        parse_mode="Markdown")
+            except Exception as e:
+                print(f"Проверка восстановления: {e}")
 
 # --- ОСНОВНЫЕ РОУТЕРЫ СООБЩЕНИЙ ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -247,6 +278,29 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     state = context.user_data.get("state")
     chat_id = update.message.chat_id
     user_msg_id = update.message.message_id
+
+    # Пароль архива бэкапа: записываем в .env через демон на хосте и сразу удаляем
+    # сообщение — пароль не должен остаться висеть в переписке.
+    if state == "awaiting_backup_password":
+        context.user_data["state"] = None
+        if ADMIN_ID and chat_id != ADMIN_ID:
+            return
+        pw = (update.message.text or "").strip()
+        await safe_delete(context, chat_id, user_msg_id)
+        if len(pw) < 8:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="⚠️ Слишком короткий пароль — нужно хотя бы 8 символов. Попробуйте снова.")
+            await return_to_main_menu(update, context, chat_id=chat_id)
+            return
+        request_env_change("BACKUP_PASSWORD", pw)
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=("🔐 Пароль записан в `.env` и применяется — бот сейчас перезапустится.\n\n"
+                  "⚠️ Сохраните пароль отдельно: без него архивы не открыть, "
+                  "а в базе его нет намеренно."),
+            parse_mode=ParseMode.MARKDOWN)
+        return
 
     # Кастомная рассылка: админ прислал свой текст → шлём его ВСЕМ пользователям.
     if state == "awaiting_broadcast_text":
@@ -547,6 +601,7 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "client_stats": await client_stats_handler(update, context); return
     if data == "client_bypass_info": await client_bypass_info_handler(update, context); return
     if data == "client_report_site": await client_report_site_handler(update, context); return
+    if data == "set_backup_pw": await ask_backup_password(update, context); return
     if data == "client_notify_toggle": await client_notify_toggle_handler(update, context); return
     if data == "client_notify_off": await client_notify_off_handler(update, context); return
     if data.startswith("client_download_"): await client_download_handler(update, context, data.split("client_download_")[1]); return

@@ -54,6 +54,37 @@ while true; do
         cd "$NODE_DIR" && docker compose restart ru_wireguard || docker compose restart de_vpn_agent
     fi
     
+    # 4.5 ЗАПИСЬ ПЕРЕМЕННОЙ В .env ПО ПРОСЬБЕ БОТА
+    #     Бот живёт в контейнере и получает переменные, а не файл — сам .env он править
+    #     не может. Поэтому кладёт сюда строки KEY=VALUE, а правим мы, на хосте.
+    #     Так задаётся пароль архива бэкапа: он обязан лежать в .env, потому что в базе
+    #     оказался бы внутри того самого архива, который защищает.
+    if [ -f "$FLAGS_DIR/set_env" ]; then
+        echo "[Updater] Обновляю .env по запросу бота..."
+        ENV_FILE="$NODE_DIR/.env"
+        touch "$ENV_FILE"; chmod 600 "$ENV_FILE"
+        while IFS= read -r line; do
+            case "$line" in
+                ''|'#'*) continue ;;
+            esac
+            KEY="${line%%=*}"
+            if grep -q "^${KEY}=" "$ENV_FILE"; then
+                # заменяем существующую строку целиком, значение может быть любым
+                grep -v "^${KEY}=" "$ENV_FILE" > "$ENV_FILE.tmp"
+                echo "$line" >> "$ENV_FILE.tmp"
+                mv "$ENV_FILE.tmp" "$ENV_FILE"
+            else
+                echo "$line" >> "$ENV_FILE"
+            fi
+            echo "[Updater]   переменная ${KEY} записана"
+        done < "$FLAGS_DIR/set_env"
+        shred -u "$FLAGS_DIR/set_env" 2>/dev/null || rm -f "$FLAGS_DIR/set_env"
+        chmod 600 "$ENV_FILE"
+        # Переменная доезжает до контейнеров только при пересоздании.
+        cd "$NODE_DIR" && docker compose up -d >/dev/null 2>&1
+        echo "[Updater] .env обновлён, контейнеры пересозданы."
+    fi
+
     # 5. ОЧИСТКА МУСОРА
     if [ -f "$CLEANUP_FLAG" ]; then
         echo "[Updater] Очистка логов и кэша Docker..."

@@ -10,6 +10,7 @@ from telegram.constants import ParseMode
 from telegram.error import BadRequest
 
 from utils import (
+    BACKUP_PASSWORD, request_env_change,
     api_session,
     ADMIN_ID, WG_API_URL, escape_md, state_data, stop_bg_tasks, deregister_menu, 
     safe_delete, get_current_version, get_update_info, broadcast_message, get_moscow_now, ts_to_moscow, dt_to_moscow,
@@ -20,6 +21,48 @@ from database import db
 from monitor import get_dashboard
 from graphs import generate_vpn_graph
 from backup_manager import create_backup, restore_backup
+
+async def backup_password_gate(context, chat_id, message_id=None) -> bool:
+    """Показывает блокирующий экран, если пароль архива не задан.
+
+    Смысл жёсткости: архив уносит приватный ключ сервера и конфиги всех людей — он
+    обязан быть зашифрован. При установке пароль можно пропустить, но дальше бот
+    настаивает и не пускает к остальным разделам, пока пароль не появится.
+    """
+    if BACKUP_PASSWORD:
+        return False
+
+    text = (
+        "🔐 **Задайте пароль для резервных копий**\n\n"
+        "Архив бэкапа содержит приватный ключ сервера и конфигурации всех "
+        "пользователей. Без пароля он лежит открытым.\n\n"
+        "Пришлите пароль сообщением — он будет записан в `.env` на сервере "
+        "и больше нигде не сохранится.\n\n"
+        "⚠️ **Сохраните его отдельно.** В базе пароля нет намеренно: иначе он "
+        "оказался бы внутри того самого архива, который защищает."
+    )
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔑 Задать пароль", callback_data="set_backup_pw")]])
+    if message_id:
+        try:
+            await context.bot.edit_message_text(chat_id=chat_id, message_id=message_id,
+                                                text=text, reply_markup=kb,
+                                                parse_mode=ParseMode.MARKDOWN)
+            return True
+        except Exception:
+            pass
+    await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=kb,
+                                   parse_mode=ParseMode.MARKDOWN)
+    return True
+
+
+async def ask_backup_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    context.user_data["state"] = "awaiting_backup_password"
+    await query.edit_message_text(
+        "🔑 Пришлите пароль одним сообщением.\n\n"
+        "Минимум 8 символов. Сообщение с паролем будет удалено сразу после записи.",
+        parse_mode=ParseMode.MARKDOWN)
+
 
 async def return_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, message_id=None, chat_id=None):
     await stop_bg_tasks()
@@ -42,6 +85,10 @@ async def return_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
         support_count = support_count or 0
     except Exception:
         support_count = 0
+
+    # Пока пароль архива не задан — дальше меню не пускаем.
+    if await backup_password_gate(context, chat_id, message_id):
+        return
 
     text = "🛡 **VPN Dashboard (Dual Node)**\nВыберите действие:"
     markup = main_menu(active_count=active_count, support_count=support_count)

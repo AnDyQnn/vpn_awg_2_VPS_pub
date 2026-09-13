@@ -7,7 +7,9 @@ WORKDIR /app
 # перебираем зеркала по очереди, первое рабочее выигрывает — сначала штатное из образа,
 # затем RU-дружественные (yandex, ftp.ru.debian.org). Плохое зеркало просто пропускается.
 RUN set -e; \
-    pkgs="curl git iputils-ping postgresql-client"; \
+    # gnupg — шифрование архивов бэкапа паролем. Стандартный gpg выбран намеренно:
+    # архив должен открываться руками, когда бот мёртв, а сервера уже нет.
+    pkgs="curl git iputils-ping postgresql-client gnupg"; \
     cp /etc/apt/sources.list /etc/apt/sources.list.orig 2>/dev/null || true; \
     ok=0; \
     for M in "KEEP" "http://mirror.yandex.ru/debian" "http://ftp.ru.debian.org/debian"; do \
