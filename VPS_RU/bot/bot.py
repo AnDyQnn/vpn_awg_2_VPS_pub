@@ -29,7 +29,7 @@ from monitor import (
     expiration_loop, inactivity_loop, weekly_report_loop, log_cleanup_loop,
     auto_reboot_loop, scheduled_update_loop, auto_update_check_loop, resource_monitor_loop,
     routing_upgrade_loop, bypass_reresolve_loop, run_bypass_check_handler, bypass_notify_now_handler,
-    load_collector_loop, retire_watch_loop, notify_admin,
+    load_collector_loop, retire_watch_loop, notify_admin, migration_watch_loop,
     bypass_list_handler, bypass_del_handler, bypass_add_manual_handler, bypass_add_request_handler,
     reconcile_routing_versions
 )
@@ -72,6 +72,11 @@ from handlers_keylife import (
     delete_confirm, do_delete
 )
 from delivery import delivery_screen
+from handlers_migration import (
+    migration_menu, migration_start, migration_issue, migration_send,
+    migration_finish_confirm, migration_finish, migration_abort_confirm,
+    migration_abort
+)
 from filters import (
     filters_menu, pick_user as filters_pick_user, user_filters_screen,
     toggle_filter, apply_now as filters_apply_now, apply_filters
@@ -691,6 +696,20 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "kd_list": await pending_screen(update, context); return
     if data == "deliv_list": await delivery_screen(update, context); return
 
+    # --- Переезд на новый ключ сервера ---
+    # Необратимое здесь только одно — остановка старого интерфейса, и она
+    # спрятана за отдельным экраном со списком тех, кто ещё не переехал.
+    if data == "mig_menu": await migration_menu(update, context); return
+    if data == "mig_start": await migration_start(update, context); return
+    if data.startswith("mig_issue_"):
+        await migration_issue(update, context, int(data.split("_")[-1])); return
+    if data.startswith("mig_send_"):
+        await migration_send(update, context, data.split("_", 2)[2]); return
+    if data == "mig_finish": await migration_finish_confirm(update, context); return
+    if data == "mig_finish_ok": await migration_finish(update, context); return
+    if data == "mig_abort": await migration_abort_confirm(update, context); return
+    if data == "mig_abort_ok": await migration_abort(update, context); return
+
     # --- Фильтрация сайтов ---
     if data == "flt_menu": await filters_menu(update, context); return
     if data == "flt_apply": await filters_apply_now(update, context); return
@@ -970,6 +989,7 @@ async def post_init(application):
         asyncio.create_task(midnight_alert_cleanup_loop(application)),
         asyncio.create_task(load_collector_loop(application)),
         asyncio.create_task(retire_watch_loop(application)),
+        asyncio.create_task(migration_watch_loop(application)),
         # токен панелей выдаётся сам, если его нет — вводить ничего не нужно
         asyncio.create_task(ensure_api_token(application))
     ]

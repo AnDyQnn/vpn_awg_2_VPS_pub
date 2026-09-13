@@ -169,6 +169,7 @@ async def service_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("📊 Нагрузка", callback_data="svc_load"),
          InlineKeyboardButton("⚖️ Лимиты", callback_data="svc_limits")],
         [InlineKeyboardButton("📉 Графики · подбор", callback_data="svc_charts")],
+        [InlineKeyboardButton("🔑 Переезд на новый ключ", callback_data="mig_menu")],
         [InlineKeyboardButton("🛡 Доступы · роли", callback_data="roles_menu"),
          InlineKeyboardButton("🧹 Фильтры", callback_data="flt_menu")],
         [InlineKeyboardButton(
