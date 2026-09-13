@@ -40,6 +40,7 @@ from handlers_client import (
     client_regen_confirm, client_regen_action, support_start_handler, support_run_audit_handler, 
     support_ask_msg_handler, client_download_handler, client_select_check_menu, client_check_all_handler,
     client_my_keys_handler, client_key_manage_handler, client_regen_all_confirm_handler, client_regen_all_action_handler,
+    client_how_handler,
     client_bypass_info_handler, client_report_site_handler, client_notify_toggle_handler, client_notify_off_handler,
     cmd_keys, cmd_status, cmd_support, cmd_help, client_whats_new
 )
@@ -60,6 +61,7 @@ from handlers_admin import (
 )
 from handlers_users import (
     users_list_menu, user_detail_menu, confirm_delete_menu, action_delete_user, action_resend_config,
+    new_key_screen,
     generate_key_request, finish_key_creation, render_user_detail, clear_user_ips
 )
 from handlers_roles import (
@@ -624,8 +626,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["name"] = name
         menu_id = context.user_data.get("menu_msg_id")
         
-        keyboard = [[InlineKeyboardButton("1 День", callback_data="set_exp_1"), InlineKeyboardButton("1 Неделя", callback_data="set_exp_7")],[InlineKeyboardButton("1 Месяц", callback_data="set_exp_30"), InlineKeyboardButton("Навсегда", callback_data="set_exp_0")],[InlineKeyboardButton("🔙 Отмена", callback_data="back_to_main")]]
-        if menu_id: await context.bot.edit_message_text(chat_id=chat_id, message_id=menu_id, text=f"Имя: **{escape_md(name)}**\n\nВыберите срок действия ключа:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
+        context.user_data.setdefault("proto", "xray")
+        if menu_id:
+            text, keyboard = new_key_screen(context, name)
+            await context.bot.edit_message_text(chat_id=chat_id, message_id=menu_id,
+                                                text=text, reply_markup=keyboard,
+                                                parse_mode=ParseMode.MARKDOWN)
         # Срок действия выбирается КНОПКОЙ (set_exp_*), текст больше не ждём → сбрасываем состояние.
         context.user_data["state"] = None
 
@@ -718,6 +724,7 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "client_notify_off": await client_notify_off_handler(update, context); return
     if data.startswith("client_download_"): await client_download_handler(update, context, data.split("client_download_")[1]); return
     
+    if data.startswith("client_how_"): await client_how_handler(update, context, data.split("client_how_")[1]); return
     if data.startswith("client_regen_"): await client_regen_confirm(update, context, data.split("client_regen_")[1]); return
     if data.startswith("do_client_regen_"): await client_regen_action(update, context, data.split("do_client_regen_")[1]); return
 
@@ -924,10 +931,31 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await user_detail_menu(update, context, uuid_val)
         return
     
+    if data == "new_proto":
+        # Переключатель протокола прямо на экране срока: один шаг вместо
+        # лишнего вопроса, и по умолчанию всё равно Xray.
+        now = context.user_data.get("proto", "xray")
+        context.user_data["proto"] = "awg" if now == "xray" else "xray"
+        text, keyboard = new_key_screen(context, context.user_data.get("name", ""))
+        await query.edit_message_text(text, reply_markup=keyboard,
+                                      parse_mode=ParseMode.MARKDOWN)
+        return
+
     if data.startswith("set_exp_"):
         context.user_data["expiry_days"] = int(data.split("_")[2])
-        keyboard = [[InlineKeyboardButton("🌍 Классический DNS (1.1.1.1)", callback_data="set_dns_classic")],[InlineKeyboardButton("🛡 AdBlock DNS (Без рекламы)", callback_data="set_dns_adblock")],[InlineKeyboardButton("🔙 Отмена", callback_data="back_to_main")]]
-        await query.edit_message_text("Выберите DNS-сервер:", reply_markup=InlineKeyboardMarkup(keyboard))
+        if context.user_data.get("proto", "xray") == "awg":
+            keyboard = [[InlineKeyboardButton("🌍 Классический DNS (1.1.1.1)", callback_data="set_dns_classic")],[InlineKeyboardButton("🛡 AdBlock DNS (Без рекламы)", callback_data="set_dns_adblock")],[InlineKeyboardButton("🔙 Отмена", callback_data="back_to_main")]]
+            await query.edit_message_text("Выберите DNS-сервер:", reply_markup=InlineKeyboardMarkup(keyboard))
+            return
+        # У Xray выбор DNS ни на что не влияет: имена резолвит узел, и фильтрация
+        # живёт там же. Спрашивать не о чем — сразу к привязке Telegram.
+        context.user_data["dns_type"] = "classic"
+        keyboard = [[InlineKeyboardButton("⏩ Пропустить", callback_data="skip_tg_link")]]
+        await query.edit_message_text(
+            "🔗 **Привязка Telegram**\n\nОтправьте:\n1️⃣ **Контакт** 📎 (Рекомендуется)\n"
+            "2️⃣ @username\n3️⃣ ID",
+            reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
+        context.user_data["state"] = "awaiting_tg_link_new_key"
         return
     if data.startswith("set_dns_"):
         context.user_data["dns_type"] = data.split("_")[2]

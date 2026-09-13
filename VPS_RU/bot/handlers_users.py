@@ -323,6 +323,31 @@ async def action_resend_config(update: Update, context: ContextTypes.DEFAULT_TYP
     except Exception as e:
         await update.callback_query.answer(f"Ошибка отправки: {e}", show_alert=True)
 
+def new_key_screen(context, name):
+    """Экран срока. Протокол здесь же строкой: по умолчанию Xray, AmneziaWG —
+    для тех, кому нужен туннель на уровне IP (роутеры, шлюзы, домашний сервер)."""
+    proto = context.user_data.get("proto", "xray")
+    if proto == "xray":
+        note = ("🔶 Будет выдан **Xray** — ссылкой. Профиль обновляется сам, "
+                "перевыпускать при изменениях не придётся.")
+        switch = "🔧 Нужен AmneziaWG (для опытных)"
+    else:
+        note = ("🔷 Будет выдан **AmneziaWG** — файлом конфига. Нужен, если "
+                "подключается роутер, шлюз или домашний сервер.")
+        switch = "🔶 Вернуть Xray (обычный случай)"
+
+    text = (f"Имя: **{escape_md(name)}**\n\n{note}\n\nВыберите срок действия ключа:")
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("1 День", callback_data="set_exp_1"),
+         InlineKeyboardButton("1 Неделя", callback_data="set_exp_7")],
+        [InlineKeyboardButton("1 Месяц", callback_data="set_exp_30"),
+         InlineKeyboardButton("Навсегда", callback_data="set_exp_0")],
+        [InlineKeyboardButton(switch, callback_data="new_proto")],
+        [InlineKeyboardButton("🔙 Отмена", callback_data="back_to_main")],
+    ])
+    return text, keyboard
+
+
 async def generate_key_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await stop_bg_tasks()
     deregister_menu(update.effective_chat.id)
@@ -354,6 +379,16 @@ async def finish_key_creation(update: Update, context: ContextTypes.DEFAULT_TYPE
         await db.log_event("Create Key", f"Created key {name}. Expiry: {exp_days} days. DNS: {dns_type}")
         
         if tg_id: await db.link_user_telegram(new_uid, tg_id)
+
+        # Xray по умолчанию. Пир при этом создаётся всегда — он держит за
+        # человеком адрес в туннеле, на котором стоит весь учёт, — но конфиг
+        # AmneziaWG человеку не отдаётся, чтобы не путать его двумя способами.
+        if context.user_data.get("proto", "xray") == "xray":
+            from handlers_xray import handout as xray_handout
+            await xray_handout(update, context, new_uid, name, tg_id)
+            context.user_data["state"] = None
+            context.user_data["proto"] = "xray"
+            return
         
         await context.bot.send_message(chat_id=chat_id, text=f"✅ **Ключ сгенерирован!**\n\nВы можете добавить его в приложение AmneziaWG.", parse_mode=ParseMode.MARKDOWN)
         await context.bot.send_document(chat_id=chat_id, document=open(c_path, "rb"), caption=f"📄 {name}")

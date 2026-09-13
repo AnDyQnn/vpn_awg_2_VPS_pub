@@ -409,6 +409,16 @@ async def client_my_keys_handler(update: Update, context: ContextTypes.DEFAULT_T
     else:
         await context.bot.send_message(chat_id=user_id, text=text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
 
+async def _xray_online():
+    """Кто на связи по Xray. Отдельной обёрткой — чтобы кабинет не падал,
+    если узел молчит: человеку важнее увидеть свой ключ, чем точный статус."""
+    try:
+        import xray
+        return await xray.online_uuids()
+    except Exception:
+        return set()
+
+
 async def client_key_manage_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, uuid_val: str):
     """Карточка ключа глазами владельца ключа, а не администратора."""
     query = update.callback_query
@@ -430,7 +440,7 @@ async def client_key_manage_handler(update: Update, context: ContextTypes.DEFAUL
     if not user.get("is_active", True):
         lines.append(f"⏸ **На паузе** — {await _pause_reason(uuid_val)}")
         lines.append("     Ключ не удалён: как только решение примут, он снова заработает.")
-    elif live.get(uuid_val):
+    elif live.get(uuid_val) or uuid_val in await _xray_online():
         lines.append("🟢 **На связи** — сервер видит ваше устройство")
     else:
         lines.append("🟡 **Не подключён** — включите VPN в приложении")
@@ -458,15 +468,24 @@ async def client_key_manage_handler(update: Update, context: ContextTypes.DEFAUL
     if spent:
         lines.append(f"📊 За сутки: {_human_bytes(spent)}")
 
-    lines += ["", "_Перевыпуск выдаёт новый конфиг, старый работает, пока новый "
-                  "не заработает — без обрыва._"]
+    on_xray = bool(await db.get_xray_user(uuid_val))
+    if on_xray:
+        lines += ["", "_Перевыпуск выдаёт новую ссылку, прежняя перестаёт "
+                      "работать сразу — на случай, если ссылка утекла._"]
+    else:
+        lines += ["", "_Перевыпуск выдаёт новый конфиг, старый работает, пока новый "
+                      "не заработает — без обрыва._"]
 
     keyboard = [
-        [InlineKeyboardButton("📥 Скачать конфиг", callback_data=f"client_download_{uuid_val}"),
+        [InlineKeyboardButton("📥 Скачать ссылку" if on_xray else "📥 Скачать конфиг",
+                              callback_data=f"client_download_{uuid_val}"),
          InlineKeyboardButton("⚡️ Проверить связь", callback_data=f"check_conn_{uuid_val}")],
         [InlineKeyboardButton("🔄 Перевыпустить", callback_data=f"client_regen_{uuid_val}")],
-        [InlineKeyboardButton("🔙 К списку ключей", callback_data="client_my_keys")],
     ]
+    if on_xray:
+        keyboard.append([InlineKeyboardButton("❓ Как подключить",
+                                              callback_data=f"client_how_{uuid_val}")])
+    keyboard.append([InlineKeyboardButton("🔙 К списку ключей", callback_data="client_my_keys")])
 
     await query.edit_message_text(text="\n".join(lines),
                                   reply_markup=InlineKeyboardMarkup(keyboard),
@@ -596,11 +615,41 @@ async def client_check_all_handler(update: Update, context: ContextTypes.DEFAULT
 
 # --- ОБРАБОТЧИКИ (ОСТАЛЬНЫЕ) ---
 
+async def send_xray_profile(context, chat_id, uuid_val):
+    """Отдаёт человеку его профиль Xray: QR и ссылку.
+
+    Ссылка уходит отдельным сообщением и без разметки: подчёркивания в ней
+    Telegram принимает за курсив и ссылку ломает."""
+    import xray
+    link = await xray.profile_link(uuid_val)
+    if not link:
+        return False
+    qr = await xray.qr_file(uuid_val)
+    if qr:
+        await context.bot.send_photo(chat_id=chat_id, photo=open(qr, "rb"),
+                                     caption="📱 Отсканируйте в приложении")
+    await context.bot.send_message(chat_id=chat_id, text=link)
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text="⚠️ Ссылка личная — не передавайте её никому.")
+    try:
+        await db.delivery_downloaded(uuid_val)
+    except Exception:
+        pass
+    return True
+
+
 async def client_download_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, uuid_val: str):
     query = update.callback_query
     await query.answer("Подготовка файла...")
     user = await db.get_user_by_uuid(uuid_val)
     if not user: return
+
+    # Тому, кто уже на Xray, файл конфига не нужен и только путает: у него
+    # подключение живёт ссылкой.
+    if await db.get_xray_user(uuid_val):
+        if await send_xray_profile(context, query.message.chat_id, uuid_val):
+            return
     
     name = user['name']
     chat_id = query.message.chat_id
@@ -682,9 +731,17 @@ async def client_regen_confirm(update: Update, context: ContextTypes.DEFAULT_TYP
     query = update.callback_query
     keyboard = [[InlineKeyboardButton("✅ ДА, перевыпустить", callback_data=f"do_client_regen_{uuid_val}")],[InlineKeyboardButton("🔙 Отмена", callback_data=f"client_key_manage_{uuid_val}")]
     ]
+    if await db.get_xray_user(uuid_val):
+        text = ("⚠️ **Смена доступа**\n\nВам выдадут новую ссылку, а прежняя "
+                "перестанет работать сразу. Делайте это, если ссылка попала не "
+                "в те руки.\nВы уверены?")
+    else:
+        text = ("⚠️ **Смена ключа**\n\nВам выдадут новый файл конфигурации — его "
+                "нужно добавить в AmneziaWG. Старый ключ продолжит работать и "
+                "снимется сам, когда новый заработает.\nВы уверены?")
     await query.edit_message_text(
-        "⚠️ **Смена ключа**\n\nВам выдадут новый файл конфигурации — его нужно добавить в AmneziaWG. Старый ключ продолжит работать и снимется сам, когда новый заработает.\nВы уверены?", 
-        reply_markup=InlineKeyboardMarkup(keyboard), 
+        text,
+        reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode=ParseMode.MARKDOWN
     )
 
@@ -698,6 +755,23 @@ async def client_regen_action(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.edit_message_text("❌ Ключ не найден.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 В меню", callback_data="client_menu")]]))
         return
         
+    # У человека на Xray перевыпуск — это новая ссылка, а не новый пир.
+    if await db.get_xray_user(uuid_val):
+        import xray
+        ok, res = await xray.issue(uuid_val)
+        if not ok:
+            await context.bot.send_message(chat_id=chat_id, text=f"❌ Не вышло: {res}")
+            return
+        await query.edit_message_text("✅ Готово. Новая ссылка ниже, прежняя "
+                                      "больше не работает.")
+        await send_xray_profile(context, chat_id, uuid_val)
+        await context.bot.send_message(
+            chat_id=chat_id, text="Что дальше?",
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🔙 В меню", callback_data="client_menu")]]))
+        return
+
+
     await query.edit_message_text(
         f"⏳ Готовлю новый конфиг…\n"
         f"Старый ключ останется рабочим, пока новый не заработает — "
@@ -948,3 +1022,15 @@ async def has_unseen_changes(tg_id) -> bool:
     except Exception:
         return False
 
+
+async def client_how_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, uuid_val: str):
+    """Те же три шага, что при выдаче — человек забывает, и это нормально."""
+    query = update.callback_query
+    from handlers_xray import instructions
+    text = await instructions(uuid_val)
+    keyboard = [[InlineKeyboardButton("📥 Прислать ссылку заново",
+                                      callback_data=f"client_download_{uuid_val}")],
+                [InlineKeyboardButton("🔙 Назад",
+                                      callback_data=f"client_key_manage_{uuid_val}")]]
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard),
+                                  parse_mode=ParseMode.MARKDOWN)

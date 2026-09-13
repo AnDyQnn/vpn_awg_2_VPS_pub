@@ -387,3 +387,78 @@ async def move_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await show_screen(query, context, "\n".join(lines),
                       reply_markup=InlineKeyboardMarkup(kb),
                       parse_mode=ParseMode.MARKDOWN)
+
+
+# --- ВЫДАЧА ССЫЛКИ --------------------------------------------------------
+async def instructions(uuid_val=None):
+    """Три шага, которые человек делает один раз.
+
+    Список приложений появляется, только если владелец его утвердил: советовать
+    родственникам программы, которых никто не смотрел, нельзя."""
+    lines = ["🔑 **Ваш доступ к VPN**", ""]
+    if await xray.apps_approved():
+        lines.append("**1.** Поставьте приложение — найдите в магазине по названию:")
+        for platform, names in (await xray.apps_list()).items():
+            lines.append(f"  • {platform}: {escape_md(', '.join(names))}")
+    else:
+        lines.append("**1.** Поставьте приложение для VPN "
+                     "(какое именно — подскажет тот, кто выдал ключ)")
+    lines += [
+        "**2.** Отсканируйте картинку ниже или нажмите на ссылку — "
+        "профиль добавится сам",
+        "**3.** Включите VPN в приложении",
+        "",
+        "⚠️ Ссылка личная. По ней подключаются к вашему доступу — "
+        "не передавайте её никому.",
+    ]
+    return "\n".join(lines)
+
+
+async def handout(update, context, uuid_val, name, tg_id=None):
+    """Выдаёт человеку подключение по Xray и рассылает ссылку.
+
+    Владельцу — всегда: если Telegram у человека не привязан, ссылку надо
+    передать как-то иначе, и она должна быть под рукой."""
+    chat_id = update.effective_chat.id
+    ok, res = await xray.issue(uuid_val)
+    if not ok:
+        await context.bot.send_message(chat_id=chat_id,
+                                       text=f"⚠️ Ключ создан, но Xray не выдан: {res}")
+        return False
+
+    link = await xray.profile_link(uuid_val)
+    qr = await xray.qr_file(uuid_val)
+    text = await instructions(uuid_val)
+
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text=f"✅ **Ключ создан: {escape_md(name)}**\n\nВыдан по Xray — ссылкой.",
+        parse_mode=ParseMode.MARKDOWN)
+    if qr:
+        await context.bot.send_photo(chat_id=chat_id, photo=open(qr, "rb"))
+    # Ссылка отдельным сообщением и без разметки: подчёркивания в ней Telegram
+    # принимает за курсив и ломает ссылку.
+    await context.bot.send_message(chat_id=chat_id, text=link)
+
+    if tg_id:
+        from delivery import track_send
+
+        async def _send():
+            await context.bot.send_message(chat_id=tg_id, text=text,
+                                           parse_mode=ParseMode.MARKDOWN)
+            if qr:
+                await context.bot.send_photo(chat_id=tg_id, photo=open(qr, "rb"))
+            await context.bot.send_message(chat_id=tg_id, text=link)
+
+        sent, err = await track_send(uuid_val, tg_id, _send)
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=(f"✅ Ссылка отправлена клиенту `{tg_id}`." if sent
+                  else f"⚠️ Клиент `{tg_id}` ссылку не получил: `{err}`"),
+            parse_mode=ParseMode.MARKDOWN)
+
+    await context.bot.send_message(
+        chat_id=chat_id, text="Готово! Что делаем дальше?",
+        reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton("🔙 В главное меню", callback_data="back_to_main")]]))
+    return True
