@@ -217,13 +217,14 @@ async def check_update_completion(app):
             # Список изменений админу сразу после обновления: он его и запускает,
             # и лезть за ним в отдельное меню не должен.
             try:
-                from changelog import admin_text, repo_link
+                from changelog import admin_text, repo_markdown
                 note = admin_text(limit=1)
-                link = repo_link()
+                link = repo_markdown()
                 if link:
-                    note += chr(10) + chr(10) + 'Исходный код: ' + link
+                    note += chr(10) + chr(10) + link
                 if ADMIN_ID:
-                    await app.bot.send_message(chat_id=ADMIN_ID, text=note[:4000],
+                    from changelog import fit
+                    await app.bot.send_message(chat_id=ADMIN_ID, text=fit(note),
                                                parse_mode=ParseMode.MARKDOWN)
             except Exception as e:
                 print(f'Список изменений после обновления: {e}')

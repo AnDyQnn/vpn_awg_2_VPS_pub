@@ -623,12 +623,12 @@ async def whats_new(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Три последних версии. Кнопка нужна и админу: догадаться, что список изменений
     лежит в клиентском режиме, невозможно — особенно если проект кто-то скачал."""
     query = update.callback_query
-    from changelog import admin_text, repo_link, fit
+    from changelog import admin_text, repo_markdown, fit
 
     text = admin_text()
-    link = repo_link()
+    link = repo_markdown()
     if link:
-        text += "\n\nИсходный код: " + link
+        text += "\n\n" + link
     kb = [[InlineKeyboardButton("🔙 Главное меню", callback_data="back_to_main")]]
     await show_screen(query, context, fit(text), reply_markup=InlineKeyboardMarkup(kb),
                                   parse_mode=ParseMode.MARKDOWN)
