@@ -483,10 +483,60 @@ def apply_acl(peers):
             subprocess.run(f"iptables -A {ACL_CHAIN} {_acl_rule_spec(ip, grant)} -j RETURN",
                            shell=True, stderr=subprocess.DEVNULL)
             applied += 1
-        # Замыкающий запрет для этого пира — всё, что не разрешено выше.
-        subprocess.run(f"iptables -A {ACL_CHAIN} -s {ip} -j DROP",
+        # Замыкающий запрет — ЯВНЫЙ отказ, а не молчаливый DROP.
+        # DROP заставляет клиента ждать таймаута: человек видит «висит» и идёт
+        # чинить сеть, которая исправна. Отказ приходит мгновенно и читается как
+        # «закрыто», а не «сломалось».
+        subprocess.run(f"iptables -A {ACL_CHAIN} -s {ip} -p tcp "
+                       f"-j REJECT --reject-with tcp-reset",
+                       shell=True, stderr=subprocess.DEVNULL)
+        subprocess.run(f"iptables -A {ACL_CHAIN} -s {ip} "
+                       f"-j REJECT --reject-with icmp-port-unreachable",
                        shell=True, stderr=subprocess.DEVNULL)
     return applied
+
+
+ACL_WEB_CHAIN = "WG_ACL_WEB"
+ACL_WEB_PORTS = (80, 8080, 8096, 3000)   # типичные порты домашних панелей
+BLOCK_PAGE_IP = "10.13.13.1"            # страница отказа живёт на самом узле
+
+
+def _acl_web_ensure_chain():
+    subprocess.run(f"iptables -t nat -N {ACL_WEB_CHAIN}", shell=True,
+                   stderr=subprocess.DEVNULL)
+    subprocess.run(f"iptables -t nat -F {ACL_WEB_CHAIN}", shell=True,
+                   stderr=subprocess.DEVNULL)
+    hook = f"-i wg0 -d {TUNNEL_NET} -j {ACL_WEB_CHAIN}"
+    check = subprocess.run(f"iptables -t nat -C PREROUTING {hook}", shell=True,
+                           stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+    if check.returncode != 0:
+        subprocess.run(f"iptables -t nat -A PREROUTING {hook}", shell=True,
+                       stderr=subprocess.DEVNULL)
+
+
+def apply_acl_web(peers):
+    """Веб-запрос к закрытому сервису уводит на страницу отказа.
+
+    Зеркалит разрешения из основной цепочки: сначала RETURN для всего, что роль
+    открыла, и только потом заворот. Иначе человек, которому сервис РАЗРЕШЁН,
+    попал бы на страницу отказа вместо самого сервиса.
+
+    Запрос после заворота адресован уже самому узлу и уходит в INPUT, поэтому
+    запрет в FORWARD его не касается — порядок таблиц тут работает на нас."""
+    _acl_web_ensure_chain()
+    for peer in peers:
+        ip = peer.get("ip")
+        if not ip:
+            continue
+        for grant in peer.get("allow", []):
+            if not grant.get("cidr"):
+                continue
+            subprocess.run(f"iptables -t nat -A {ACL_WEB_CHAIN} "
+                           f"{_acl_rule_spec(ip, grant)} -j RETURN",
+                           shell=True, stderr=subprocess.DEVNULL)
+        for port in ACL_WEB_PORTS:
+            subprocess.run(f"iptables -t nat -A {ACL_WEB_CHAIN} -s {ip} -p tcp "
+                           f"--dport {port} -j DNAT --to-destination {BLOCK_PAGE_IP}:80", shell=True, stderr=subprocess.DEVNULL)
 
 
 def save_acl_state(peers):
@@ -508,6 +558,7 @@ def rebuild_acl():
     except Exception as e:
         print(f"ACL state read warning: {e}")
     apply_acl(peers)
+    apply_acl_web(peers)
 
 
 # --- ФИЛЬТРАЦИЯ САЙТОВ ПО КАТЕГОРИЯМ --------------------------------------
@@ -729,6 +780,7 @@ def set_acl(req: AclApply):
         peers = [p.model_dump() if hasattr(p, "model_dump") else p.dict()
                  for p in req.peers]
         rules = apply_acl(peers)
+        apply_acl_web(peers)
         save_acl_state(peers)
         return {"status": "ok", "peers": len(peers), "rules": rules}
     except Exception as e:

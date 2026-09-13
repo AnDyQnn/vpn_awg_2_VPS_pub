@@ -293,7 +293,18 @@ BLOCK_PAGE = "/app/blocked.html"
 _page_cache = None
 
 
+CATEGORY_TITLES = {"ads": "реклама и трекеры", "adult": "для взрослых",
+                   "gambling": "азартные игры", "malware": "вредоносное и фишинг",
+                   "social": "соцсети"}
+
+
 def _render_block_page(host, category):
+    """Причин отказа две, и путать их нельзя.
+
+    Фильтр — про внешний сайт из закрытой категории. Роль — про домашний сервис,
+    к которому человеку не открыт доступ. Для человека это разные ситуации: в
+    первом случае обращаться бессмысленно (так настроено намеренно), во втором
+    доступ вполне может быть выдан, если попросить."""
     global _page_cache
     if _page_cache is None:
         try:
@@ -301,12 +312,24 @@ def _render_block_page(host, category):
                 _page_cache = f.read()
         except OSError:
             _page_cache = ("<!doctype html><meta charset=utf-8>"
-                           "<h1>Сайт закрыт фильтром</h1><p>__DOMAIN__</p>")
-    title = {"ads": "реклама и трекеры", "adult": "для взрослых",
-             "gambling": "азартные игры", "malware": "вредоносное и фишинг",
-             "social": "соцсети"}.get(category, category or "закрытая категория")
-    safe_host = (host or "этот сайт").replace("<", "&lt;").replace(">", "&gt;")[:120]
-    return _page_cache.replace("__DOMAIN__", safe_host).replace("__CATEGORY__", title)
+                           "<h1>Закрыто</h1><p>__DOMAIN__</p>")
+    safe_host = (host or "этот адрес").replace("<", "&lt;").replace(">", "&gt;")[:120]
+    if category:
+        head = "Этот сайт закрыт фильтром"
+        why = "Категория: <b>%s</b>" % CATEGORY_TITLES.get(category, category)
+        note = ("Так настроено для вашего ключа. Сайт работает — "
+                "его не открывает фильтр, а не поломка сети.")
+    else:
+        head = "Доступ к этому сервису закрыт"
+        why = "Он не входит в то, что открыто вашему ключу"
+        note = ("Сервис работает и сеть исправна — просто он не открыт для вас. "
+                "Это настройка доступов, а не поломка.")
+    return (_page_cache
+            .replace("__DOMAIN__", safe_host)
+            .replace("__HEAD__", head)
+            .replace("__WHY__", why)
+            .replace("__NOTE__", note)
+            .replace("__CATEGORY__", CATEGORY_TITLES.get(category, category or "")))
 
 
 async def handle_http(reader, writer):
