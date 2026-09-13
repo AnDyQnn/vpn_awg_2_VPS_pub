@@ -104,6 +104,18 @@ async def service_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines.append("🔑 *Перевыпуск ключей:* очередь пуста")
 
     lines.append("")
+    try:
+        roles = await db.list_roles()
+        restricted = len(await db.get_access_matrix())
+    except Exception:
+        roles, restricted = [], 0
+    if not roles:
+        lines.append("🛡 *Доступы внутри туннеля:* ролей нет, все ходят друг к другу")
+    else:
+        lines.append(f"🛡 *Доступы внутри туннеля:* ролей {len(roles)}, "
+                     f"под ограничением {restricted} чел.")
+
+    lines.append("")
     lines.append(f"🆘 *Обращения:* {'открытых нет' if not tickets else f'{tickets} открытых'}")
 
     main_label = ("🚦 Включить ограничение" if mode == "observe"
@@ -116,6 +128,7 @@ async def service_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton(main_label, callback_data="svc_mode_toggle")],
         [InlineKeyboardButton("📊 Нагрузка", callback_data="svc_load"),
          InlineKeyboardButton("⚖️ Лимиты", callback_data="svc_limits")],
+        [InlineKeyboardButton("🛡 Доступы · роли", callback_data="roles_menu")],
         [InlineKeyboardButton("📄 Что нового", callback_data="svc_whatsnew")],
     ]
     if not tickets:

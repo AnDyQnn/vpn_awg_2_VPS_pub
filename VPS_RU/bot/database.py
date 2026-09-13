@@ -228,6 +228,41 @@ class Database:
             await self.execute(
                 "CREATE INDEX IF NOT EXISTS idx_traffic_hourly_hour ON traffic_hourly(hour);")
 
+            # --- РОЛИ: доступы внутри туннеля ---
+            # Ролей у человека может быть несколько, и права складываются. «Нет роли»
+            # означает полный доступ — противоречия нет: относительно этого состояния
+            # любая роль СУЖАЕТ, а несколько ролей сужают меньше, чем одна.
+            # kind заведён на вырост: сейчас только 'net' (адреса внутри туннеля),
+            # позже сюда же лягут категории фильтрации сайтов, без переделки схемы.
+            await self.execute("""
+                CREATE TABLE IF NOT EXISTS roles (
+                    id SERIAL PRIMARY KEY,
+                    name TEXT NOT NULL UNIQUE,
+                    note TEXT,
+                    created_at TIMESTAMP DEFAULT NOW()
+                );
+            """)
+            await self.execute("""
+                CREATE TABLE IF NOT EXISTS role_grants (
+                    id SERIAL PRIMARY KEY,
+                    role_id INTEGER REFERENCES roles(id) ON DELETE CASCADE,
+                    kind TEXT DEFAULT 'net',
+                    cidr TEXT,
+                    proto TEXT DEFAULT 'any',
+                    port INTEGER,
+                    note TEXT,
+                    created_at TIMESTAMP DEFAULT NOW()
+                );
+            """)
+            await self.execute("""
+                CREATE TABLE IF NOT EXISTS user_roles (
+                    uuid TEXT REFERENCES users(uuid) ON DELETE CASCADE,
+                    role_id INTEGER REFERENCES roles(id) ON DELETE CASCADE,
+                    granted_at TIMESTAMP DEFAULT NOW(),
+                    PRIMARY KEY (uuid, role_id)
+                );
+            """)
+
             # Первичное наполнение базовым списком (дата-центро-враждебные РФ-сервисы)
             existing = await self.fetch_val("SELECT COUNT(*) FROM bypass_exclusions")
             if not existing:
@@ -274,6 +309,87 @@ class Database:
         await self.execute("DELETE FROM pending_retire WHERE old_uuid=$1", old_uuid)
 
     # ------------------------ КОНТРОЛЬ НАГРУЗКИ ------------------------
+    # --- РОЛИ ------------------------------------------------------------
+    async def list_roles(self):
+        """Список ролей с двумя числами: сколько правил внутри и сколько человек."""
+        rows = await self.fetch_all("""
+            SELECT r.id, r.name, r.note,
+                   (SELECT COUNT(*) FROM role_grants g WHERE g.role_id = r.id) AS grants,
+                   (SELECT COUNT(*) FROM user_roles u WHERE u.role_id = r.id) AS members
+            FROM roles r ORDER BY r.name
+        """)
+        return [dict(r) for r in rows]
+
+    async def get_role(self, role_id):
+        row = await self.fetch_all("SELECT id, name, note FROM roles WHERE id=$1", role_id)
+        return dict(row[0]) if row else None
+
+    async def create_role(self, name):
+        return await self.fetch_val(
+            "INSERT INTO roles (name) VALUES ($1) ON CONFLICT (name) DO NOTHING RETURNING id",
+            name)
+
+    async def delete_role(self, role_id):
+        await self.execute("DELETE FROM roles WHERE id=$1", role_id)
+
+    async def get_role_grants(self, role_id):
+        rows = await self.fetch_all(
+            "SELECT id, kind, cidr, proto, port, note FROM role_grants "
+            "WHERE role_id=$1 ORDER BY id", role_id)
+        return [dict(r) for r in rows]
+
+    async def add_role_grant(self, role_id, cidr, proto="any", port=None, note=None):
+        await self.execute(
+            "INSERT INTO role_grants (role_id, kind, cidr, proto, port, note) "
+            "VALUES ($1,'net',$2,$3,$4,$5)", role_id, cidr, proto, port, note)
+
+    async def delete_role_grant(self, grant_id):
+        await self.execute("DELETE FROM role_grants WHERE id=$1", grant_id)
+
+    async def get_role_members(self, role_id):
+        rows = await self.fetch_all(
+            "SELECT u.uuid, u.name FROM user_roles ur JOIN users u ON u.uuid = ur.uuid "
+            "WHERE ur.role_id=$1 ORDER BY u.name", role_id)
+        return [dict(r) for r in rows]
+
+    async def add_user_role(self, uuid, role_id):
+        await self.execute(
+            "INSERT INTO user_roles (uuid, role_id) VALUES ($1,$2) ON CONFLICT DO NOTHING",
+            uuid, role_id)
+
+    async def remove_user_role(self, uuid, role_id):
+        await self.execute("DELETE FROM user_roles WHERE uuid=$1 AND role_id=$2",
+                           uuid, role_id)
+
+    async def get_user_roles(self, uuid):
+        rows = await self.fetch_all(
+            "SELECT r.id, r.name FROM user_roles ur JOIN roles r ON r.id = ur.role_id "
+            "WHERE ur.uuid=$1 ORDER BY r.name", uuid)
+        return [dict(r) for r in rows]
+
+    async def get_access_matrix(self):
+        """Кому что можно внутри туннеля — уже с объединением по всем его ролям.
+
+        Возвращаются ТОЛЬКО те, у кого есть хотя бы одна роль: остальные ходят
+        без ограничений, и правил для них не создаётся вовсе. Имя роли идёт
+        рядом с правилом, чтобы в карточке было видно, откуда взялся доступ."""
+        rows = await self.fetch_all("""
+            SELECT ur.uuid, u.name AS user_name, r.name AS role_name,
+                   g.cidr, g.proto, g.port
+            FROM user_roles ur
+            JOIN users u ON u.uuid = ur.uuid
+            JOIN roles r ON r.id = ur.role_id
+            LEFT JOIN role_grants g ON g.role_id = r.id AND g.kind = 'net'
+            ORDER BY u.name
+        """)
+        matrix = {}
+        for r in rows:
+            rec = matrix.setdefault(r["uuid"], {"name": r["user_name"], "allow": []})
+            if r["cidr"]:
+                rec["allow"].append({"cidr": r["cidr"], "proto": r["proto"],
+                                     "port": r["port"], "role": r["role_name"]})
+        return matrix
+
     async def get_peer_limits(self):
         """Персональные правила. Кого здесь нет — тот на общем пороге."""
         rows = await self.fetch_all(

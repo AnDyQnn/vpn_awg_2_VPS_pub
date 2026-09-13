@@ -8,6 +8,7 @@ from telegram.constants import ParseMode
 
 from utils import escape_md, stop_bg_tasks, deregister_menu, ADMIN_ID, CONFIGS_DIR, WG_API_URL, dt_to_moscow, api_session
 from database import db
+from acl import grant_text
 from wireguard_manager import create_peer, delete_peer, pause_peer, resume_peer
 from handlers_client import send_client_menu
 
@@ -158,6 +159,34 @@ async def render_user_detail(context, chat_id, message_id, uuid):
     else:
         ips_text += "\n🌐 **Сети:** Пока нет данных\n"
 
+    # Доступы внутри туннеля. Пишем не только роли, но и что они дают: иначе
+    # по названию роли непонятно, открыт человеку домашний сервер или нет.
+    # Источник доступа (какая роль его дала) указан рядом — при нескольких ролях
+    # это единственный способ понять, откуда взялось разрешение.
+    roles_text = ""
+    try:
+        user_roles = await db.get_user_roles(uuid)
+        if not user_roles:
+            roles_text = "\n🛡 **Доступы:** без ограничений (ролей нет)\n"
+        else:
+            names = ", ".join(escape_md(r["name"]) for r in user_roles)
+            roles_text = f"\n🛡 **Роли:** {names}\n"
+            allow = (await db.get_access_matrix()).get(uuid, {}).get("allow", [])
+            if allow:
+                seen = set()
+                for g in allow[:6]:
+                    line = grant_text(g)
+                    if line in seen:
+                        continue
+                    seen.add(line)
+                    roles_text += f"  • `{line}` — из «{escape_md(g['role'])}»\n"
+                if len(allow) > 6:
+                    roles_text += "  • …\n"
+            else:
+                roles_text += "  ⚠️ роли ничего не открывают — туннель закрыт целиком\n"
+    except Exception:
+        pass
+
     text = (
         f"👤 **{safe_name}**\n"
         f"🆔 `{user['uuid']}`\n"
@@ -169,6 +198,7 @@ async def render_user_detail(context, chat_id, message_id, uuid):
         + f"⏳ Годен до: {exp_str} (МСК)\n"
         f"📱 TG ID: {tg_status}\n"
         f"📅 Создан: {created_str}\n"
+        f"{roles_text}"
         f"{ips_text}"
     )
 
@@ -189,6 +219,7 @@ async def render_user_detail(context, chat_id, message_id, uuid):
         InlineKeyboardButton("⏱ Ограничить на сутки", callback_data=f"svc_rule_day_{uuid}"),
         InlineKeyboardButton("📉 История нагрузки", callback_data=f"svc_pchart_{uuid}"),
     ])
+    keyboard.append([InlineKeyboardButton("🛡 Доступы · роли", callback_data=f"role_u_{uuid}")])
     keyboard.append([InlineKeyboardButton("✏️ Переименовать ключ", callback_data=f"rename_user_{uuid}")])
     keyboard.append([InlineKeyboardButton("🔗 Привязать TG ID", callback_data=f"link_tg_{uuid}")])
     if tg_ids:

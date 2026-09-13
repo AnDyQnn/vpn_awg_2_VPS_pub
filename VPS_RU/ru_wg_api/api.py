@@ -1,4 +1,5 @@
 import os
+import json
 import uuid
 import subprocess
 import urllib.request
@@ -165,6 +166,18 @@ class GhostTarget(BaseModel):
     public_key: str
     purge_config: bool = True
 
+class AclGrant(BaseModel):
+    cidr: str
+    proto: str = "any"
+    port: Optional[int] = None
+
+class AclPeer(BaseModel):
+    ip: str
+    allow: List[AclGrant] = []
+
+class AclApply(BaseModel):
+    peers: List[AclPeer] = []
+
 def run_cmd(cmd):
     try:
         if isinstance(cmd, list):
@@ -322,6 +335,7 @@ def setup_network():
 
     restore_peers()
     rebuild_accounting()
+    rebuild_acl()
 
 # --- УЧЁТ ПАКЕТОВ ПО ПИРАМ -------------------------------------------------
 # WireGuard считает по пирам только БАЙТЫ — пакетов он не отдаёт вовсе. А упирается
@@ -397,6 +411,99 @@ def read_accounting():
                                         "rx_packets": 0, "rx_bytes": 0})
             rec["rx_packets"], rec["rx_bytes"] = pkts, byts
     return stats
+
+
+# --- ДОСТУПЫ ВНУТРИ ТУННЕЛЯ (РОЛИ) ----------------------------------------
+# Роли ограничивают только одно: кто из пиров к кому ходит ВНУТРИ туннеля.
+# Интернета это не касается вовсе, и вот почему важно не перепутать: «мировой»
+# трафик клиента тоже идёт через wg0 — он уходит в клиент-сервер 10.13.13.254.
+# Поэтому цепочка вешается не на весь wg0→wg0, а только на адреса самого туннеля,
+# и адрес агента из неё исключён первым правилом. Иначе роль отрезала бы человеку
+# интернет вместо домашнего сервиса.
+#
+# Ключ доступа — адрес пира: WireGuard сам сверяет ключ с AllowedIPs (/32),
+# подделать адрес источника клиент не может.
+#
+# Разрешение — RETURN, а не ACCEPT: ACCEPT оборвал бы обход FORWARD целиком,
+# и ниже перестало бы работать правило, закрывающее панель агента от пиров.
+ACL_CHAIN = "WG_ACL"
+ACL_STATE_FILE = f"{CONF_DIR}/acl.json"
+TUNNEL_NET = f"{VPN_SUBNET}/24"
+DE_AGENT_IP = "10.13.13.254"
+
+
+def _acl_ensure_chain():
+    subprocess.run(f"iptables -N {ACL_CHAIN}", shell=True, stderr=subprocess.DEVNULL)
+    subprocess.run(f"iptables -F {ACL_CHAIN}", shell=True, stderr=subprocess.DEVNULL)
+    hook = f"-i wg0 -o wg0 -d {TUNNEL_NET} -j {ACL_CHAIN}"
+    check = subprocess.run(f"iptables -C FORWARD {hook}", shell=True,
+                           stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+    if check.returncode != 0:
+        # Вторым номером: первой в FORWARD стоит цепочка учёта, и она должна
+        # посчитать пакет до того, как мы его отбросим.
+        subprocess.run(f"iptables -I FORWARD 2 {hook}", shell=True,
+                       stderr=subprocess.DEVNULL)
+
+
+def _acl_rule_spec(ip, grant):
+    """Строит спецификацию правила. Порт без протокола бессмыслен, поэтому при
+    указанном порте протокол обязателен — иначе правило молча не добавится."""
+    spec = f"-s {ip} -d {grant['cidr']}"
+    proto = (grant.get("proto") or "any").lower()
+    port = grant.get("port")
+    if proto in ("tcp", "udp"):
+        spec += f" -p {proto}"
+        if port:
+            spec += f" --dport {port}"
+    return spec
+
+
+def apply_acl(peers):
+    """Пересобирает цепочку целиком: список пиров с ограничениями и что каждому можно.
+    Пира нет в списке — правил на него нет, и он ходит куда угодно (роли не назначены)."""
+    _acl_ensure_chain()
+    # Ответный трафик уже разрешённых сессий и весь путь в интернет через агента.
+    subprocess.run(f"iptables -A {ACL_CHAIN} -d {DE_AGENT_IP} -j RETURN",
+                   shell=True, stderr=subprocess.DEVNULL)
+    subprocess.run(f"iptables -A {ACL_CHAIN} -m conntrack "
+                   f"--ctstate ESTABLISHED,RELATED -j RETURN",
+                   shell=True, stderr=subprocess.DEVNULL)
+    applied = 0
+    for peer in peers:
+        ip = peer.get("ip")
+        if not ip:
+            continue
+        for grant in peer.get("allow", []):
+            if not grant.get("cidr"):
+                continue
+            subprocess.run(f"iptables -A {ACL_CHAIN} {_acl_rule_spec(ip, grant)} -j RETURN",
+                           shell=True, stderr=subprocess.DEVNULL)
+            applied += 1
+        # Замыкающий запрет для этого пира — всё, что не разрешено выше.
+        subprocess.run(f"iptables -A {ACL_CHAIN} -s {ip} -j DROP",
+                       shell=True, stderr=subprocess.DEVNULL)
+    return applied
+
+
+def save_acl_state(peers):
+    try:
+        with open(ACL_STATE_FILE, "w") as f:
+            json.dump({"peers": peers, "saved_at": int(time.time())}, f)
+    except Exception as e:
+        print(f"ACL state save warning: {e}")
+
+
+def rebuild_acl():
+    """Восстанавливает доступы после перезапуска контейнера: setup_network() чистит
+    таблицы при каждом старте, поэтому состояние держим на диске, рядом с конфигом."""
+    peers = []
+    try:
+        if os.path.exists(ACL_STATE_FILE):
+            with open(ACL_STATE_FILE) as f:
+                peers = (json.load(f) or {}).get("peers", [])
+    except Exception as e:
+        print(f"ACL state read warning: {e}")
+    apply_acl(peers)
 
 
 def restore_peers():
@@ -532,6 +639,40 @@ def get_accounting():
     разнице двух замеров. Так узел не хранит истории и остаётся без состояния."""
     try:
         return {"ts": int(time.time()), "peers": read_accounting()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/acl")
+def set_acl(req: AclApply):
+    """Принимает готовый список ограничений и применяет его целиком.
+
+    Узел намеренно ничего не знает про роли: считать объединение прав — дело бота,
+    у которого есть база. Сюда приходит уже готовый ответ на вопрос «кому куда можно»,
+    а узел только раскладывает его в правила и запоминает на диск."""
+    try:
+        peers = [p.model_dump() if hasattr(p, "model_dump") else p.dict()
+                 for p in req.peers]
+        rules = apply_acl(peers)
+        save_acl_state(peers)
+        return {"status": "ok", "peers": len(peers), "rules": rules}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/acl")
+def get_acl():
+    """Что реально стоит в правилах прямо сейчас — для аудита и сверки с базой."""
+    try:
+        out = subprocess.run(f"iptables -nvL {ACL_CHAIN}", shell=True,
+                             capture_output=True, text=True).stdout
+        state = {}
+        if os.path.exists(ACL_STATE_FILE):
+            with open(ACL_STATE_FILE) as f:
+                state = json.load(f) or {}
+        return {"saved_at": state.get("saved_at"),
+                "peers": state.get("peers", []),
+                "chain": out}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
