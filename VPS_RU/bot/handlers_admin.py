@@ -107,19 +107,33 @@ async def return_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
     except Exception:
         version = ""
 
-    # Строки намеренно длинные: ширину клавиатуры Telegram берёт от ширины
-    # сообщения, и короткий заголовок давал кнопки в два пальца.
+    # Ширину клавиатуры Telegram берёт от ширины сообщения, поэтому одна строка
+    # статуса сделана плотной и информативной — она же задаёт ширину кнопок.
+    try:
+        mode = await db.get_setting("pps_mode") or "observe"
+    except Exception:
+        mode = "observe"
+    mode_word = "только наблюдение" if mode != "enforce" else "ограничение включено"
+
     lines = ["🛡 **VPN Dashboard** · мастер-сервер и клиент-сервер", ""]
-    lines.append(f"🟢 *На связи сейчас:* **{active_count}** из {total_keys} ключей, "
-                 f"туннель работает")
+    lines.append(f"🟢 На связи: **{active_count}** из {total_keys} · "
+                 f"нагрузка: {mode_word}")
+    # Сутки трафика: полезно само по себе и заодно держит ширину сообщения,
+    # от которой Telegram считает ширину кнопок.
+    try:
+        row = await db.fetch_all(
+            "SELECT COALESCE(SUM(bytes_in+bytes_out),0) AS b, "
+            "COALESCE(MAX(peak_pps),0) AS p FROM traffic_hourly "
+            "WHERE hour > NOW() - INTERVAL '24 HOURS'")
+        gb = float(row[0]["b"]) / 1024 ** 3 if row else 0
+        peak = int(row[0]["p"]) if row else 0
+    except Exception:
+        gb, peak = 0, 0
+    lines.append(f"📊 За сутки: **{gb:.1f}** ГБ · пик {peak} пакетов в секунду")
     if version:
-        lines.append(f"📦 *Версия системы:* `{version}`")
-    if admin_count:
-        lines.append(f"⚙️ *Ждёт внимания:* **{admin_count}** — загляните в "
-                     f"«Администрирование»")
-    else:
-        lines.append("⚙️ *Ждёт внимания:* ничего — ни очередей, ни превышений, "
-                     "ни обращений")
+        lines.append(f"📦 Версия: `{version}`")
+    lines.append(f"⚙️ Ждёт внимания: **{admin_count}**" if admin_count
+                 else "⚙️ Ждёт внимания: нет")
     lines += ["", "Выберите действие:"]
     text = "\n".join(lines)
     markup = main_menu(active_count=active_count, support_count=support_count,
