@@ -43,6 +43,10 @@ from handlers_client import (
     client_bypass_info_handler, client_report_site_handler, client_notify_toggle_handler, client_notify_off_handler,
     cmd_keys, cmd_status, cmd_support, cmd_help
 )
+from handlers_service import (
+    service_menu, toggle_mode, set_mode, load_screen, limits_screen,
+    change_limit, set_peer_rule
+)
 from handlers_admin import (
     ask_backup_password,
     return_to_main_menu, update_persistent_backup, start_dashboard, confirm_reboot, do_reboot_server, 
@@ -601,6 +605,22 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "client_stats": await client_stats_handler(update, context); return
     if data == "client_bypass_info": await client_bypass_info_handler(update, context); return
     if data == "client_report_site": await client_report_site_handler(update, context); return
+    # --- Раздел администрирования ---
+    if data == "svc_menu": await service_menu(update, context); return
+    if data == "svc_mode_toggle": await toggle_mode(update, context); return
+    if data == "svc_mode_on": await set_mode(update, context, True); return
+    if data == "svc_mode_off": await set_mode(update, context, False); return
+    if data == "svc_load": await load_screen(update, context); return
+    if data == "svc_limits": await limits_screen(update, context); return
+    if data == "svc_noop": await update.callback_query.answer(); return
+    if data == "svc_limit_up": await change_limit(update, context, "up"); return
+    if data == "svc_limit_down": await change_limit(update, context, "down"); return
+    if data.startswith("svc_limit_"):
+        await change_limit(update, context, data.replace("svc_limit_", "")); return
+    if data.startswith("svc_rule_"):
+        _, _, mode, uuid_val = data.split("_", 3)
+        await set_peer_rule(update, context, uuid_val, mode); return
+
     if data == "set_backup_pw": await ask_backup_password(update, context); return
     if data == "client_notify_toggle": await client_notify_toggle_handler(update, context); return
     if data == "client_notify_off": await client_notify_off_handler(update, context); return

@@ -79,7 +79,9 @@ async def render_user_detail(context, chat_id, message_id, uuid):
     user = await db.get_user_by_uuid(uuid)
     if not user: return
 
-    is_online = False
+    # Адрес пира и время рукопожатия приходят от узла в том же ответе — раньше
+    # бралась только отметка «онлайн», а адрес просто выбрасывался.
+    is_online, peer_ip, hs_ago = False, None, None
     try:
         async with api_session() as session:
             async with session.get(f"{WG_API_URL}/peers", timeout=3) as resp:
@@ -89,8 +91,48 @@ async def render_user_detail(context, chat_id, message_id, uuid):
                     for p in data:
                         if p.get('uuid') == uuid:
                             hs = p.get('latest_handshake', 0)
-                            if hs > 0 and (now - hs) < 180: is_online = True
+                            peer_ip = (p.get('allowed_ips') or '').split('/')[0] or None
+                            if hs > 0:
+                                hs_ago = now - hs
+                                if hs_ago < 180:
+                                    is_online = True
     except: pass
+
+    def _ago(sec):
+        if sec is None:
+            return "ни разу"
+        if sec < 60:
+            return f"{sec} сек назад"
+        if sec < 3600:
+            return f"{sec // 60} мин назад"
+        if sec < 86400:
+            return f"{sec // 3600} ч назад"
+        return f"{sec // 86400} дн назад"
+
+    # Действующее правило нагрузки. Нет правила — человек на общем лимите, и это
+    # нормальное состояние, а не недонастроенное.
+    limit_line = "общий"
+    try:
+        rule = (await db.get_peer_limits()).get(uuid)
+        common = int(await db.get_setting("pps_limit") or 5000)
+        if not rule:
+            limit_line = f"общий, `{common}` пак/с"
+        elif rule["mode"] == "unlimited":
+            limit_line = "без ограничений"
+        else:
+            until = ""
+            if rule["expires_at"]:
+                until = f", до {dt_to_moscow(rule['expires_at']).strftime('%d.%m %H:%M')}"
+            limit_line = f"свой, `{rule['limit_pps']}` пак/с{until}"
+    except Exception:
+        pass
+
+    try:
+        exceeded = await db.fetch_val(
+            "SELECT COUNT(*) FROM pps_events WHERE user_uuid=$1 "
+            "AND started_at > NOW() - INTERVAL '24 HOURS'", uuid) or 0
+    except Exception:
+        exceeded = 0
 
     if not user.get('is_active', True): status_str = "🔴 Отключен"
     elif is_online: status_str = "🟢 Онлайн"
@@ -120,7 +162,11 @@ async def render_user_detail(context, chat_id, message_id, uuid):
         f"👤 **{safe_name}**\n"
         f"🆔 `{user['uuid']}`\n"
         f"📊 Статус: {status_str}\n"
-        f"⏳ Годен до: {exp_str} (МСК)\n"
+        f"🌐 Адрес в туннеле: `{peer_ip or 'не выдан'}`\n"
+        f"🤝 Последнее соединение: {_ago(hs_ago)}\n"
+        f"🚦 Лимит: {limit_line}"
+        + (f" · за сутки превышений: {exceeded}\n" if exceeded else "\n")
+        + f"⏳ Годен до: {exp_str} (МСК)\n"
         f"📱 TG ID: {tg_status}\n"
         f"📅 Создан: {created_str}\n"
         f"{ips_text}"
@@ -132,6 +178,14 @@ async def render_user_detail(context, chat_id, message_id, uuid):
     else:
         keyboard.append([InlineKeyboardButton("▶️ Разморозить ключ", callback_data=f"act_resume_{uuid}")])
 
+    # Правило нагрузки прямо из карточки: чаще всего оно и нужно именно здесь,
+    # когда смотришь на конкретного человека.
+    keyboard.append([
+        InlineKeyboardButton("📐 Общий", callback_data=f"svc_rule_default_{uuid}"),
+        InlineKeyboardButton("✂️ Свой", callback_data=f"svc_rule_custom_{uuid}"),
+        InlineKeyboardButton("♾ Без лимита", callback_data=f"svc_rule_unlimited_{uuid}"),
+    ])
+    keyboard.append([InlineKeyboardButton("⏱ Ограничить на сутки", callback_data=f"svc_rule_day_{uuid}")])
     keyboard.append([InlineKeyboardButton("✏️ Переименовать ключ", callback_data=f"rename_user_{uuid}")])
     keyboard.append([InlineKeyboardButton("🔗 Привязать TG ID", callback_data=f"link_tg_{uuid}")])
     if tg_ids:
