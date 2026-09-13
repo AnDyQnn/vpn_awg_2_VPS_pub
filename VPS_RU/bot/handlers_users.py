@@ -219,13 +219,14 @@ async def render_user_detail(context, chat_id, message_id, uuid):
 
     # Правило нагрузки прямо из карточки: чаще всего оно и нужно именно здесь,
     # когда смотришь на конкретного человека.
+    # Раньше тут стояли «Общий / Свой / Без лимита» — по подписям невозможно
+    # понять ни что они делают, ни что стоит сейчас. Теперь одна строка с
+    # текущим состоянием, а выбор — на отдельном экране с объяснениями.
     keyboard.append([
-        InlineKeyboardButton("📐 Общий", callback_data=f"svc_rule_default_{uuid}"),
-        InlineKeyboardButton("✂️ Свой", callback_data=f"svc_rule_custom_{uuid}"),
-        InlineKeyboardButton("♾ Без лимита", callback_data=f"svc_rule_unlimited_{uuid}"),
+        InlineKeyboardButton(f"🚦 Ограничение: {limit_line.split(',')[0]}",
+                             callback_data=f"svc_lim_{uuid}"),
     ])
     keyboard.append([
-        InlineKeyboardButton("⏱ Ограничить на сутки", callback_data=f"svc_rule_day_{uuid}"),
         InlineKeyboardButton("📉 История нагрузки", callback_data=f"svc_pchart_{uuid}"),
     ])
     keyboard.append([InlineKeyboardButton("🛡 Доступы · роли", callback_data=f"role_u_{uuid}"),

@@ -46,7 +46,8 @@ from handlers_client import (
 from handlers_service import (
     service_menu, toggle_mode, set_mode, load_screen, limits_screen,
     change_limit, set_peer_rule, load_chart, whats_new,
-    ensure_api_token, charts_screen, pick_peer_screen, graphs_menu
+    ensure_api_token, charts_screen, pick_peer_screen, graphs_menu,
+    peer_limit_screen
 )
 from handlers_admin import (
     ask_backup_password,
@@ -731,6 +732,8 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data.startswith("svc_pchart_"):
         await load_chart(update, context, data.replace("svc_pchart_", "")); return
     if data == "svc_limits": await limits_screen(update, context); return
+    if data.startswith("svc_lim_"):
+        await peer_limit_screen(update, context, data.split("_", 2)[2]); return
     if data == "svc_noop": await update.callback_query.answer(); return
     if data == "svc_limit_up": await change_limit(update, context, "up"); return
     if data == "svc_limit_down": await change_limit(update, context, "down"); return
