@@ -456,6 +456,22 @@ class Database:
         await self.execute(
             "UPDATE xray_users SET revoked_at=NOW() WHERE user_uuid=$1", user_uuid)
 
+    async def get_traffic_totals(self, uuid):
+        """Сколько человек прокачал за всё время: (принято, отдано) в байтах.
+
+        Считаем по часовым срезам, а не по `stats`: там лежат показания
+        счётчиков, которые обнуляются при перезапуске интерфейса, и разность
+        пришлось бы вычислять заново. В часовых срезах уже приросты.
+
+        SUM в постгресе возвращает Decimal — приводим к целому здесь, чтобы
+        вызывающему не приходилось об этом помнить."""
+        row = await self.fetch_all(
+            "SELECT COALESCE(SUM(bytes_in),0) AS i, COALESCE(SUM(bytes_out),0) AS o "
+            "FROM traffic_hourly WHERE user_uuid=$1", uuid)
+        if not row:
+            return 0, 0
+        return int(row[0]["i"] or 0), int(row[0]["o"] or 0)
+
     async def count_xray_users(self):
         return await self.fetch_val(
             "SELECT COUNT(*) FROM xray_users WHERE revoked_at IS NULL") or 0

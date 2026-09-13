@@ -241,6 +241,19 @@ async def profile_link(user_uuid) -> str:
             f"&flow=xtls-rprx-vision#{name}")
 
 
+async def subscription_url(token: str) -> str:
+    """Адрес личной подписки — то, что человек вставляет в приложение один раз
+    и больше не трогает.
+
+    Пусто, если владелец не указал, по какому адресу сервер подписок доступен
+    снаружи. Гадать нельзя: подписка по неверному адресу выглядит как рабочая,
+    а на деле молча перестаёт обновляться."""
+    base = (await db.get_setting("xray_sub_base") or "").strip().rstrip("/")
+    if not base or not token:
+        return ""
+    return f"{base}/sub/{token}"
+
+
 async def subscription_body(token: str) -> str:
     """Тело подписки: список профилей в base64 — формат, который понимают
     все клиенты этого семейства.

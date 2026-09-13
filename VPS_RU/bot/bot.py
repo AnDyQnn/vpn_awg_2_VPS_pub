@@ -1005,6 +1005,16 @@ async def setup_bot_ui(application):
     except Exception as e:
         print(f"setup_bot_ui error: {e}")
 
+async def start_subscriptions():
+    """Поднимает сервер подписок. Ошибка здесь не должна ронять бота: без
+    подписок он работает как прежде, а вот без бота не работает ничего."""
+    try:
+        from subscription import start_server
+        await start_server()
+    except Exception as e:
+        print(f"Подписки: сервер не поднялся: {e}")
+
+
 async def post_init(application):
     state_data.setdefault("bg_tasks", set())
 
@@ -1078,6 +1088,9 @@ async def post_init(application):
         asyncio.create_task(load_collector_loop(application)),
         asyncio.create_task(retire_watch_loop(application)),
         asyncio.create_task(migration_watch_loop(application)),
+        # Раздача подписок Xray: клиенты сами перечитывают профиль, поэтому
+        # сервер должен подняться до того, как кто-то попытается обновиться.
+        asyncio.create_task(start_subscriptions()),
         # токен панелей выдаётся сам, если его нет — вводить ничего не нужно
         asyncio.create_task(ensure_api_token(application))
     ]
