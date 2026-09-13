@@ -42,6 +42,22 @@ COPY update_ru_ips.sh /app/update_ru_ips.sh
 COPY run_api.sh /run_api.sh
 RUN chmod +x /run_api.sh && chmod +x /app/update_ru_ips.sh
 
+# Xray — второй протокол. Версию закрепляем: «последняя» на каждой пересборке
+# означает, что однажды к тебе приедет чужое изменение в самый неподходящий день.
+ARG XRAY_VERSION=v26.3.27
+RUN set -e; \
+    apk add --no-cache --virtual .xray-build unzip >/dev/null; \
+    for M in "https://github.com/XTLS/Xray-core/releases/download/${XRAY_VERSION}/Xray-linux-64.zip" \
+             "https://ghproxy.net/https://github.com/XTLS/Xray-core/releases/download/${XRAY_VERSION}/Xray-linux-64.zip"; do \
+        if curl -fsSL --max-time 120 -o /tmp/xray.zip "$M"; then break; fi; \
+        echo ">>> источник Xray недоступен, пробую следующий..."; \
+    done; \
+    unzip -o -q /tmp/xray.zip -d /usr/local/bin/ xray geoip.dat geosite.dat; \
+    chmod +x /usr/local/bin/xray; \
+    rm -f /tmp/xray.zip; \
+    apk del .xray-build >/dev/null; \
+    /usr/local/bin/xray version | head -1
+
 COPY api.py /app/api.py
 COPY dnsfilter.py /app/dnsfilter.py
 COPY blocked.html /app/blocked.html
