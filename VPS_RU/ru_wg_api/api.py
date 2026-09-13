@@ -202,6 +202,13 @@ class MigrationPeer(BaseModel):
 class MigrationDe(BaseModel):
     iface: str = "wg1"
 
+class XrayConfig(BaseModel):
+    config: dict
+
+class ProtocolSwitch(BaseModel):
+    name: str
+    enabled: bool = True
+
 def run_cmd(cmd):
     try:
         if isinstance(cmd, list):
@@ -364,6 +371,10 @@ def setup_network():
 
     restore_peers()
     mig_restore()
+    # Xray переживает перезапуск контейнера так же, как всё остальное:
+    # состояние на диске, поднимаем по нему.
+    if proto_state()["xray"]:
+        xray_start()
     rebuild_accounting()
     rebuild_acl()
     rebuild_dns_filters()
@@ -988,6 +999,133 @@ def mig_finish():
             "note": "новый ключ стал основным, второй интерфейс убран"}
 
 
+# --- XRAY: ВТОРОЙ ПРОТОКОЛ ------------------------------------------------
+# Xray живёт процессом рядом с панелью, как и фильтр DNS, и по той же причине:
+# у контейнера нет доступа к докеру, а значит перезапускать себя он должен сам.
+#
+# Почему это не ломает всё, что построено вокруг адресов: каждому человеку в
+# конфиге Xray прописывается свой исходящий канал с его туннельным адресом
+# (sendThrough). Поэтому наружу его трафик уходит с того же 10.13.13.x, что и
+# по AmneziaWG — счётчики пакетов, лимиты, роли и фильтры продолжают узнавать
+# человека, не зная и не интересуясь, каким протоколом он подключился.
+#
+# Узел намеренно НЕ знает, как устроен конфиг: его целиком собирает бот, у
+# которого есть база. Здесь только записать, запустить и доложить состояние.
+XRAY_BIN = "/usr/local/bin/xray"
+XRAY_CONF = f"{CONF_DIR}/xray.json"
+XRAY_STATE = f"{CONF_DIR}/protocols.json"
+XRAY_PID = "/tmp/xray.pid"
+
+
+def proto_state():
+    """Какие протоколы включены. Нет файла — значит как было раньше:
+    AmneziaWG работает, Xray ещё не поднимали."""
+    try:
+        if os.path.exists(XRAY_STATE):
+            with open(XRAY_STATE) as f:
+                s = json.load(f) or {}
+                return {"awg": bool(s.get("awg", True)), "xray": bool(s.get("xray", False))}
+    except Exception as e:
+        print(f"Состояние протоколов не читается: {e}")
+    return {"awg": True, "xray": False}
+
+
+def save_proto_state(state):
+    try:
+        with open(XRAY_STATE, "w") as f:
+            json.dump(state, f)
+    except Exception as e:
+        print(f"Состояние протоколов не сохранилось: {e}")
+
+
+def xray_running():
+    try:
+        with open(XRAY_PID) as f:
+            pid = int(f.read().strip())
+        os.kill(pid, 0)
+        return True
+    except Exception:
+        return False
+
+
+def xray_stop():
+    try:
+        with open(XRAY_PID) as f:
+            pid = int(f.read().strip())
+        os.kill(pid, 15)
+        time.sleep(0.5)
+    except Exception:
+        pass
+    try:
+        os.remove(XRAY_PID)
+    except OSError:
+        pass
+
+
+def xray_start():
+    """Поднимает процесс, если есть конфиг. Без конфига запускать нечего —
+    это не ошибка, а просто «ещё никого не завели»."""
+    if not os.path.exists(XRAY_CONF):
+        return False, "конфиг ещё не создан"
+    xray_stop()
+    proc = subprocess.Popen([XRAY_BIN, "run", "-c", XRAY_CONF],
+                            stdout=open("/tmp/xray.log", "a"),
+                            stderr=subprocess.STDOUT)
+    with open(XRAY_PID, "w") as f:
+        f.write(str(proc.pid))
+    time.sleep(1)
+    if not xray_running():
+        return False, "процесс не удержался, смотри /tmp/xray.log"
+    return True, "запущен"
+
+
+def xray_apply(config):
+    """Записывает конфиг от бота и перезапускает процесс.
+
+    Старый конфиг сохраняется рядом: если новый окажется битым, Xray не
+    поднимется, и вернуться надо мгновенно, а не идти за бэкапом."""
+    prev = None
+    if os.path.exists(XRAY_CONF):
+        with open(XRAY_CONF) as f:
+            prev = f.read()
+
+    with open(XRAY_CONF, "w") as f:
+        json.dump(config, f, indent=2)
+    os.chmod(XRAY_CONF, 0o600)
+
+    if not proto_state()["xray"]:
+        return {"status": "ok", "note": "конфиг записан, протокол выключен"}
+
+    ok, note = xray_start()
+    if not ok and prev is not None:
+        with open(XRAY_CONF, "w") as f:
+            f.write(prev)
+        xray_start()
+        raise RuntimeError(f"новый конфиг не принят ({note}), вернул прежний")
+    return {"status": "ok", "note": note}
+
+
+def xray_users_online():
+    """Сколько сейчас установлено соединений к Xray. Не число людей, а именно
+    соединений: одно устройство держит несколько."""
+    try:
+        out = subprocess.run("ss -tn state established '( sport = :443 )'",
+                             shell=True, capture_output=True, text=True).stdout
+        return max(0, len(out.strip().splitlines()) - 1)
+    except Exception:
+        return 0
+
+
+def awg_down():
+    """Гасит основной интерфейс. Люди на нём теряют связь — поэтому вызывается
+    только по явной кнопке владельца и после показа, сколько их."""
+    subprocess.run(["ip", "link", "set", "down", "dev", "wg0"], stderr=subprocess.DEVNULL)
+
+
+def awg_up():
+    setup_network()
+
+
 def restore_peers():
     if not os.path.exists(CONF_FILE): return
     try:
@@ -1243,6 +1381,86 @@ def api_mig_abort():
 def api_mig_finish():
     try:
         return mig_finish()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/xray/config")
+def api_xray_config(req: XrayConfig):
+    """Принимает готовый конфиг от бота и применяет его."""
+    try:
+        return xray_apply(req.config)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/xray/status")
+def api_xray_status():
+    """Состояние обоих протоколов — для экрана администрирования."""
+    try:
+        state = proto_state()
+        awg_up_now = subprocess.run("ip link show wg0 up", shell=True,
+                                    stdout=subprocess.DEVNULL,
+                                    stderr=subprocess.DEVNULL).returncode == 0
+        return {
+            "awg": {"enabled": state["awg"], "up": awg_up_now,
+                    "peers": len(read_config_blocks()) - 1},
+            "xray": {"enabled": state["xray"], "up": xray_running(),
+                     "connections": xray_users_online(),
+                     "has_config": os.path.exists(XRAY_CONF)},
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/xray/keys")
+def api_xray_keys():
+    """Пара ключей для Reality — генерит сам Xray, нам её только передать."""
+    try:
+        out = subprocess.run([XRAY_BIN, "x25519"], capture_output=True, text=True).stdout
+        keys = {}
+        for line in out.splitlines():
+            if ":" in line:
+                k, v = line.split(":", 1)
+                keys[k.strip().lower().replace(" ", "_")] = v.strip()
+        if not keys:
+            raise RuntimeError("не удалось сгенерировать ключи")
+        return keys
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/protocols")
+def api_protocols(req: ProtocolSwitch):
+    """Включение и выключение протоколов.
+
+    Выключить ОБА нельзя: это оставило бы узел без входа вообще, а вернуть его
+    можно было бы только руками по SSH."""
+    try:
+        state = proto_state()
+        if req.name not in ("awg", "xray"):
+            raise RuntimeError("неизвестный протокол")
+        other = "xray" if req.name == "awg" else "awg"
+        if not req.enabled and not state[other]:
+            raise RuntimeError("нельзя выключить оба протокола — узел останется без входа")
+
+        state[req.name] = bool(req.enabled)
+        save_proto_state(state)
+
+        if req.name == "xray":
+            if req.enabled:
+                ok, note = xray_start()
+            else:
+                xray_stop()
+                note = "остановлен"
+        else:
+            if req.enabled:
+                awg_up()
+                note = "поднят"
+            else:
+                awg_down()
+                note = "погашен"
+        return {"status": "ok", "state": state, "note": note}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
