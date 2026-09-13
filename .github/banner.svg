@@ -146,8 +146,57 @@
       }
 
       @media (prefers-reduced-motion: reduce) {
-        .node,.link,.rain text,.l,.beam,.halo,.scan { animation: none }
+        .node,.link,.rain text,.beam,.halo,.scan { animation: none }
       }
+
+      /* Частоты и задержки вынесены в классы: GitHub вырезает атрибут
+         style при вставке SVG, и заданная в нём анимация не отрабатывает —
+         лампочки просто горели ровно. */
+      .a1 { animation-delay:-1s; }
+      .a2 { animation-delay:-2.4s; }
+      .a3 { animation-delay:-3.1s; }
+      .a4 { animation-delay:-0.6s; }
+      .a5 { animation-delay:-4s; }
+      .a6 { animation-delay:-2.9s; }
+      .a7 { animation-delay:-.8s; }
+      .a8 { animation-delay:-1.6s; }
+      .a9 { animation-delay:-2.2s; }
+      .a10 { animation-delay:-3s; }
+      .a11 { animation-delay:-1.1s; }
+      .a12 { animation-delay:-2.6s; }
+      .a13 { animation-delay:-.4s; }
+      .a14 { animation-delay:-3.4s; }
+      .a15 { animation-delay:-1.9s; }
+      .a16 { animation-delay:-2.8s; }
+      .a17 { animation-delay:-.2s; }
+      .a18 { animation-delay:-3.8s; }
+      .a19 { animation-delay:-2.5s; }
+      .a20 { animation-delay:-4.8s; }
+      .a21 { animation-delay:-3.6s; }
+      .a22 { animation-delay:-2s; }
+      .a23 { animation-duration:0.81s;animation-delay:-0.45s; }
+      .a24 { animation-duration:1.34s;animation-delay:-0.22s; }
+      .a25 { animation-duration:1.15s;animation-delay:-1.1s; }
+      .a26 { animation-duration:0.38s;animation-delay:-1.52s; }
+      .a27 { animation-duration:0.35s;animation-delay:-1.3s; }
+      .a28 { animation-duration:0.4s;animation-delay:-0.27s; }
+      .a29 { animation-duration:0.97s;animation-delay:-2.48s; }
+      .a30 { animation-duration:0.49s;animation-delay:-0.67s; }
+      .a31 { animation-duration:1.3s;animation-delay:-2.84s; }
+      .a32 { animation-duration:1.22s;animation-delay:-1.19s; }
+      .a33 { animation-duration:1.86s;animation-delay:-0.14s; }
+      .a34 { animation-duration:0.56s;animation-delay:-2.07s; }
+      .a35 { animation-duration:1.31s;animation-delay:-1.44s; }
+      .a36 { animation-duration:0.64s;animation-delay:-2.38s; }
+      .a37 { animation-duration:1.59s;animation-delay:-1.54s; }
+      .a38 { animation-duration:1.1s;animation-delay:-0.71s; }
+      .a39 { animation-duration:0.3s;animation-delay:-1.11s; }
+      .a40 { animation-duration:1.23s;animation-delay:-0.21s; }
+      .a41 { animation-duration:1.57s;animation-delay:-0.7s; }
+      .a42 { animation-duration:0.66s;animation-delay:-0.13s; }
+      .a43 { animation-duration:1.9s;animation-delay:-2.22s; }
+      .a44 { animation-duration:1.7s;animation-delay:-1.85s; }
+      .a45 { animation-delay:-1.7s; }
     </style>
   </defs>
 
@@ -155,35 +204,35 @@
 
   <!-- фоновая сеть держится по краям: центр оставлен тексту -->
   <g fill="none">
-    <path class="link" d="M40 60 L72 86 L40 176" style="animation-delay:-1s"/>
-    <path class="link" d="M72 86 L206 52 L52 300" style="animation-delay:-2.4s"/>
-    <path class="link" d="M822 70 L856 196 L846 300" style="animation-delay:-3.1s"/>
-    <path class="link" d="M690 44 L822 70" style="animation-delay:-0.6s"/>
-    <path class="link" d="M206 52 L292 96" style="animation-delay:-4s"/>
-    <path class="link" d="M612 92 L690 44" style="animation-delay:-2.9s"/>
+    <path class="link a1" d="M40 60 L72 86 L40 176"/>
+    <path class="link a2" d="M72 86 L206 52 L52 300"/>
+    <path class="link a3" d="M822 70 L856 196 L846 300"/>
+    <path class="link a4" d="M690 44 L822 70"/>
+    <path class="link a5" d="M206 52 L292 96"/>
+    <path class="link a6" d="M612 92 L690 44"/>
   </g>
   <g>
     <circle class="node" cx="48"  cy="60"  r="2.6"/>
-    <circle class="node" cx="72" cy="86" r="2.6" style="animation-delay:-.8s"/>
-    <circle class="node" cx="40" cy="176" r="2.6" style="animation-delay:-1.6s"/>
-    <circle class="node" cx="206" cy="52"  r="2.6" style="animation-delay:-2.2s"/>
-    <circle class="node" cx="292" cy="96"  r="2.6" style="animation-delay:-3s"/>
-    <circle class="node" cx="52" cy="300" r="2.6" style="animation-delay:-1.1s"/>
-    <circle class="node" cx="612" cy="92"  r="2.6" style="animation-delay:-2.6s"/>
-    <circle class="node" cx="690" cy="44"  r="2.6" style="animation-delay:-.4s"/>
-    <circle class="node" cx="822" cy="70"  r="2.6" style="animation-delay:-3.4s"/>
-    <circle class="node" cx="792" cy="66"  r="2.6" style="animation-delay:-1.9s"/>
-    <circle class="node" cx="852" cy="136" r="2.6" style="animation-delay:-2.8s"/>
-    <circle class="node" cx="856" cy="196" r="2.6" style="animation-delay:-.2s"/>
-    <circle class="node" cx="846" cy="300" r="2.6" style="animation-delay:-3.8s"/>
+    <circle class="node a7" cx="72" cy="86" r="2.6"/>
+    <circle class="node a8" cx="40" cy="176" r="2.6"/>
+    <circle class="node a9" cx="206" cy="52"  r="2.6"/>
+    <circle class="node a10" cx="292" cy="96"  r="2.6"/>
+    <circle class="node a11" cx="52" cy="300" r="2.6"/>
+    <circle class="node a12" cx="612" cy="92"  r="2.6"/>
+    <circle class="node a13" cx="690" cy="44"  r="2.6"/>
+    <circle class="node a14" cx="822" cy="70"  r="2.6"/>
+    <circle class="node a15" cx="792" cy="66"  r="2.6"/>
+    <circle class="node a16" cx="852" cy="136" r="2.6"/>
+    <circle class="node a17" cx="856" cy="196" r="2.6"/>
+    <circle class="node a18" cx="846" cy="300" r="2.6"/>
   </g>
 
   <!-- падающий код по краям -->
   <g class="rain mono" font-size="12" fill="#3fb950" opacity=".13">
     <text x="30"  y="0">01</text>
-    <text x="168" y="0" style="animation-delay:-2.5s">{}</text>
-    <text x="726" y="0" style="animation-delay:-4.8s">1101</text>
-    <text x="862" y="0" style="animation-delay:-3.6s">0x1F</text>
+    <text x="168" y="0" class="a19">{}</text>
+    <text x="726" y="0" class="a20">1101</text>
+    <text x="862" y="0" class="a21">0x1F</text>
   </g>
 
   <!-- заголовок -->
@@ -197,7 +246,7 @@
   <!-- узлы и туннель -->
   <g>
     <ellipse cx="170" cy="212" rx="128" ry="92" fill="url(#halo)" class="halo"/>
-    <ellipse cx="730" cy="212" rx="128" ry="92" fill="url(#halo2)" class="halo" style="animation-delay:-2s"/>
+    <ellipse cx="730" cy="212" rx="128" ry="92" fill="url(#halo2)" class="halo a22"/>
 
     <g transform="translate(170,212)">
       <rect x="-62" y="-78" width="124" height="156" rx="12" fill="url(#rack)" stroke="#30363d" stroke-width="1.2"/>
@@ -208,17 +257,17 @@
       </g>
       <g>
         <rect class="l lg steady" x="16" y="-60" width="8" height="8" rx="2"/>
-        <rect class="l lb" x="28" y="-60" width="8" height="8" rx="2" style="animation-duration:0.81s;animation-delay:-0.45s"/>
-        <rect class="l la" x="40" y="-60" width="8" height="8" rx="2" style="animation-duration:1.34s;animation-delay:-0.22s"/>
-        <rect class="l lg" x="16" y="-22" width="8" height="8" rx="2" style="animation-duration:1.15s;animation-delay:-1.1s"/>
-        <rect class="l lb" x="28" y="-22" width="8" height="8" rx="2" style="animation-duration:0.38s;animation-delay:-1.52s"/>
-        <rect class="l la" x="40" y="-22" width="8" height="8" rx="2" style="animation-duration:0.35s;animation-delay:-1.3s"/>
-        <rect class="l lg" x="16" y="16" width="8" height="8" rx="2" style="animation-duration:0.4s;animation-delay:-0.27s"/>
-        <rect class="l lb" x="28" y="16" width="8" height="8" rx="2" style="animation-duration:0.97s;animation-delay:-2.48s"/>
-        <rect class="l la" x="40" y="16" width="8" height="8" rx="2" style="animation-duration:0.49s;animation-delay:-0.67s"/>
-        <rect class="l lg" x="16" y="54" width="8" height="8" rx="2" style="animation-duration:1.3s;animation-delay:-2.84s"/>
-        <rect class="l lb" x="28" y="54" width="8" height="8" rx="2" style="animation-duration:1.22s;animation-delay:-1.19s"/>
-        <rect class="l la" x="40" y="54" width="8" height="8" rx="2" style="animation-duration:1.86s;animation-delay:-0.14s"/>
+        <rect class="l lb a23" x="28" y="-60" width="8" height="8" rx="2"><animate attributeName="opacity" values="1;0.09" keyTimes="0;0.55" calcMode="discrete" dur="0.81s" begin="-0.45s" repeatCount="indefinite"/></rect>
+        <rect class="l la a24" x="40" y="-60" width="8" height="8" rx="2"><animate attributeName="opacity" values="1;0.09" keyTimes="0;0.55" calcMode="discrete" dur="1.34s" begin="-0.22s" repeatCount="indefinite"/></rect>
+        <rect class="l lg a25" x="16" y="-22" width="8" height="8" rx="2"><animate attributeName="opacity" values="1;0.09" keyTimes="0;0.55" calcMode="discrete" dur="1.15s" begin="-1.1s" repeatCount="indefinite"/></rect>
+        <rect class="l lb a26" x="28" y="-22" width="8" height="8" rx="2"><animate attributeName="opacity" values="1;0.09" keyTimes="0;0.55" calcMode="discrete" dur="0.38s" begin="-1.52s" repeatCount="indefinite"/></rect>
+        <rect class="l la a27" x="40" y="-22" width="8" height="8" rx="2"><animate attributeName="opacity" values="1;0.09" keyTimes="0;0.55" calcMode="discrete" dur="0.35s" begin="-1.3s" repeatCount="indefinite"/></rect>
+        <rect class="l lg a28" x="16" y="16" width="8" height="8" rx="2"><animate attributeName="opacity" values="1;0.09" keyTimes="0;0.55" calcMode="discrete" dur="0.4s" begin="-0.27s" repeatCount="indefinite"/></rect>
+        <rect class="l lb a29" x="28" y="16" width="8" height="8" rx="2"><animate attributeName="opacity" values="1;0.09" keyTimes="0;0.55" calcMode="discrete" dur="0.97s" begin="-2.48s" repeatCount="indefinite"/></rect>
+        <rect class="l la a30" x="40" y="16" width="8" height="8" rx="2"><animate attributeName="opacity" values="1;0.09" keyTimes="0;0.55" calcMode="discrete" dur="0.49s" begin="-0.67s" repeatCount="indefinite"/></rect>
+        <rect class="l lg a31" x="16" y="54" width="8" height="8" rx="2"><animate attributeName="opacity" values="1;0.09" keyTimes="0;0.55" calcMode="discrete" dur="1.3s" begin="-2.84s" repeatCount="indefinite"/></rect>
+        <rect class="l lb a32" x="28" y="54" width="8" height="8" rx="2"><animate attributeName="opacity" values="1;0.09" keyTimes="0;0.55" calcMode="discrete" dur="1.22s" begin="-1.19s" repeatCount="indefinite"/></rect>
+        <rect class="l la a33" x="40" y="54" width="8" height="8" rx="2"><animate attributeName="opacity" values="1;0.09" keyTimes="0;0.55" calcMode="discrete" dur="1.86s" begin="-0.14s" repeatCount="indefinite"/></rect>
       </g>
       <g fill="#58a6ff" opacity=".5">
         <rect x="-46" y="-60" width="30" height="7" rx="2.5"/>
@@ -236,17 +285,17 @@
       </g>
       <g>
         <rect class="l lg steady" x="16" y="-60" width="8" height="8" rx="2"/>
-        <rect class="l lb" x="28" y="-60" width="8" height="8" rx="2" style="animation-duration:0.56s;animation-delay:-2.07s"/>
-        <rect class="l la" x="40" y="-60" width="8" height="8" rx="2" style="animation-duration:1.31s;animation-delay:-1.44s"/>
-        <rect class="l lg" x="16" y="-22" width="8" height="8" rx="2" style="animation-duration:0.64s;animation-delay:-2.38s"/>
-        <rect class="l lb" x="28" y="-22" width="8" height="8" rx="2" style="animation-duration:1.59s;animation-delay:-1.54s"/>
-        <rect class="l la" x="40" y="-22" width="8" height="8" rx="2" style="animation-duration:1.1s;animation-delay:-0.71s"/>
-        <rect class="l lg" x="16" y="16" width="8" height="8" rx="2" style="animation-duration:0.3s;animation-delay:-1.11s"/>
-        <rect class="l lb" x="28" y="16" width="8" height="8" rx="2" style="animation-duration:1.23s;animation-delay:-0.21s"/>
-        <rect class="l la" x="40" y="16" width="8" height="8" rx="2" style="animation-duration:1.57s;animation-delay:-0.7s"/>
-        <rect class="l lg" x="16" y="54" width="8" height="8" rx="2" style="animation-duration:0.66s;animation-delay:-0.13s"/>
-        <rect class="l lb" x="28" y="54" width="8" height="8" rx="2" style="animation-duration:1.9s;animation-delay:-2.22s"/>
-        <rect class="l la" x="40" y="54" width="8" height="8" rx="2" style="animation-duration:1.7s;animation-delay:-1.85s"/>
+        <rect class="l lb a34" x="28" y="-60" width="8" height="8" rx="2"><animate attributeName="opacity" values="1;0.09" keyTimes="0;0.55" calcMode="discrete" dur="0.56s" begin="-2.07s" repeatCount="indefinite"/></rect>
+        <rect class="l la a35" x="40" y="-60" width="8" height="8" rx="2"><animate attributeName="opacity" values="1;0.09" keyTimes="0;0.55" calcMode="discrete" dur="1.31s" begin="-1.44s" repeatCount="indefinite"/></rect>
+        <rect class="l lg a36" x="16" y="-22" width="8" height="8" rx="2"><animate attributeName="opacity" values="1;0.09" keyTimes="0;0.55" calcMode="discrete" dur="0.64s" begin="-2.38s" repeatCount="indefinite"/></rect>
+        <rect class="l lb a37" x="28" y="-22" width="8" height="8" rx="2"><animate attributeName="opacity" values="1;0.09" keyTimes="0;0.55" calcMode="discrete" dur="1.59s" begin="-1.54s" repeatCount="indefinite"/></rect>
+        <rect class="l la a38" x="40" y="-22" width="8" height="8" rx="2"><animate attributeName="opacity" values="1;0.09" keyTimes="0;0.55" calcMode="discrete" dur="1.1s" begin="-0.71s" repeatCount="indefinite"/></rect>
+        <rect class="l lg a39" x="16" y="16" width="8" height="8" rx="2"><animate attributeName="opacity" values="1;0.09" keyTimes="0;0.55" calcMode="discrete" dur="0.3s" begin="-1.11s" repeatCount="indefinite"/></rect>
+        <rect class="l lb a40" x="28" y="16" width="8" height="8" rx="2"><animate attributeName="opacity" values="1;0.09" keyTimes="0;0.55" calcMode="discrete" dur="1.23s" begin="-0.21s" repeatCount="indefinite"/></rect>
+        <rect class="l la a41" x="40" y="16" width="8" height="8" rx="2"><animate attributeName="opacity" values="1;0.09" keyTimes="0;0.55" calcMode="discrete" dur="1.57s" begin="-0.7s" repeatCount="indefinite"/></rect>
+        <rect class="l lg a42" x="16" y="54" width="8" height="8" rx="2"><animate attributeName="opacity" values="1;0.09" keyTimes="0;0.55" calcMode="discrete" dur="0.66s" begin="-0.13s" repeatCount="indefinite"/></rect>
+        <rect class="l lb a43" x="28" y="54" width="8" height="8" rx="2"><animate attributeName="opacity" values="1;0.09" keyTimes="0;0.55" calcMode="discrete" dur="1.9s" begin="-2.22s" repeatCount="indefinite"/></rect>
+        <rect class="l la a44" x="40" y="54" width="8" height="8" rx="2"><animate attributeName="opacity" values="1;0.09" keyTimes="0;0.55" calcMode="discrete" dur="1.7s" begin="-1.85s" repeatCount="indefinite"/></rect>
       </g>
       <g fill="#58a6ff" opacity=".5">
         <rect x="-46" y="-60" width="30" height="7" rx="2.5"/>
@@ -257,7 +306,7 @@
     </g>
 
     <rect class="scan" x="108" y="134" width="124" height="2" fill="#9ff7a8" opacity="0"/>
-    <rect class="scan" x="668" y="134" width="124" height="2" fill="#d2a8ff" opacity="0" style="animation-delay:-1.7s"/>
+    <rect class="scan a45" x="668" y="134" width="124" height="2" fill="#d2a8ff" opacity="0"/>
 
     <text x="450" y="196" class="sans" font-size="13.5" text-anchor="middle" fill="url(#gTunnelText)">
       туннель поднимает клиент-сервер
