@@ -338,6 +338,11 @@ def setup_network():
     # ВАЖНО: правила пишутся здесь, а не руками на сервере — setup_network() делает
     # iptables -F при каждом старте контейнера и снесла бы всё, добавленное вручную.
     run_cmd("iptables -A INPUT -i eth0 -p tcp --dport 8000 -j DROP")
+    # Страница отказа живёт ТОЛЬКО внутри туннеля. Наружу её порты и так не
+    # опубликованы, но закрываем явно: заглушка — вещь внутренняя, в интернете
+    # ей делать нечего.
+    run_cmd("iptables -A INPUT -i eth0 -p tcp --dport 80 -j DROP")
+    run_cmd("iptables -A INPUT -i eth0 -p tcp --dport 443 -j DROP")
     # Раньше закрывался только eth0, а клиенты приходят по wg0 — и любой пир мог забрать
     # приватный ключ сервера через /api/backup_config. Это и есть та самая дыра.
     run_cmd("iptables -A INPUT -i wg0 -p tcp --dport 8000 -j DROP")
