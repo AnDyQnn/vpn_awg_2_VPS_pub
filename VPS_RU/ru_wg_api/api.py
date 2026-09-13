@@ -180,6 +180,7 @@ class AclApply(BaseModel):
 
 class DnsFilters(BaseModel):
     clients: dict = {}          # адрес пира -> список категорий
+    bot_link: str = ""          # куда человеку идти с вопросом «почему закрыто»
 
 class MigrationStart(BaseModel):
     port: int = 51821
@@ -507,7 +508,10 @@ def apply_acl(peers):
 
 
 ACL_WEB_CHAIN = "WG_ACL_WEB"
-ACL_WEB_PORTS = (80, 8080, 8096, 3000)   # типичные порты домашних панелей
+# Куда уводить веб-запрос к закрытому сервису: порт клиента → порт страницы.
+# 443 отдельно, потому что там нужен TLS, и отвечать по нему должен слушатель
+# с сертификатом, а не обычный HTTP.
+ACL_WEB_PORTS = {80: 80, 8080: 80, 8096: 80, 3000: 80, 443: 443}
 BLOCK_PAGE_IP = "10.13.13.1"            # страница отказа живёт на самом узле
 
 
@@ -544,9 +548,11 @@ def apply_acl_web(peers):
             subprocess.run(f"iptables -t nat -A {ACL_WEB_CHAIN} "
                            f"{_acl_rule_spec(ip, grant)} -j RETURN",
                            shell=True, stderr=subprocess.DEVNULL)
-        for port in ACL_WEB_PORTS:
+        for port, target in ACL_WEB_PORTS.items():
             subprocess.run(f"iptables -t nat -A {ACL_WEB_CHAIN} -s {ip} -p tcp "
-                           f"--dport {port} -j DNAT --to-destination {BLOCK_PAGE_IP}:80", shell=True, stderr=subprocess.DEVNULL)
+                           f"--dport {port} -j DNAT "
+                           f"--to-destination {BLOCK_PAGE_IP}:{target}",
+                           shell=True, stderr=subprocess.DEVNULL)
 
 
 def save_acl_state(peers):
@@ -610,10 +616,11 @@ def apply_dns_filters(clients):
     return redirected
 
 
-def save_dns_state(clients):
+def save_dns_state(clients, bot_link=""):
     try:
         with open(DNS_STATE_FILE, "w") as f:
-            json.dump({"clients": clients, "saved_at": int(time.time())}, f)
+            json.dump({"clients": clients, "bot_link": bot_link,
+                       "saved_at": int(time.time())}, f)
     except Exception as e:
         print(f"DNS state save warning: {e}")
 
@@ -640,6 +647,8 @@ def refresh_dns_lists(clients):
 
 def rebuild_dns_filters():
     apply_dns_filters(read_dns_state())
+    # Файл состояния читает и сам процесс фильтра — ссылка на бота лежит там же
+    # и переживает перезапуск вместе с раскладкой.
 
 
 # --- ПЕРЕЕЗД НА НОВЫЙ КЛЮЧ СЕРВЕРА ----------------------------------------
@@ -1065,7 +1074,7 @@ def set_dns_filters(req: DnsFilters):
     try:
         clients = {str(k): list(v) for k, v in (req.clients or {}).items()}
         count = apply_dns_filters(clients)
-        save_dns_state(clients)
+        save_dns_state(clients, req.bot_link or "")
         refresh_dns_lists(clients)
         return {"status": "ok", "filtered": count}
     except Exception as e:

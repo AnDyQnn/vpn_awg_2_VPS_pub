@@ -22,6 +22,15 @@ from telegram.ext import ContextTypes
 from database import db
 from utils import escape_md, WG_API_URL, api_session
 
+# Адрес бота узел сам не знает: он живёт в сети, а не в Telegram. Бот сообщает
+# его вместе с раскладкой фильтров, чтобы на странице отказа было куда написать.
+BOT_LINK = {"url": ""}
+
+
+def remember_bot_link(username):
+    if username:
+        BOT_LINK["url"] = f"https://t.me/{str(username).lstrip('@')}"
+
 # Порядок важен: сверху то, что включают чаще всего.
 CATEGORIES = [
     ("ads", "Реклама и трекеры"),
@@ -59,7 +68,8 @@ async def apply_filters(reason: str = ""):
     try:
         async with api_session() as session:
             async with session.post(f"{WG_API_URL}/dns/filters",
-                                    json={"clients": clients}, timeout=10) as resp:
+                                    json={"clients": clients,
+                                          "bot_link": BOT_LINK["url"]}, timeout=10) as resp:
                 if resp.status != 200:
                     return False, f"узел отклонил фильтры: {await resp.text()}"
                 data = await resp.json()
