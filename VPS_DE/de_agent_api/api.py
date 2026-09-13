@@ -73,6 +73,96 @@ def update_wg_config(data: ConfigData):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+class ServerChange(BaseModel):
+    server_pubkey: str
+    port: int
+    obfuscation: dict = {}
+
+
+OBF_KEYS = ("Jc", "Jmin", "Jmax", "S1", "S2", "H1", "H2", "H3", "H4")
+
+
+def _append_missing(out, seen, obfuscation):
+    """Недостающие параметры — в конец секции, до пустых строк."""
+    tail = []
+    while out and not out[-1].strip():
+        tail.append(out.pop())
+    for key in OBF_KEYS:
+        if key not in seen and key in obfuscation:
+            out.append(f"{key} = {obfuscation[key]}")
+    out.extend(reversed(tail))
+
+
+def _rewrite_server(text, server_pubkey, port, obfuscation):
+    """Меняет в своём конфиге ровно три вещи: ключ сервера, порт и обфускацию.
+
+    Приватный ключ этого узла и его адрес остаются на месте — иначе мастер
+    перестал бы узнавать агента, и переезд превратился бы в переустановку.
+    Логика намеренно повторяет ту, что применяется к клиентским конфигам:
+    один и тот же смысл должен работать одинаково на обоих концах."""
+    out, section, seen = [], "", set()
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("["):
+            if section == "Interface":
+                _append_missing(out, seen, obfuscation)
+            section = stripped.strip("[]")
+            out.append(line)
+            continue
+        key = stripped.split("=")[0].strip()
+        if section == "Interface" and key in OBF_KEYS:
+            if key in obfuscation:
+                out.append(f"{key} = {obfuscation[key]}")
+                seen.add(key)
+            continue
+        if section == "Peer" and key == "PublicKey":
+            out.append(f"PublicKey = {server_pubkey}")
+            continue
+        if section == "Peer" and key == "Endpoint":
+            host = stripped.split("=", 1)[1].strip().rsplit(":", 1)[0]
+            out.append(f"Endpoint = {host}:{port}")
+            continue
+        out.append(line)
+    if section == "Interface":
+        _append_missing(out, seen, obfuscation)
+    return "\n".join(out).strip() + "\n"
+
+
+@app.post("/api/wg/server")
+def update_server(data: ServerChange):
+    """Переводит агента на новый ключ и порт мастера."""
+    try:
+        if not os.path.exists(CONF_FILE):
+            raise Exception("wg0.conf not found")
+        with open(CONF_FILE) as f:
+            current = f.read()
+        # Копия ДО правки: если новый интерфейс мастера не заработает, агент
+        # должен уметь вернуться, а не остаться отрезанным.
+        with open(CONF_FILE + ".bak", "w") as f:
+            f.write(current)
+        with open(CONF_FILE, "w") as f:
+            f.write(_rewrite_server(current, data.server_pubkey, data.port,
+                                    data.obfuscation or {}))
+        return reload_wg()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/wg/rollback")
+def rollback_server():
+    """Возврат к прошлому конфигу — на случай неудачного переезда."""
+    try:
+        if not os.path.exists(CONF_FILE + ".bak"):
+            raise Exception("копии конфига нет")
+        with open(CONF_FILE + ".bak") as f:
+            prev = f.read()
+        with open(CONF_FILE, "w") as f:
+            f.write(prev)
+        return reload_wg()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/api/wg/reload")
 def reload_wg():
     try:

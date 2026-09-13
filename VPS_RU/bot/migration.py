@@ -20,7 +20,7 @@ import re
 from pathlib import Path
 
 from database import db
-from utils import WG_API_URL, api_session, CONFIGS_DIR
+from utils import WG_API_URL, DE_AGENT_URL, api_session, CONFIGS_DIR
 
 OBF_KEYS = ("Jc", "Jmin", "Jmax", "S1", "S2", "H1", "H2", "H3", "H4")
 
@@ -92,6 +92,19 @@ async def peers_snapshot():
     return out
 
 
+def _append_missing(out, seen, obfuscation):
+    """Дописывает недостающие параметры в конец секции, перед пустыми строками:
+    иначе они окажутся вплотную к следующей секции и конфиг будет выглядеть
+    так, будто параметры относятся уже к ней."""
+    tail = []
+    while out and not out[-1].strip():
+        tail.append(out.pop())
+    for key in OBF_KEYS:
+        if key not in seen and key in obfuscation:
+            out.append(f"{key} = {obfuscation[key]}")
+    out.extend(reversed(tail))
+
+
 def rewrite_config(text: str, server_pubkey: str, port: int, obfuscation: dict,
                    endpoint_host: str = None) -> str:
     """Меняет в конфиге ровно три вещи: ключ сервера, порт и обфускацию.
@@ -107,9 +120,7 @@ def rewrite_config(text: str, server_pubkey: str, port: int, obfuscation: dict,
         stripped = line.strip()
         if stripped.startswith("["):
             if section == "Interface":
-                for key in OBF_KEYS:
-                    if key not in seen_obf and key in obfuscation:
-                        out.append(f"{key} = {obfuscation[key]}")
+                _append_missing(out, seen_obf, obfuscation)
             section = stripped.strip("[]")
             out.append(line)
             continue
@@ -130,9 +141,7 @@ def rewrite_config(text: str, server_pubkey: str, port: int, obfuscation: dict,
         out.append(line)
 
     if section == "Interface":
-        for key in OBF_KEYS:
-            if key not in seen_obf and key in obfuscation:
-                out.append(f"{key} = {obfuscation[key]}")
+        _append_missing(out, seen_obf, obfuscation)
 
     return "\n".join(out).strip() + "\n"
 
@@ -175,6 +184,93 @@ async def issue_for(uuid_val, server_pubkey, port, obfuscation):
     return str(conf_path), str(qr_path)
 
 
+DE_IP = "10.13.13.254"
+
+
+async def de_public_key():
+    """Публичный ключ немецкого агента. В списке пиров он отличается адресом:
+    у него AllowedIPs начинается с 0.0.0.0/0, а туннельный адрес — второй."""
+    try:
+        async with api_session() as session:
+            async with session.get(f"{WG_API_URL}/peers", timeout=10) as r:
+                if r.status != 200:
+                    return None
+                for p in await r.json():
+                    if DE_IP in (p.get("allowed_ips") or ""):
+                        return p.get("public_key")
+    except Exception as e:
+        print(f"Переезд: не нашёл ключ агента: {e}")
+    return None
+
+
+async def move_de():
+    """Переводит клиент-сервер на новый интерфейс.
+
+    Порядок важен и выбран так, чтобы в каждый момент был путь назад:
+      1) пир агента заводится на НОВОМ интерфейсе, старый при этом цел;
+      2) агент правит свой конфиг у себя (приватный ключ никуда не уезжает)
+         и сохраняет копию прошлого рядом;
+      3) ждём живого рукопожатия на новом интерфейсе;
+      4) только теперь мировой трафик переключается на новый интерфейс.
+    Если рукопожатия нет — агент возвращается к прошлому конфигу, и мир-трафик
+    не трогаем вовсе: всё продолжает работать по-старому.
+    """
+    import asyncio
+
+    st = await status()
+    if not st.get("active"):
+        return False, "второй интерфейс не поднят"
+
+    pub = await de_public_key()
+    if not pub:
+        return False, "не нашёл клиент-сервер среди пиров"
+
+    try:
+        async with api_session() as session:
+            async with session.post(f"{WG_API_URL}/migration/peer",
+                                    json={"public_key": pub, "client_ip": DE_IP},
+                                    timeout=15) as r:
+                if r.status != 200:
+                    return False, f"узел не принял пира агента: {await r.text()}"
+
+            async with session.post(f"{DE_AGENT_URL}/wg/server",
+                                    json={"server_pubkey": st["pubkey"],
+                                          "port": st["port"],
+                                          "obfuscation": st.get("obfuscation", {})},
+                                    timeout=30) as r:
+                if r.status != 200:
+                    return False, f"агент не принял новые данные: {await r.text()}"
+    except Exception as e:
+        return False, f"агент недоступен: {e}"
+
+    # Ждём рукопожатия: без него переключать мировой трафик нельзя.
+    for _ in range(12):
+        await asyncio.sleep(5)
+        st = await status()
+        if pub in (st.get("connected_keys") or []):
+            break
+    else:
+        try:
+            async with api_session() as session:
+                await session.post(f"{DE_AGENT_URL}/wg/rollback", timeout=30)
+        except Exception:
+            pass
+        return False, ("агент не поднялся на новом интерфейсе за минуту — "
+                       "вернул ему прошлый конфиг, мировой трафик не трогал")
+
+    try:
+        async with api_session() as session:
+            async with session.post(f"{WG_API_URL}/migration/de",
+                                    json={"iface": "wg1"}, timeout=15) as r:
+                if r.status != 200:
+                    return False, f"маршрут не переключился: {await r.text()}"
+    except Exception as e:
+        return False, f"маршрут не переключился: {e}"
+
+    await db.log_event("Migration", "Клиент-сервер переведён на новый интерфейс")
+    return True, "Клиент-сервер переехал, мировой трафик идёт через новый интерфейс"
+
+
 async def laggards():
     """Кто ещё не переехал: есть на старом интерфейсе и не здоровался на новом."""
     st = await status()
@@ -182,9 +278,12 @@ async def laggards():
         return []
     moved = set(st.get("connected_keys", []))
     snap = await peers_snapshot()
+    # Агент в списке пиров выглядит как 0.0.0.0/0, а не как туннельный адрес,
+    # поэтому отсеиваем его по ключу: он не человек и переезжает отдельной кнопкой.
+    de_key = await de_public_key()
     out = []
     for uuid_val, (pub, ip) in snap.items():
-        if pub in moved:
+        if pub in moved or (de_key and pub == de_key):
             continue
         user = await db.get_user_by_uuid(uuid_val)
         if user:
