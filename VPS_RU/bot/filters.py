@@ -48,6 +48,13 @@ async def peer_ip_map():
     return await _map()
 
 
+async def peer_addr_map():
+    """uuid → все адреса человека: пир AmneziaWG и двойник Xray, если он есть.
+    Живёт здесь же, рядом с `peer_ip_map`, чтобы точка подмены была одна."""
+    from acl import peer_addr_map as _map
+    return await _map()
+
+
 async def apply_filters(reason: str = ""):
     """Отдаёт узлу готовую раскладку «адрес → категории».
 
@@ -55,7 +62,6 @@ async def apply_filters(reason: str = ""):
     порт и подтягивает нужные списки доменов — только те, что кем-то включены."""
     try:
         by_uuid = await db.get_all_filters()
-        from acl import peer_addr_map
         ips = await peer_addr_map()
     except Exception as e:
         return False, f"не удалось собрать фильтры: {e}"

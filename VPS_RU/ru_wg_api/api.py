@@ -489,6 +489,21 @@ TUNNEL_NET = f"{VPN_SUBNET}/24"
 DE_AGENT_IP = "10.13.13.254"
 
 
+def _hook_after_accounting(chain, spec):
+    """Вешает правило сразу после цепочки учёта.
+
+    Порядок важен: учёт должен посчитать пакет до того, как мы его отбросим.
+    Но если цепочка пуста, вставлять «вторым номером» нельзя — iptables просто
+    откажет. Поэтому позиция считается по факту."""
+    have = subprocess.run(f"iptables -S {chain}", shell=True,
+                          capture_output=True, text=True).stdout.splitlines()
+    # первая строка — политика цепочки (-P), правила идут за ней
+    rules = [l for l in have if l.startswith("-A ")]
+    pos = 2 if rules else 1
+    subprocess.run(f"iptables -I {chain} {pos} {spec}", shell=True,
+                   stderr=subprocess.DEVNULL)
+
+
 def _acl_ensure_chain():
     subprocess.run(f"iptables -N {ACL_CHAIN}", shell=True, stderr=subprocess.DEVNULL)
     subprocess.run(f"iptables -F {ACL_CHAIN}", shell=True, stderr=subprocess.DEVNULL)
@@ -506,10 +521,7 @@ def _acl_ensure_chain():
         check = subprocess.run(f"iptables -C {chain} {hook}", shell=True,
                                stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
         if check.returncode != 0:
-            # Вторым номером: первой стоит цепочка учёта, и она должна
-            # посчитать пакет до того, как мы его отбросим.
-            subprocess.run(f"iptables -I {chain} 2 {hook}", shell=True,
-                           stderr=subprocess.DEVNULL)
+            _hook_after_accounting(chain, hook)
 
 
 def _acl_rule_spec(ip, grant):
