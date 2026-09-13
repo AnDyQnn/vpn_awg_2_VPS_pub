@@ -391,6 +391,10 @@ async def handle_http(reader, writer):
             pass
 
 
+# Порт TLS-страницы отказа. 443 отдан Xray — см. пояснение ниже по коду.
+HTTPS_PAGE_PORT = 8443
+
+
 async def main():
     os.makedirs(CACHE_DIR, exist_ok=True)
     FILTERS.maybe_reload()
@@ -405,8 +409,14 @@ async def main():
             import ssl
             ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
             ctx.load_cert_chain(cert)
-            await asyncio.start_server(handle_http, "0.0.0.0", 443, ssl=ctx)
-            print("Страница отказа слушает :443 (самоподписанный)", flush=True)
+            # Не 443: этот порт занимает Xray, и занимает обоснованно —
+            # трафик к нему неотличим от обычного HTTPS. Человек сюда попадает
+            # не по адресу, а по правилу подмены, поэтому номер порта ему
+            # безразличен.
+            await asyncio.start_server(handle_http, "0.0.0.0", HTTPS_PAGE_PORT,
+                                       ssl=ctx)
+            print(f"Страница отказа слушает :{HTTPS_PAGE_PORT} "
+                  f"(самоподписанный)", flush=True)
     except Exception as e:
         # Не фатально: фильтр работает и без страницы, человек просто увидит
         # обычную ошибку соединения.
