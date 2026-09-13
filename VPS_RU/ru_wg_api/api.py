@@ -321,6 +321,83 @@ def setup_network():
     run_cmd("iptables -A FORWARD -i wg0 -o wg0 -p tcp --dport 8000 ! -s 10.13.13.1 -j DROP")
 
     restore_peers()
+    rebuild_accounting()
+
+# --- УЧЁТ ПАКЕТОВ ПО ПИРАМ -------------------------------------------------
+# WireGuard считает по пирам только БАЙТЫ — пакетов он не отдаёт вовсе. А упирается
+# узел именно в пакеты: на клиентский пакет уходит ~130 мкс процессорного времени,
+# то есть потолок около 7-8 тысяч пакетов в секунду независимо от ширины канала.
+# Поэтому заводим собственный учёт: отдельная цепочка с парой правил на каждого пира
+# (входящее и исходящее направление). Правила без действия — они только считают и
+# пропускают пакет дальше. Отсюда же берутся данные для лимитов, графиков и аналитики.
+ACCT_CHAIN = "PEER_ACCT"
+
+
+def _acct_ensure_chain():
+    """Создаёт цепочку учёта и вешает её первой в FORWARD.
+    Первой — потому что ниже стоят правила ACCEPT, после которых до нас не дошло бы."""
+    subprocess.run(f"iptables -N {ACCT_CHAIN}", shell=True, stderr=subprocess.DEVNULL)
+    subprocess.run(f"iptables -F {ACCT_CHAIN}", shell=True, stderr=subprocess.DEVNULL)
+    check = subprocess.run(f"iptables -C FORWARD -j {ACCT_CHAIN}", shell=True,
+                           stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+    if check.returncode != 0:
+        subprocess.run(f"iptables -I FORWARD 1 -j {ACCT_CHAIN}", shell=True,
+                       stderr=subprocess.DEVNULL)
+
+
+def acct_add(ip):
+    """Два счётчика на пира: что он отправил и что получил."""
+    for spec in (f"-s {ip}", f"-d {ip}"):
+        check = subprocess.run(f"iptables -C {ACCT_CHAIN} {spec}", shell=True,
+                               stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+        if check.returncode != 0:
+            subprocess.run(f"iptables -A {ACCT_CHAIN} {spec}", shell=True,
+                           stderr=subprocess.DEVNULL)
+
+
+def acct_del(ip):
+    for spec in (f"-s {ip}", f"-d {ip}"):
+        subprocess.run(f"iptables -D {ACCT_CHAIN} {spec}", shell=True,
+                       stderr=subprocess.DEVNULL)
+
+
+def rebuild_accounting():
+    """Пересобирает счётчики по списку пиров из конфига (после рестарта контейнера)."""
+    _acct_ensure_chain()
+    for b in read_config_blocks():
+        m = re.search(r"AllowedIPs\s*=\s*([\d.]+)/32", b)
+        if m:
+            acct_add(m.group(1))
+
+
+def read_accounting():
+    """Снимок счётчиков: адрес → отправлено/получено в пакетах и байтах.
+
+    Мгновенной скорости здесь нет и быть не может — это накопительные значения.
+    Пакеты в секунду считает тот, кто снимает два замера подряд (сборщик в боте)."""
+    out = subprocess.run(f"iptables -nvxL {ACCT_CHAIN}", shell=True,
+                         capture_output=True, text=True).stdout
+    stats = {}
+    for line in out.splitlines():
+        parts = line.split()
+        # Формат строки: pkts bytes target prot opt in out source destination.
+        # У наших правил ДЕЙСТВИЯ НЕТ (они только считают), поэтому колонка target
+        # пустая и полей получается восемь, а не девять — на этом парсер и спотыкался.
+        if len(parts) < 8 or not parts[0].isdigit():
+            continue
+        pkts, byts, src, dst = int(parts[0]), int(parts[1]), parts[-2], parts[-1]
+        if src != "0.0.0.0/0":                       # правило -s: это отдача пира
+            ip = src.split("/")[0]
+            rec = stats.setdefault(ip, {"tx_packets": 0, "tx_bytes": 0,
+                                        "rx_packets": 0, "rx_bytes": 0})
+            rec["tx_packets"], rec["tx_bytes"] = pkts, byts
+        elif dst != "0.0.0.0/0":                     # правило -d: это приём пира
+            ip = dst.split("/")[0]
+            rec = stats.setdefault(ip, {"tx_packets": 0, "tx_bytes": 0,
+                                        "rx_packets": 0, "rx_bytes": 0})
+            rec["rx_packets"], rec["rx_bytes"] = pkts, byts
+    return stats
+
 
 def restore_peers():
     if not os.path.exists(CONF_FILE): return
@@ -430,18 +507,34 @@ def get_peers():
                 parts = line.split('\t')
                 if len(parts) >= 7:
                     pubkey, endpoint = parts[0], parts[2]
+                    # четвёртое поле wg-дампа — адрес пира в туннеле. Раньше просто
+                    # выбрасывалось, из-за чего адрес негде было показать.
+                    allowed = parts[3].split(",")[0].strip()
                     handshake = int(parts[4]) if parts[4].isdigit() else 0
                     rx, tx = int(parts[5]) if parts[5].isdigit() else 0, int(parts[6]) if parts[6].isdigit() else 0
                     peers.append({
                         "uuid": pubkey_to_uuid.get(pubkey, pubkey),
                         "public_key": pubkey,
                         "endpoint": endpoint,
+                        "allowed_ips": allowed,
                         "latest_handshake": handshake,
                         "rx": rx, "tx": tx
                     })
         return peers
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/accounting")
+def get_accounting():
+    """Накопительные счётчики пакетов и байтов по адресам пиров.
+
+    Мгновенной нагрузки здесь нет: пакеты в секунду считает сборщик в боте по
+    разнице двух замеров. Так узел не хранит истории и остаётся без состояния."""
+    try:
+        return {"ts": int(time.time()), "peers": read_accounting()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.post("/api/reload")
 def reload_vpn():
@@ -558,6 +651,8 @@ PersistentKeepalive = 25"""
         
         with open(CONF_FILE, "a") as f: f.write(peer_block)
         run_cmd(["wg", "set", "wg0", "peer", pub_key, "allowed-ips", server_allowed_ips])
+        if not is_de_agent:
+            acct_add(client_ip)
 
         return {"uid": uid, "config": config_content, "client_ip": client_ip}
     except Exception as e:
@@ -647,6 +742,9 @@ def delete_peer(uid: str):
                 if pub_match:
                     try: run_cmd(["wg", "set", "wg0", "peer", pub_match.group(1).strip(), "remove"])
                     except: pass
+                ip_match = re.search(r"AllowedIPs\s*=\s*([\d.]+)/32", b)
+                if ip_match:
+                    acct_del(ip_match.group(1))     # счётчик уходит вместе с пиром
                 continue 
             new_blocks.append(b)
 

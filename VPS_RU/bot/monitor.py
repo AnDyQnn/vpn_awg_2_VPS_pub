@@ -683,6 +683,171 @@ async def log_cleanup_loop(app):
         except Exception as e: print(f"🧹 Cleanup error: {e}")
         await asyncio.sleep(86400)
 
+# ------------------------ СНЯТИЕ СТАРЫХ КЛЮЧЕЙ ПОСЛЕ ПЕРЕВЫПУСКА ------------------------
+# Старый ключ снимается не по таймеру, а когда новый реально заработал и продержался
+# выдержку. Очередь лежит в базе, поэтому рестарт бота или деплой её не теряют —
+# раньше задача жила в памяти процесса и при перезапуске старый пир оставался навсегда.
+RETIRE_CONFIRM_MINUTES = 10      # сколько новый ключ должен прожить до снятия старого
+RETIRE_STALE_DAYS = 7            # столько ждём, потом зовём админа и НЕ трогаем ключ
+
+
+async def retire_watch_loop(app):
+    while True:
+        try:
+            pending = await db.get_pending_retire()
+            if pending:
+                handshakes = {}
+                async with api_session() as session:
+                    async with session.get(f"{WG_API_URL}/peers", timeout=10) as r:
+                        if r.status == 200:
+                            for p in await r.json():
+                                handshakes[p.get("uuid")] = int(p.get("latest_handshake") or 0)
+
+                now = datetime.utcnow()
+                for row in pending:
+                    old_uuid, new_uuid = row["old_uuid"], row["new_uuid"]
+                    name = row["name"] or old_uuid[:8]
+
+                    if handshakes.get(new_uuid, 0) > 0 and not row["first_handshake_at"]:
+                        await db.mark_retire_handshake(old_uuid)
+                        await db.log_event(
+                            "Client Regen",
+                            f"Новый ключ {name} вышел на связь, старый снимется через "
+                            f"{RETIRE_CONFIRM_MINUTES} мин.")
+                        continue
+
+                    first = row["first_handshake_at"]
+                    if first and (now - first).total_seconds() >= RETIRE_CONFIRM_MINUTES * 60:
+                        from wireguard_manager import delete_peer
+                        try:
+                            await delete_peer(old_uuid, name, purge_files=False)
+                        except Exception as e:
+                            print(f"Снятие старого ключа {name}: {e}")
+                        await db.execute("DELETE FROM users WHERE uuid=$1", old_uuid)
+                        await db.drop_pending_retire(old_uuid)
+                        await db.log_event(
+                            "Client Regen",
+                            f"Старый ключ {name} снят: новый работает "
+                            f"{RETIRE_CONFIRM_MINUTES} мин.")
+                        continue
+
+                    # Новый ключ так и не заработал — зовём админа, но ничего не трогаем.
+                    age_days = (now - row["created_at"]).days if row["created_at"] else 0
+                    if not first and age_days >= RETIRE_STALE_DAYS and not row["notified"]:
+                        await db.mark_retire_notified(old_uuid)
+                        if ADMIN_ID:
+                            await notify_admin(app, text=(
+                                f"🔑 **Перевыпуск завис**\n\n"
+                                f"Ключ: **{escape_md(name)}**\n"
+                                f"Новый конфиг выдан {age_days} дн. назад, но им так и не "
+                                f"подключились. Старый ключ продолжает работать — "
+                                f"ничего не отключено."), parse_mode="Markdown")
+        except Exception as e:
+            print(f"Наблюдение за перевыпуском: {e}")
+
+        await asyncio.sleep(60)
+
+# ------------------------ КОНТРОЛЬ НАГРУЗКИ ------------------------
+# Узел упирается в пакеты, а не в мегабиты: на клиентский пакет уходит около 130 мкс
+# процессорного времени, отсюда потолок примерно 7-8 тысяч пакетов в секунду. WireGuard
+# пакеты по пирам не считает, поэтому узел ведёт собственный учёт правилами файрвола,
+# а этот сборщик снимает два замера подряд и получает нагрузку в пакетах в секунду.
+ACCT_INTERVAL = 15           # секунд между замерами
+DEFAULT_PPS_LIMIT = 5000     # пока порог не задан из админки
+EVENT_CLOSE_MISSES = 2       # столько замеров ниже порога закрывают эпизод
+
+
+async def _effective_limit(uuid, common_limit, personal):
+    """Порог для конкретного пира: своё правило важнее общего, у освобождённых порога нет."""
+    rule = personal.get(uuid)
+    if not rule:
+        return common_limit
+    if rule["mode"] == "unlimited":
+        return None
+    if rule["mode"] == "custom" and rule["limit_pps"]:
+        return int(rule["limit_pps"])
+    return common_limit
+
+
+async def load_collector_loop(app):
+    # Разовая свёртка уже накопленной статистики в часовые срезы: неделя истории
+    # становится доступна сразу, а не копится с нуля после включения.
+    try:
+        rows = await db.backfill_hourly_from_stats()
+        if rows:
+            print(f"📊 Часовые срезы: свёрнуто из накопленной статистики, строк {rows}")
+    except Exception as e:
+        print(f"Свёртка истории: {e}")
+
+    prev_snapshot, prev_ts = None, None
+    hot = {}          # uuid → сведения о текущем превышении
+    tick = 0
+
+    while True:
+        try:
+            async with api_session() as session:
+                async with session.get(f"{WG_API_URL}/accounting", timeout=10) as r:
+                    acct = await r.json() if r.status == 200 else None
+                async with session.get(f"{WG_API_URL}/peers", timeout=10) as r:
+                    peers = await r.json() if r.status == 200 else []
+
+            if acct and acct.get("peers"):
+                snapshot, ts = acct["peers"], acct.get("ts", int(time.time()))
+                ip_to_uuid = {
+                    str(p.get("allowed_ips", "")).split("/")[0]: p.get("uuid")
+                    for p in peers if p.get("allowed_ips")
+                }
+
+                if prev_snapshot and prev_ts and ts > prev_ts:
+                    dt = ts - prev_ts
+                    common = int(await db.get_setting("pps_limit") or DEFAULT_PPS_LIMIT)
+                    mode = (await db.get_setting("pps_mode") or "observe")
+                    personal = await db.get_peer_limits()
+                    hour = datetime.utcnow().replace(minute=0, second=0, microsecond=0)
+
+                    for ip, cur in snapshot.items():
+                        old = prev_snapshot.get(ip)
+                        uuid_val = ip_to_uuid.get(ip)
+                        if not old or not uuid_val:
+                            continue
+
+                        # Счётчики могли обнулиться — контейнер перезапускали.
+                        d_pkt_out = max(0, cur["tx_packets"] - old["tx_packets"])
+                        d_pkt_in = max(0, cur["rx_packets"] - old["rx_packets"])
+                        d_byt_out = max(0, cur["tx_bytes"] - old["tx_bytes"])
+                        d_byt_in = max(0, cur["rx_bytes"] - old["rx_bytes"])
+
+                        pps = (d_pkt_in + d_pkt_out) / dt
+                        total_pkt = d_pkt_in + d_pkt_out
+                        avg_size = (d_byt_in + d_byt_out) / total_pkt if total_pkt else 0
+
+                        await db.add_hourly(uuid_val, hour, d_byt_in, d_byt_out,
+                                            d_pkt_in, d_pkt_out, pps)
+
+                        limit = await _effective_limit(uuid_val, common, personal)
+                        if limit and pps > limit:
+                            rec = hot.setdefault(uuid_val, {"peak": 0, "size": 0, "misses": 0})
+                            rec["peak"] = max(rec["peak"], pps)
+                            rec["size"] = avg_size or rec["size"]
+                            rec["misses"] = 0
+                        elif uuid_val in hot:
+                            hot[uuid_val]["misses"] += 1
+                            if hot[uuid_val]["misses"] >= EVENT_CLOSE_MISSES:
+                                rec = hot.pop(uuid_val)
+                                await db.record_pps_event(
+                                    uuid_val, rec["peak"], rec["size"],
+                                    throttled=(mode == "enforce"))
+
+                prev_snapshot, prev_ts = snapshot, ts
+
+            tick += 1
+            if tick % 20 == 0:                      # раз в пять минут
+                await db.drop_expired_peer_limits()
+        except Exception as e:
+            print(f"Сборщик нагрузки: {e}")
+
+        await asyncio.sleep(ACCT_INTERVAL)
+
 # ------------------------ AUTO-REBOOT ------------------------
 async def auto_reboot_loop(app):
     while True:

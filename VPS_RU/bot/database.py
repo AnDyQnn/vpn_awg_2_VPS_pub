@@ -145,6 +145,80 @@ class Database:
                     routing_notify BOOLEAN DEFAULT TRUE
                 );
             """)
+            # --- ОЧЕРЕДЬ СНЯТИЯ СТАРЫХ КЛЮЧЕЙ ---
+            # При перевыпуске человек какое-то время живёт на двух ключах: новый выдан,
+            # старый ещё работает. Снимаем старый только когда новый реально заработал,
+            # и не раньше выдержки — одиночное рукопожатие бывает случайным, а снести
+            # старый раньше времени значит оставить человека без обоих.
+            # Очередь в базе, а не в памяти: рестарт бота и деплой её не теряют.
+            await self.execute("""
+                CREATE TABLE IF NOT EXISTS pending_retire (
+                    old_uuid TEXT PRIMARY KEY,
+                    new_uuid TEXT,
+                    name TEXT,
+                    created_at TIMESTAMP DEFAULT NOW(),
+                    first_handshake_at TIMESTAMP,
+                    notified BOOLEAN DEFAULT FALSE
+                );
+            """)
+
+            # --- КОНТРОЛЬ НАГРУЗКИ ---
+            # Узел упирается не в ширину канала, а в пакеты: на клиентский пакет уходит
+            # около 130 мкс процессорного времени, то есть потолок примерно 7-8 тысяч
+            # пакетов в секунду. Обычный трафик даёт около килобайта на пакет, торрент —
+            # втрое-вчетверо больше пакетов на ту же полосу, отсюда и скачки нагрузки.
+            #
+            # Персональные правила. Их нет у большинства: пир без записи живёт на общем
+            # пороге. Режим 'unlimited' снимает ограничение совсем (свои машины),
+            # 'custom' задаёт свой порог. expires_at позволяет ограничить на сутки и
+            # забыть — правило снимется само.
+            await self.execute("""
+                CREATE TABLE IF NOT EXISTS peer_limits (
+                    user_uuid TEXT PRIMARY KEY REFERENCES users(uuid) ON DELETE CASCADE,
+                    mode TEXT NOT NULL DEFAULT 'default',
+                    limit_pps INTEGER,
+                    expires_at TIMESTAMP,
+                    set_by BIGINT,
+                    set_at TIMESTAMP DEFAULT NOW()
+                );
+            """)
+            # Превышения порога. Пишется в режиме наблюдения тоже — чтобы было на чём
+            # подбирать порог, никого при этом не ограничивая.
+            await self.execute("""
+                CREATE TABLE IF NOT EXISTS pps_events (
+                    id SERIAL PRIMARY KEY,
+                    user_uuid TEXT REFERENCES users(uuid) ON DELETE CASCADE,
+                    started_at TIMESTAMP DEFAULT NOW(),
+                    ended_at TIMESTAMP,
+                    peak_pps INTEGER,
+                    avg_packet_size INTEGER,
+                    throttled BOOLEAN DEFAULT FALSE
+                );
+            """)
+            await self.execute(
+                "CREATE INDEX IF NOT EXISTS idx_pps_events_user_time ON pps_events(user_uuid, started_at);")
+
+            # --- АНАЛИТИКА ---
+            # Часовые срезы на каждого. Таблица stats хранит замеры с шагом пять минут
+            # и чистится за неделю — по ней не построить ни окна активности, ни разбивки
+            # по дням недели. Здесь один ряд на человека в час, поэтому 90 дней истории
+            # занимают копейки, а аналитика становится настоящей.
+            await self.execute("""
+                CREATE TABLE IF NOT EXISTS traffic_hourly (
+                    user_uuid TEXT REFERENCES users(uuid) ON DELETE CASCADE,
+                    hour TIMESTAMP NOT NULL,
+                    bytes_in BIGINT DEFAULT 0,
+                    bytes_out BIGINT DEFAULT 0,
+                    packets_in BIGINT DEFAULT 0,
+                    packets_out BIGINT DEFAULT 0,
+                    peak_pps INTEGER DEFAULT 0,
+                    samples INTEGER DEFAULT 0,
+                    PRIMARY KEY (user_uuid, hour)
+                );
+            """)
+            await self.execute(
+                "CREATE INDEX IF NOT EXISTS idx_traffic_hourly_hour ON traffic_hourly(hour);")
+
             # Первичное наполнение базовым списком (дата-центро-враждебные РФ-сервисы)
             existing = await self.fetch_val("SELECT COUNT(*) FROM bypass_exclusions")
             if not existing:
@@ -156,6 +230,105 @@ class Database:
 
         except Exception as e:
             print(f"Migration error: {e}")
+
+    # ------------------------ ОЧЕРЕДЬ СНЯТИЯ СТАРЫХ КЛЮЧЕЙ ------------------------
+    async def queue_retire(self, old_uuid, new_uuid, name):
+        await self.execute(
+            """INSERT INTO pending_retire (old_uuid, new_uuid, name)
+               VALUES ($1,$2,$3) ON CONFLICT (old_uuid) DO UPDATE
+               SET new_uuid=$2, name=$3, created_at=NOW(),
+                   first_handshake_at=NULL, notified=FALSE""",
+            old_uuid, new_uuid, name)
+
+    async def get_pending_retire(self):
+        return await self.fetch_all(
+            "SELECT old_uuid, new_uuid, name, created_at, first_handshake_at, notified "
+            "FROM pending_retire ORDER BY created_at")
+
+    async def mark_retire_handshake(self, old_uuid):
+        await self.execute(
+            "UPDATE pending_retire SET first_handshake_at=NOW() "
+            "WHERE old_uuid=$1 AND first_handshake_at IS NULL", old_uuid)
+
+    async def mark_retire_notified(self, old_uuid):
+        await self.execute("UPDATE pending_retire SET notified=TRUE WHERE old_uuid=$1", old_uuid)
+
+    async def drop_pending_retire(self, old_uuid):
+        await self.execute("DELETE FROM pending_retire WHERE old_uuid=$1", old_uuid)
+
+    # ------------------------ КОНТРОЛЬ НАГРУЗКИ ------------------------
+    async def get_peer_limits(self):
+        """Персональные правила. Кого здесь нет — тот на общем пороге."""
+        rows = await self.fetch_all(
+            "SELECT user_uuid, mode, limit_pps, expires_at FROM peer_limits")
+        return {r["user_uuid"]: dict(r) for r in rows}
+
+    async def set_peer_limit(self, uuid, mode, limit_pps=None, expires_at=None, set_by=None):
+        await self.execute(
+            """INSERT INTO peer_limits (user_uuid, mode, limit_pps, expires_at, set_by, set_at)
+               VALUES ($1,$2,$3,$4,$5,NOW())
+               ON CONFLICT (user_uuid) DO UPDATE SET
+                   mode=$2, limit_pps=$3, expires_at=$4, set_by=$5, set_at=NOW()""",
+            uuid, mode, limit_pps, expires_at, set_by)
+
+    async def clear_peer_limit(self, uuid):
+        await self.execute("DELETE FROM peer_limits WHERE user_uuid=$1", uuid)
+
+    async def drop_expired_peer_limits(self):
+        """Временные правила («ограничить на сутки») снимаются сами."""
+        return await self.execute(
+            "DELETE FROM peer_limits WHERE expires_at IS NOT NULL AND expires_at < NOW()")
+
+    async def record_pps_event(self, uuid, peak_pps, avg_packet_size, throttled=False):
+        await self.execute(
+            """INSERT INTO pps_events (user_uuid, ended_at, peak_pps, avg_packet_size, throttled)
+               VALUES ($1, NOW(), $2, $3, $4)""",
+            uuid, int(peak_pps), int(avg_packet_size or 0), throttled)
+
+    async def get_pps_events(self, hours=24):
+        return await self.fetch_all(
+            """SELECT e.user_uuid, u.name, e.started_at, e.ended_at, e.peak_pps,
+                      e.avg_packet_size, e.throttled
+               FROM pps_events e LEFT JOIN users u ON u.uuid = e.user_uuid
+               WHERE e.started_at > NOW() - ($1 || ' hours')::interval
+               ORDER BY e.peak_pps DESC""", str(hours))
+
+    # ------------------------ ЧАСОВЫЕ СРЕЗЫ ------------------------
+    async def add_hourly(self, uuid, hour, b_in, b_out, p_in, p_out, peak_pps):
+        await self.execute(
+            """INSERT INTO traffic_hourly (user_uuid, hour, bytes_in, bytes_out,
+                                           packets_in, packets_out, peak_pps, samples)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,1)
+               ON CONFLICT (user_uuid, hour) DO UPDATE SET
+                   bytes_in   = traffic_hourly.bytes_in   + $3,
+                   bytes_out  = traffic_hourly.bytes_out  + $4,
+                   packets_in = traffic_hourly.packets_in + $5,
+                   packets_out= traffic_hourly.packets_out+ $6,
+                   peak_pps   = GREATEST(traffic_hourly.peak_pps, $7),
+                   samples    = traffic_hourly.samples + 1""",
+            uuid, hour, int(b_in), int(b_out), int(p_in), int(p_out), int(peak_pps))
+
+    async def backfill_hourly_from_stats(self):
+        """Сворачивает уже накопленную статистику в часовые срезы — чтобы неделя
+        истории была доступна сразу, а не копилась с нуля. Запускается один раз."""
+        done = await self.get_setting("hourly_backfill_done")
+        if done:
+            return 0
+        await self.execute(
+            """INSERT INTO traffic_hourly (user_uuid, hour, bytes_in, bytes_out, samples)
+               SELECT user_uuid, date_trunc('hour', last_seen),
+                      MAX(bytes_in) - MIN(bytes_in), MAX(bytes_out) - MIN(bytes_out),
+                      COUNT(*)
+               FROM stats
+               WHERE last_seen IS NOT NULL AND user_uuid IS NOT NULL
+               GROUP BY user_uuid, date_trunc('hour', last_seen)
+               ON CONFLICT (user_uuid, hour) DO NOTHING""")
+        await self.set_setting("hourly_backfill_done", "1")
+        return await self.fetch_val("SELECT COUNT(*) FROM traffic_hourly")
+
+    async def cleanup_hourly(self, days=90):
+        await self.execute(
+            f"DELETE FROM traffic_hourly WHERE hour < NOW() - INTERVAL '{int(days)} DAYS'")
 
     # ------------------------ SPLIT-TUNNEL EXCLUSIONS ------------------------
     async def get_bypass_exclusions(self):
