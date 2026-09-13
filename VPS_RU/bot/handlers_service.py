@@ -18,7 +18,7 @@ from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
 from database import db
-from utils import escape_md, dt_to_moscow, state_data
+from utils import escape_md, dt_to_moscow, state_data, safe_delete
 
 DEFAULT_PPS_LIMIT = 5000
 DEFAULT_BURST = 10000
@@ -370,18 +370,22 @@ async def set_peer_rule(update: Update, context: ContextTypes.DEFAULT_TYPE,
 async def load_chart(update: Update, context: ContextTypes.DEFAULT_TYPE, uuid_val: str = None):
     """Картинка с двумя панелями: скорость и пакеты.
 
-    На персональном графике опорная линия — лимит этого человека. Потолок узла там
-    был бы бессмысленным: один пир до него не дотянется.
+    Отдаётся как экран: текущее сообщение убирается, картинка приходит с
+    подписью и кнопками возврата. Иначе график падал в чат отдельным фото,
+    с которого некуда нажать.
+
+    На персональном графике опорная линия — лимит этого человека. Потолок узла
+    там был бы бессмысленным: один пир до него не дотянется.
     """
     query = update.callback_query
     await query.answer("Рисую…")
     from graphs import generate_load_graph
 
-    limit_line, title = None, None
+    limit_line, title, who = None, None, None
     if uuid_val:
         user = await db.get_user_by_uuid(uuid_val)
-        name = (user or {}).get("name", uuid_val[:8])
-        title = f"Нагрузка за сутки · {name}"
+        who = (user or {}).get("name", uuid_val[:8])
+        title = f"Нагрузка за сутки · {who}"
         rule = (await db.get_peer_limits()).get(uuid_val)
         common = int(await db.get_setting("pps_limit") or DEFAULT_PPS_LIMIT)
         if not rule:
@@ -393,11 +397,32 @@ async def load_chart(update: Update, context: ContextTypes.DEFAULT_TYPE, uuid_va
     try:
         path = await generate_load_graph(hours=24, uuid=uuid_val,
                                          title=title, limit_line=limit_line)
-        with open(path, "rb") as f:
-            await context.bot.send_photo(chat_id=query.message.chat_id, photo=f)
     except Exception as e:
-        await context.bot.send_message(chat_id=query.message.chat_id,
-                                       text=f"⚠️ График не построился: {e}")
+        await query.edit_message_text(
+            f"⚠️ График не построился: `{escape_md(str(e))}`",
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🔙 Графики", callback_data="vpn_graph")]]),
+            parse_mode=ParseMode.MARKDOWN)
+        return
+
+    if who:
+        caption = (f"📉 **{escape_md(who)}** — сутки\n"
+                   f"Сверху скорость, снизу пакеты. Линия — "
+                   f"{'его предел ' + str(limit_line) + ' пак/с' if limit_line else 'без ограничения'}.")
+    else:
+        caption = ("🚦 **Нагрузка узла за сутки**\n"
+                   f"Сверху скорость, снизу пакеты. Линия — потолок узла, "
+                   f"около {NODE_CEILING} пакетов в секунду.")
+
+    kb = [[InlineKeyboardButton("👤 Выбрать человека", callback_data="svc_pick_0")],
+          [InlineKeyboardButton("🔙 Графики", callback_data="vpn_graph")]]
+
+    await safe_delete(context, query.message.chat_id, query.message.message_id)
+    with open(path, "rb") as f:
+        await context.bot.send_photo(chat_id=query.message.chat_id, photo=f,
+                                     caption=caption,
+                                     reply_markup=InlineKeyboardMarkup(kb),
+                                     parse_mode=ParseMode.MARKDOWN)
 
 
 async def charts_screen(update: Update, context: ContextTypes.DEFAULT_TYPE, page: int = 0):
