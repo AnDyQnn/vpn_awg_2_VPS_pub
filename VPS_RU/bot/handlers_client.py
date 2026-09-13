@@ -12,6 +12,7 @@ from utils import (
     ts_to_moscow, safe_delete, GOSUSLUGI_APP_WARNING
 )
 from database import db
+from delivery import track_send
 from wireguard_manager import create_peer, delete_peer
 
 # Сколько минут новый ключ должен проработать, прежде чем снимать старый.
@@ -53,8 +54,15 @@ async def _issue_new_config(context, chat_id, user, deliver: bool = True):
             ),
             parse_mode=ParseMode.MARKDOWN
         )
-        await context.bot.send_document(chat_id=chat_id, document=open(c_path, "rb"), caption=f"📄 {name}")
-        await context.bot.send_photo(chat_id=chat_id, photo=open(q_path, "rb"))
+        ok, err = await track_send(
+            new_uid, chat_id,
+            lambda: context.bot.send_document(chat_id=chat_id,
+                                              document=open(c_path, "rb"),
+                                              caption=f"📄 {name}"))
+        if ok:
+            await context.bot.send_photo(chat_id=chat_id, photo=open(q_path, "rb"))
+        else:
+            print(f"Перевыпуск {name}: конфиг не доставлен — {err}")
 
     return old_uuid, name, new_uid
 
@@ -176,6 +184,12 @@ async def send_client_menu(context: ContextTypes.DEFAULT_TYPE, user_id: int, fir
 async def client_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     first_name = update.effective_user.first_name
+    # Отметок «прочитано» Telegram не даёт, но нажатая кнопка — доказательство,
+    # что сообщение человек увидел. Это и есть стадия доставки.
+    try:
+        await db.delivery_opened(user_id)
+    except Exception:
+        pass
     keys = await db.get_users_by_tg_id(user_id)
     
     if not keys:
@@ -419,6 +433,7 @@ async def client_download_handler(update: Update, context: ContextTypes.DEFAULT_
         if cf.exists():
             await context.bot.send_document(chat_id=chat_id, document=open(cf, "rb"), caption=f"📄 Ваш VPN конфиг: {name}")
             if qf.exists(): await context.bot.send_photo(chat_id=chat_id, photo=open(qf, "rb"))
+            await db.delivery_downloaded(uuid_val)
         else:
             await query.message.reply_text("❌ Файл конфигурации не найден. Попробуйте нажать 'Перевыпустить' для перевыпуска.")
     except Exception as e:

@@ -71,6 +71,7 @@ from handlers_keylife import (
     pending_screen, decision_screen, extend_menu, do_extend, set_policy,
     delete_confirm, do_delete
 )
+from delivery import delivery_screen
 from acl import apply_access_rules
 
 # --- ЗАДАЧИ БОТА (СИНХРОНИЗАЦИЯ И МОНИТОРИНГ) ---
@@ -681,6 +682,7 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Вопрос живёт в базе, поэтому эти кнопки работают и в старом сообщении
     # после перезапуска бота.
     if data == "kd_list": await pending_screen(update, context); return
+    if data == "deliv_list": await delivery_screen(update, context); return
     if data.startswith("kd_open_"):
         await decision_screen(update, context, data.split("_", 2)[2]); return
     if data.startswith("kd_ext_"):

@@ -9,6 +9,7 @@ from telegram.constants import ParseMode
 from utils import escape_md, stop_bg_tasks, deregister_menu, ADMIN_ID, CONFIGS_DIR, WG_API_URL, dt_to_moscow, api_session
 from database import db
 from acl import grant_text
+from delivery import track_send, describe as delivery_text
 from wireguard_manager import create_peer, delete_peer, pause_peer, resume_peer
 from handlers_client import send_client_menu
 
@@ -187,6 +188,13 @@ async def render_user_detail(context, chat_id, message_id, uuid):
     except Exception:
         pass
 
+    # Доставка: Telegram не говорит, прочитано ли сообщение, поэтому показываем
+    # цепочку действий — она точнее отвечает на вопрос «ключ дошёл», чем галочка.
+    try:
+        delivery_line = "\n" + delivery_text(await db.get_delivery(uuid)) + "\n"
+    except Exception:
+        delivery_line = ""
+
     text = (
         f"👤 **{safe_name}**\n"
         f"🆔 `{user['uuid']}`\n"
@@ -198,6 +206,7 @@ async def render_user_detail(context, chat_id, message_id, uuid):
         + f"⏳ Годен до: {exp_str} (МСК)\n"
         f"📱 TG ID: {tg_status}\n"
         f"📅 Создан: {created_str}\n"
+        f"{delivery_line}"
         f"{roles_text}"
         f"{ips_text}"
     )
@@ -333,14 +342,19 @@ async def finish_key_creation(update: Update, context: ContextTypes.DEFAULT_TYPE
         await context.bot.send_photo(chat_id=chat_id, photo=open(q_path, "rb"))
         
         if tg_id:
-            try:
+            # Исход отправки записываем: «не дошло» — это не строчка в логе,
+            # а состояние ключа, которое админ должен видеть в карточке.
+            async def _send_to_client():
                 await context.bot.send_message(chat_id=tg_id, text="🎉 **Привет!** Администратор создал для вас VPN-ключ и привязал его к этому Telegram-аккаунту.\n\nВот ваш файл конфигурации:", parse_mode=ParseMode.MARKDOWN)
                 await context.bot.send_document(chat_id=tg_id, document=open(c_path, "rb"), caption=f"📄 Ваш VPN конфиг: {name}")
                 await context.bot.send_photo(chat_id=tg_id, photo=open(q_path, "rb"))
                 await send_client_menu(context, tg_id)
+
+            ok, err = await track_send(new_uid, tg_id, _send_to_client)
+            if ok:
                 await context.bot.send_message(chat_id=chat_id, text=f"✅ Конфиг и меню успешно отправлены клиенту `{tg_id}`.")
-            except Exception as e:
-                await context.bot.send_message(chat_id=chat_id, text=f"⚠️ Клиент `{tg_id}` не получил конфиг (возможно, он не запустил бота командой /start):\n`{e}`", parse_mode=ParseMode.MARKDOWN)
+            else:
+                await context.bot.send_message(chat_id=chat_id, text=f"⚠️ Клиент `{tg_id}` не получил конфиг (возможно, он не запустил бота командой /start):\n`{err}`", parse_mode=ParseMode.MARKDOWN)
         
         keyboard = [[InlineKeyboardButton("🔙 В главное меню", callback_data="back_to_main")]]
         await context.bot.send_message(chat_id=chat_id, text="Готово! Что делаем дальше?", reply_markup=InlineKeyboardMarkup(keyboard))

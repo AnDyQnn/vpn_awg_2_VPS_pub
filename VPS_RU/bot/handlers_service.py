@@ -46,6 +46,7 @@ async def admin_counter() -> int:
         total += await db.fetch_val("SELECT COUNT(*) FROM pending_retire") or 0
         total += await db.fetch_val(
             "SELECT COUNT(*) FROM pending_decisions WHERE resolved_at IS NULL") or 0
+        total += len(await db.get_stuck_deliveries())
     except Exception:
         pass
     return total
@@ -107,6 +108,18 @@ async def service_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     lines.append("")
     try:
+        stuck = await db.get_stuck_deliveries()
+    except Exception:
+        stuck = []
+    if stuck:
+        blocked = sum(1 for s in stuck if s["blocked_at"])
+        tail = f", из них не дошло {blocked}" if blocked else ""
+        lines.append(f"📨 *Доставка ключей:* не подключились {len(stuck)}{tail}")
+    else:
+        lines.append("📨 *Доставка ключей:* все отправленные ключи дошли")
+
+    lines.append("")
+    try:
         decisions = await db.get_pending_decisions()
     except Exception:
         decisions = []
@@ -150,7 +163,10 @@ async def service_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🛡 Доступы · роли", callback_data="roles_menu")],
         [InlineKeyboardButton(
             "📋 Ждут решения" + (f" · {len(decisions)}" if decisions else ""),
-            callback_data="kd_list")],
+            callback_data="kd_list"),
+         InlineKeyboardButton(
+            "📨 Доставка" + (f" · {len(stuck)}" if stuck else ""),
+            callback_data="deliv_list")],
         [InlineKeyboardButton("📄 Что нового", callback_data="svc_whatsnew")],
     ]
     if not tickets:
