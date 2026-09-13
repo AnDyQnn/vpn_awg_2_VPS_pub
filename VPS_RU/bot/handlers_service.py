@@ -147,6 +147,14 @@ async def service_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines.append(f"🛡 *Доступы внутри туннеля:* ролей {len(roles)}, "
                      f"под ограничением {restricted} чел.")
 
+    try:
+        filtered = await db.count_filtered_users()
+    except Exception:
+        filtered = 0
+    lines.append("🧹 *Фильтрация сайтов:* "
+                 + (f"включена у {filtered} чел." if filtered
+                    else "никому не включена"))
+
     lines.append("")
     lines.append(f"🆘 *Обращения:* {'открытых нет' if not tickets else f'{tickets} открытых'}")
 
@@ -161,7 +169,8 @@ async def service_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("📊 Нагрузка", callback_data="svc_load"),
          InlineKeyboardButton("⚖️ Лимиты", callback_data="svc_limits")],
         [InlineKeyboardButton("📉 Графики · подбор", callback_data="svc_charts")],
-        [InlineKeyboardButton("🛡 Доступы · роли", callback_data="roles_menu")],
+        [InlineKeyboardButton("🛡 Доступы · роли", callback_data="roles_menu"),
+         InlineKeyboardButton("🧹 Фильтры", callback_data="flt_menu")],
         [InlineKeyboardButton(
             "📋 Ждут решения" + (f" · {len(decisions)}" if decisions else ""),
             callback_data="kd_list"),

@@ -72,6 +72,10 @@ from handlers_keylife import (
     delete_confirm, do_delete
 )
 from delivery import delivery_screen
+from filters import (
+    filters_menu, pick_user as filters_pick_user, user_filters_screen,
+    toggle_filter, apply_now as filters_apply_now, apply_filters
+)
 from acl import apply_access_rules
 
 # --- ЗАДАЧИ БОТА (СИНХРОНИЗАЦИЯ И МОНИТОРИНГ) ---
@@ -686,6 +690,17 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # после перезапуска бота.
     if data == "kd_list": await pending_screen(update, context); return
     if data == "deliv_list": await delivery_screen(update, context); return
+
+    # --- Фильтрация сайтов ---
+    if data == "flt_menu": await filters_menu(update, context); return
+    if data == "flt_apply": await filters_apply_now(update, context); return
+    if data.startswith("flt_pick_"):
+        await filters_pick_user(update, context, int(data.split("_")[-1])); return
+    if data.startswith("flt_user_"):
+        await user_filters_screen(update, context, data.split("_", 2)[2]); return
+    if data.startswith("flt_set_"):
+        parts = data.split("_", 3)          # flt | set | категория | uuid
+        await toggle_filter(update, context, parts[3], parts[2]); return
     if data.startswith("kd_open_"):
         await decision_screen(update, context, data.split("_", 2)[2]); return
     if data.startswith("kd_ext_"):
@@ -923,6 +938,15 @@ async def post_init(application):
             print(f"Роли: {msg}")
     except Exception as e:
         print(f"Роли: не удалось применить доступы: {e}")
+
+    # Фильтры — по той же причине: заворот 53-го порта живёт в правилах,
+    # а правила чистятся при перезапуске контейнера узла.
+    try:
+        ok, msg = await apply_filters("старт бота")
+        if not ok:
+            print(f"Фильтры: {msg}")
+    except Exception as e:
+        print(f"Фильтры: не удалось применить: {e}")
 
     tasks =[
         asyncio.create_task(alert_loop(application)),
