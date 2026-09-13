@@ -4,14 +4,19 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 # национальные флаги для нод, единая кнопка возврата «🔙 Главное меню». Важные действия —
 # на всю ширину строки, парные — по два в ряд. callback_data не меняем (совместимость).
 
-def main_menu(active_count=0, support_count=0):
+def main_menu(active_count=0, support_count=0, admin_count=0):
+    """Поддержка переехала внутрь раздела администрирования: сервисные настройки
+    и обращения — это одна кухня, и в главном меню им тесно. На освободившемся
+    месте — «Админка» со счётчиком всего, что ждёт внимания."""
     keyboard = [
         [InlineKeyboardButton("📊 Дашборд", callback_data="start_dashboard"),
          InlineKeyboardButton("📈 Трафик", callback_data="vpn_graph")],
         [InlineKeyboardButton("🔑 Создать ключ", callback_data="gen_key"),
          InlineKeyboardButton(f"🟢 Онлайн · {active_count}", callback_data="show_online")],
         [InlineKeyboardButton("👥 Пользователи", callback_data="users_page_0"),
-         InlineKeyboardButton(f"🆘 Поддержка · {support_count}", callback_data="support_admin_menu")],
+         InlineKeyboardButton(
+             "⚙️ Админка" + (f" · {admin_count}" if admin_count else ""),
+             callback_data="svc_menu")],
         [InlineKeyboardButton("🇷🇺 Сервер RU", callback_data="menu_ru_server"),
          InlineKeyboardButton("🇩🇪 Сервер DE", callback_data="menu_de_server")],
         [InlineKeyboardButton("💾 Бэкапы и база", callback_data="menu_backups"),

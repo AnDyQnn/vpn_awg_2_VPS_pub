@@ -91,7 +91,13 @@ async def return_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
 
     text = "🛡 **VPN Dashboard (Dual Node)**\nВыберите действие:"
-    markup = main_menu(active_count=active_count, support_count=support_count)
+    try:
+        from handlers_service import admin_counter
+        admin_count = await admin_counter()
+    except Exception:
+        admin_count = support_count
+    markup = main_menu(active_count=active_count, support_count=support_count,
+                       admin_count=admin_count)
     sent_msg = None
 
     if not message_id:
