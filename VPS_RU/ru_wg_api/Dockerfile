@@ -9,7 +9,7 @@ FROM amneziavpn/amnezia-wg@sha256:ea050861bd2012a6265817636ce7c0c15764ef955782d9
 # перебираем зеркала, меняя только ХОСТ (версия Alpine сохраняется через sed) —
 # сначала штатное, затем RU-дружественные (yandex, aliyun). Плохое зеркало пропускается.
 RUN set -e; \
-    pkgs="python3 py3-pip iproute2 iptables curl bash procps iputils ipset"; \
+    pkgs="python3 py3-pip iproute2 iptables curl bash procps iputils ipset openssl"; \
     cp /etc/apk/repositories /etc/apk/repositories.orig; \
     ok=0; \
     for M in "KEEP" "https://mirror.yandex.ru/mirrors/alpine" "https://mirrors.aliyun.com/alpine"; do \

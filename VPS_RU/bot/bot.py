@@ -958,6 +958,15 @@ async def post_init(application):
     except Exception as e:
         print(f"Роли: не удалось применить доступы: {e}")
 
+    # Своё имя в Telegram бот узнаёт только у самого Telegram — запоминаем его
+    # для страницы отказа, где человеку нужна ссылка «спросить владельца».
+    try:
+        from filters import remember_bot_link
+        me = await application.bot.get_me()
+        remember_bot_link(me.username)
+    except Exception as e:
+        print(f"Фильтры: не удалось узнать имя бота: {e}")
+
     # Фильтры — по той же причине: заворот 53-го порта живёт в правилах,
     # а правила чистятся при перезапуске контейнера узла.
     try:

@@ -151,6 +151,7 @@ class Filters:
     def __init__(self):
         self.clients = {}          # ip -> [категории]
         self.domains = {}          # категория -> set(доменов)
+        self.bot_link = ""         # куда идти с вопросом «почему закрыто»
         self._mtime = 0
         self._checked = 0
 
@@ -175,6 +176,7 @@ class Filters:
             print(f"DNS: не читается состояние фильтров: {e}", flush=True)
             return
         self.clients = {ip: list(cats) for ip, cats in (state.get("clients") or {}).items()}
+        self.bot_link = state.get("bot_link") or ""
         self._load_domains()
 
     def _load_domains(self):
@@ -290,7 +292,29 @@ async def handle_tcp(reader, writer):
 # нельзя, не поставив свой корневой сертификат на каждое устройство. Делать это
 # ради страницы отказа неправильно: это уже вскрытие чужого трафика.
 BLOCK_PAGE = "/app/blocked.html"
+CERT_FILE = "/etc/amnezia/amneziawg/block_page.pem"
 _page_cache = None
+
+
+def ensure_cert():
+    """Самоподписанный сертификат для страницы отказа.
+
+    Что он даёт и чего не даёт, чтобы не было сюрпризов: браузер всё равно
+    покажет предупреждение о недоверенном сертификате — подписать чужой домен
+    по-настоящему невозможно. На обычном сайте человек сможет нажать «всё равно
+    перейти» и увидит заглушку. На сайтах с HSTS (а это почти все крупные)
+    кнопки «перейти» не будет вовсе, и там всё останется как было — ошибка
+    соединения. Поэтому HTTPS здесь бонус, а не основной путь."""
+    if os.path.exists(CERT_FILE):
+        return CERT_FILE
+    cmd = ("openssl req -x509 -newkey rsa:2048 -nodes -days 3650 "
+           f"-keyout {CERT_FILE} -out {CERT_FILE} -subj '/CN=blocked' 2>/dev/null")
+    rc = os.system(cmd)
+    if rc != 0 or not os.path.exists(CERT_FILE):
+        print("Страница отказа: сертификат не создан, HTTPS не поднимется", flush=True)
+        return None
+    os.chmod(CERT_FILE, 0o600)
+    return CERT_FILE
 
 
 CATEGORY_TITLES = {"ads": "реклама и трекеры", "adult": "для взрослых",
@@ -314,6 +338,11 @@ def _render_block_page(host, category):
             _page_cache = ("<!doctype html><meta charset=utf-8>"
                            "<h1>Закрыто</h1><p>__DOMAIN__</p>")
     safe_host = (host or "этот адрес").replace("<", "&lt;").replace(">", "&gt;")[:120]
+    # Ссылка на бота: человеку должно быть куда пойти с вопросом, а не просто
+    # «закрыто». Адрес бота приходит от него же вместе с раскладкой фильтров.
+    link = FILTERS.bot_link
+    contact = (f'<a href="{link}" style="color:#58a6ff">написать владельцу в Telegram</a>'
+               if link else "напишите владельцу сети")
     if category:
         head = "Этот сайт закрыт фильтром"
         why = "Категория: <b>%s</b>" % CATEGORY_TITLES.get(category, category)
@@ -329,6 +358,7 @@ def _render_block_page(host, category):
             .replace("__HEAD__", head)
             .replace("__WHY__", why)
             .replace("__NOTE__", note)
+            .replace("__CONTACT__", contact)
             .replace("__CATEGORY__", CATEGORY_TITLES.get(category, category or "")))
 
 
@@ -370,6 +400,13 @@ async def main():
     try:
         await asyncio.start_server(handle_http, "0.0.0.0", 80)
         print("Страница отказа слушает :80", flush=True)
+        cert = ensure_cert()
+        if cert:
+            import ssl
+            ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            ctx.load_cert_chain(cert)
+            await asyncio.start_server(handle_http, "0.0.0.0", 443, ssl=ctx)
+            print("Страница отказа слушает :443 (самоподписанный)", flush=True)
     except Exception as e:
         # Не фатально: фильтр работает и без страницы, человек просто увидит
         # обычную ошибку соединения.
