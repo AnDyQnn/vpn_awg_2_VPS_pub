@@ -112,7 +112,20 @@ async def main_menu_view(context=None, chat_id=None):
     mode_word = "только наблюдение" if mode != "enforce" else "ограничение включено"
 
     lines = ["🛡 **VPN Dashboard** · мастер-сервер и клиент-сервер", ""]
-    lines.append(f"🟢 На связи: **{active_count}** из {total_keys} · "
+    # Разбивка по протоколам: пока люди переезжают, «на связи 11 из 32» само по
+    # себе ничего не говорит — важно, сколько из них уже на новом протоколе.
+    split = ""
+    try:
+        import xray
+        on_xray = len(await xray.online_uuids())
+        if await db.count_xray_users():
+            # Узел считает только пиров AmneziaWG: человек на Xray пиром не
+            # выглядит, и без слагаемого он бы просто пропал из сводки.
+            split = f" · AWG {active_count} · Xray {on_xray}"
+            active_count += on_xray
+    except Exception:
+        pass
+    lines.append(f"🟢 На связи: **{active_count}** из {total_keys}{split} · "
                  f"нагрузка: {mode_word}")
     # Сутки трафика: полезно само по себе и заодно держит ширину сообщения,
     # от которой Telegram считает ширину кнопок.
