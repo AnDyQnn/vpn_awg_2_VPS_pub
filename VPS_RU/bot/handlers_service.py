@@ -116,6 +116,7 @@ async def service_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton(main_label, callback_data="svc_mode_toggle")],
         [InlineKeyboardButton("📊 Нагрузка", callback_data="svc_load"),
          InlineKeyboardButton("⚖️ Лимиты", callback_data="svc_limits")],
+        [InlineKeyboardButton("📄 Что нового", callback_data="svc_whatsnew")],
     ]
     if not tickets:
         keyboard.append([InlineKeyboardButton("🆘 Поддержка", callback_data="support_admin_menu")])
@@ -207,7 +208,8 @@ async def load_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines.append(f"Разрешено `{limit}` в секунду, сервер тянет около `{NODE_CEILING}`.")
         text = "\n".join(lines)
 
-    kb = [[InlineKeyboardButton("⚖️ Лимиты", callback_data="svc_limits")],
+    kb = [[InlineKeyboardButton("📈 График нагрузки", callback_data="svc_chart")],
+          [InlineKeyboardButton("⚖️ Лимиты", callback_data="svc_limits")],
           [InlineKeyboardButton("🔙 Назад", callback_data="svc_menu")]]
     await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb),
                                   parse_mode=ParseMode.MARKDOWN)
@@ -304,3 +306,50 @@ async def set_peer_rule(update: Update, context: ContextTypes.DEFAULT_TYPE,
 
     from handlers_users import render_user_detail
     await render_user_detail(context, query.message.chat_id, query.message.message_id, uuid_val)
+
+async def load_chart(update: Update, context: ContextTypes.DEFAULT_TYPE, uuid_val: str = None):
+    """Картинка с двумя панелями: скорость и пакеты.
+
+    На персональном графике опорная линия — лимит этого человека. Потолок узла там
+    был бы бессмысленным: один пир до него не дотянется.
+    """
+    query = update.callback_query
+    await query.answer("Рисую…")
+    from graphs import generate_load_graph
+
+    limit_line, title = None, None
+    if uuid_val:
+        user = await db.get_user_by_uuid(uuid_val)
+        name = (user or {}).get("name", uuid_val[:8])
+        title = f"Нагрузка за сутки · {name}"
+        rule = (await db.get_peer_limits()).get(uuid_val)
+        common = int(await db.get_setting("pps_limit") or DEFAULT_PPS_LIMIT)
+        if not rule:
+            limit_line = common
+        elif rule["mode"] == "custom":
+            limit_line = int(rule["limit_pps"] or common)
+        # без ограничений — линию не рисуем вовсе
+
+    try:
+        path = await generate_load_graph(hours=24, uuid=uuid_val,
+                                         title=title, limit_line=limit_line)
+        with open(path, "rb") as f:
+            await context.bot.send_photo(chat_id=query.message.chat_id, photo=f)
+    except Exception as e:
+        await context.bot.send_message(chat_id=query.message.chat_id,
+                                       text=f"⚠️ График не построился: {e}")
+
+async def whats_new(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Три последних версии. Кнопка нужна и админу: догадаться, что список изменений
+    лежит в клиентском режиме, невозможно — особенно если проект кто-то скачал."""
+    query = update.callback_query
+    from changelog import admin_text, repo_link
+
+    text = admin_text()
+    link = repo_link()
+    if link:
+        text += "\n\nИсходный код: " + link
+    kb = [[InlineKeyboardButton("🔙 Назад", callback_data="svc_menu")]]
+    await query.edit_message_text(text[:4000], reply_markup=InlineKeyboardMarkup(kb),
+                                  parse_mode=ParseMode.MARKDOWN)
+

@@ -185,7 +185,10 @@ async def render_user_detail(context, chat_id, message_id, uuid):
         InlineKeyboardButton("✂️ Свой", callback_data=f"svc_rule_custom_{uuid}"),
         InlineKeyboardButton("♾ Без лимита", callback_data=f"svc_rule_unlimited_{uuid}"),
     ])
-    keyboard.append([InlineKeyboardButton("⏱ Ограничить на сутки", callback_data=f"svc_rule_day_{uuid}")])
+    keyboard.append([
+        InlineKeyboardButton("⏱ Ограничить на сутки", callback_data=f"svc_rule_day_{uuid}"),
+        InlineKeyboardButton("📉 История нагрузки", callback_data=f"svc_pchart_{uuid}"),
+    ])
     keyboard.append([InlineKeyboardButton("✏️ Переименовать ключ", callback_data=f"rename_user_{uuid}")])
     keyboard.append([InlineKeyboardButton("🔗 Привязать TG ID", callback_data=f"link_tg_{uuid}")])
     if tg_ids:

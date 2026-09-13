@@ -142,7 +142,10 @@ class Database:
             await self.execute("""
                 CREATE TABLE IF NOT EXISTS notify_prefs (
                     tg_id BIGINT PRIMARY KEY,
-                    routing_notify BOOLEAN DEFAULT TRUE
+                    routing_notify BOOLEAN DEFAULT TRUE,
+                    -- какую версию человек уже видел: «Что нового» показывает только
+                    -- накопленное с неё, а не весь список изменений заново
+                    seen_version TEXT
                 );
             """)
             # --- ОЧЕРЕДЬ СНЯТИЯ СТАРЫХ КЛЮЧЕЙ ---
@@ -161,6 +164,12 @@ class Database:
                     notified BOOLEAN DEFAULT FALSE
                 );
             """)
+
+            res_sv = await self.fetch_all(
+                "SELECT column_name FROM information_schema.columns WHERE table_schema='public' "
+                "AND table_name='notify_prefs' AND column_name='seen_version';")
+            if not res_sv:
+                await self.execute("ALTER TABLE notify_prefs ADD COLUMN seen_version TEXT;")
 
             # --- КОНТРОЛЬ НАГРУЗКИ ---
             # Узел упирается не в ширину канала, а в пакеты: на клиентский пакет уходит
@@ -230,6 +239,14 @@ class Database:
 
         except Exception as e:
             print(f"Migration error: {e}")
+
+    async def get_seen_version(self, tg_id):
+        return await self.fetch_val("SELECT seen_version FROM notify_prefs WHERE tg_id=$1", tg_id)
+
+    async def set_seen_version(self, tg_id, version):
+        await self.execute(
+            """INSERT INTO notify_prefs (tg_id, seen_version) VALUES ($1,$2)
+               ON CONFLICT (tg_id) DO UPDATE SET seen_version=$2""", tg_id, version)
 
     # ------------------------ ОЧЕРЕДЬ СНЯТИЯ СТАРЫХ КЛЮЧЕЙ ------------------------
     async def queue_retire(self, old_uuid, new_uuid, name):
@@ -325,6 +342,75 @@ class Database:
                ON CONFLICT (user_uuid, hour) DO NOTHING""")
         await self.set_setting("hourly_backfill_done", "1")
         return await self.fetch_val("SELECT COUNT(*) FROM traffic_hourly")
+
+    async def get_hourly(self, hours=24, uuid=None):
+        """Часовые срезы для графиков. Без uuid — сумма по всем, с uuid — один человек."""
+        if uuid:
+            return await self.fetch_all(
+                """SELECT hour, bytes_in, bytes_out, packets_in, packets_out, peak_pps
+                   FROM traffic_hourly
+                   WHERE user_uuid=$1 AND hour > NOW() - ($2 || ' hours')::interval
+                   ORDER BY hour""", uuid, str(hours))
+        return await self.fetch_all(
+            """SELECT hour,
+                      SUM(bytes_in)   AS bytes_in,
+                      SUM(bytes_out)  AS bytes_out,
+                      SUM(packets_in) AS packets_in,
+                      SUM(packets_out) AS packets_out,
+                      MAX(peak_pps)   AS peak_pps
+               FROM traffic_hourly
+               WHERE hour > NOW() - ($1 || ' hours')::interval
+               GROUP BY hour ORDER BY hour""", str(hours))
+
+    async def get_user_profile(self, uuid, days=30):
+        """Слепок поведения человека для сводки и аналитики: объёмы, окно активности,
+        дни недели, доля отдачи, средний размер пакета, превышения лимита."""
+        rows = await self.fetch_all(
+            """SELECT hour, bytes_in, bytes_out, packets_in, packets_out, peak_pps
+               FROM traffic_hourly
+               WHERE user_uuid=$1 AND hour > NOW() - ($2 || ' days')::interval""",
+            uuid, str(days))
+        if not rows:
+            return None
+
+        b_in = sum(r["bytes_in"] or 0 for r in rows)
+        b_out = sum(r["bytes_out"] or 0 for r in rows)
+        p_in = sum(r["packets_in"] or 0 for r in rows)
+        p_out = sum(r["packets_out"] or 0 for r in rows)
+        peak = max((r["peak_pps"] or 0) for r in rows)
+
+        # окно активности: часы, на которые приходится основной объём
+        by_hour = {}
+        by_dow = {}
+        for r in rows:
+            h = dt_to_moscow(r["hour"])
+            total = (r["bytes_in"] or 0) + (r["bytes_out"] or 0)
+            by_hour[h.hour] = by_hour.get(h.hour, 0) + total
+            by_dow[h.weekday()] = by_dow.get(h.weekday(), 0) + total
+
+        top_hours = sorted(by_hour.items(), key=lambda kv: kv[1], reverse=True)[:4]
+        hours_sorted = sorted(h for h, _ in top_hours)
+        top_dow = sorted(by_dow.items(), key=lambda kv: kv[1], reverse=True)[:2]
+
+        exceeded = await self.fetch_val(
+            """SELECT COUNT(*) FROM pps_events
+               WHERE user_uuid=$1 AND started_at > NOW() - ($2 || ' days')::interval""",
+            uuid, str(days)) or 0
+
+        total_packets = p_in + p_out
+        return {
+            "bytes_in": b_in, "bytes_out": b_out,
+            "packets_in": p_in, "packets_out": p_out,
+            "peak_pps": peak,
+            "avg_packet": int((b_in + b_out) / total_packets) if total_packets else 0,
+            # доля именно ОТДАЧИ: bytes_out — то, что пир отправил. Профиль раздачи
+            # отличается от профиля потребления как раз этой долей.
+            "upload_share": round(b_out / (b_in + b_out) * 100) if (b_in + b_out) else 0,
+            "active_hours": hours_sorted,
+            "top_weekdays": [d for d, _ in top_dow],
+            "exceeded": exceeded,
+            "hours_seen": len(rows),
+        }
 
     async def cleanup_hourly(self, days=90):
         await self.execute(

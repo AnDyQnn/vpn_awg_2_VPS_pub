@@ -165,6 +165,9 @@ async def send_client_menu(context: ContextTypes.DEFAULT_TYPE, user_id: int, fir
          InlineKeyboardButton("🌐 Рос. сервисы", callback_data="client_bypass_info")],
         [InlineKeyboardButton("🆘 Сообщить о проблеме", callback_data="support_start")],
     ]
+    # Кнопку показываем, только когда есть непрочитанное — иначе она просто мозолит глаза.
+    if await has_unseen_changes(user_id):
+        keyboard.insert(2, [InlineKeyboardButton("✨ Что нового", callback_data="client_whats_new")])
     if check_admin(user_id):
         keyboard.append([InlineKeyboardButton("🚪 Выйти из режима клиента", callback_data="back_to_main")])
     
@@ -716,3 +719,35 @@ async def client_report_site_handler(update: Update, context: ContextTypes.DEFAU
         "После добавления вам придёт уведомление с предложением перевыпустить ключ.",
         reply_markup=InlineKeyboardMarkup(kb), parse_mode=ParseMode.MARKDOWN
     )
+
+async def client_whats_new(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Человеку — только накопленное с той версии, которую он видел в прошлый раз,
+    и только из раздела «Для пользователей»: технические подробности ему ни к чему."""
+    query = update.callback_query
+    tg_id = query.from_user.id
+    from changelog import user_text, parse_releases
+
+    seen = await db.get_seen_version(tg_id)
+    text = user_text(since_version=seen)
+    if not text:
+        await query.answer("Нового пока нет", show_alert=True)
+        return
+
+    releases = parse_releases(1)
+    if releases:
+        await db.set_seen_version(tg_id, releases[0][0])
+
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 В личный кабинет",
+                                                    callback_data="client_menu")]])
+    await query.edit_message_text(text[:4000], reply_markup=kb,
+                                  parse_mode=ParseMode.MARKDOWN)
+
+
+async def has_unseen_changes(tg_id) -> bool:
+    """Есть ли что показать. Нечего — кнопку не рисуем вовсе, чтобы не мозолила."""
+    try:
+        from changelog import user_text
+        return bool(user_text(since_version=await db.get_seen_version(tg_id)))
+    except Exception:
+        return False
+

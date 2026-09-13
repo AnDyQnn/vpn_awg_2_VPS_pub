@@ -41,11 +41,11 @@ from handlers_client import (
     support_ask_msg_handler, client_download_handler, client_select_check_menu, client_check_all_handler,
     client_my_keys_handler, client_key_manage_handler, client_regen_all_confirm_handler, client_regen_all_action_handler,
     client_bypass_info_handler, client_report_site_handler, client_notify_toggle_handler, client_notify_off_handler,
-    cmd_keys, cmd_status, cmd_support, cmd_help
+    cmd_keys, cmd_status, cmd_support, cmd_help, client_whats_new
 )
 from handlers_service import (
     service_menu, toggle_mode, set_mode, load_screen, limits_screen,
-    change_limit, set_peer_rule
+    change_limit, set_peer_rule, load_chart, whats_new
 )
 from handlers_admin import (
     ask_backup_password,
@@ -158,6 +158,19 @@ async def check_update_completion(app):
     for _ in range(36):  # 36 × 5с = 180с
         if os.path.exists(flag_update):
             os.remove(flag_update)
+            # Список изменений админу сразу после обновления: он его и запускает,
+            # и лезть за ним в отдельное меню не должен.
+            try:
+                from changelog import admin_text, repo_link
+                note = admin_text(limit=1)
+                link = repo_link()
+                if link:
+                    note += chr(10) + chr(10) + 'Исходный код: ' + link
+                if ADMIN_ID:
+                    await app.bot.send_message(chat_id=ADMIN_ID, text=note[:4000],
+                                               parse_mode=ParseMode.MARKDOWN)
+            except Exception as e:
+                print(f'Список изменений после обновления: {e}')
             text = f"✅ **Обновление завершено!**\n\nСервер снова онлайн.\nТекущая версия: `{get_current_version()}`\nВсе системы в норме."
             break
         if os.path.exists(flag_reboot):
@@ -611,6 +624,10 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "svc_mode_on": await set_mode(update, context, True); return
     if data == "svc_mode_off": await set_mode(update, context, False); return
     if data == "svc_load": await load_screen(update, context); return
+    if data == "svc_chart": await load_chart(update, context); return
+    if data == "svc_whatsnew": await whats_new(update, context); return
+    if data.startswith("svc_pchart_"):
+        await load_chart(update, context, data.replace("svc_pchart_", "")); return
     if data == "svc_limits": await limits_screen(update, context); return
     if data == "svc_noop": await update.callback_query.answer(); return
     if data == "svc_limit_up": await change_limit(update, context, "up"); return
@@ -622,6 +639,7 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await set_peer_rule(update, context, uuid_val, mode); return
 
     if data == "set_backup_pw": await ask_backup_password(update, context); return
+    if data == "client_whats_new": await client_whats_new(update, context); return
     if data == "client_notify_toggle": await client_notify_toggle_handler(update, context); return
     if data == "client_notify_off": await client_notify_off_handler(update, context); return
     if data.startswith("client_download_"): await client_download_handler(update, context, data.split("client_download_")[1]); return
