@@ -291,6 +291,43 @@ def is_agent(name) -> bool:
     return (name or "").strip().upper() == AGENT_PEER_NAME
 
 
+async def show_screen(query, context, text, reply_markup=None, parse_mode=None):
+    """Показывает экран поверх текущего сообщения.
+
+    Если текущее сообщение — картинка (например график), редактировать текст
+    нельзя: у медиа его нет, и Telegram отвечает отказом. В этом случае картинка
+    убирается, а экран приходит новым сообщением. Для человека разницы нет,
+    для кнопок — принципиальная: иначе они молча ничего не делают.
+    """
+    from telegram.constants import ParseMode as _PM
+    if parse_mode is None:
+        parse_mode = _PM.MARKDOWN
+
+    msg = getattr(query, "message", None)
+    is_media = bool(getattr(msg, "photo", None) or getattr(msg, "document", None))
+
+    if not is_media:
+        try:
+            return await query.edit_message_text(text, reply_markup=reply_markup,
+                                                 parse_mode=parse_mode)
+        except Exception as e:
+            low = str(e).lower()
+            if "no text" not in low and "can't be edited" not in low and "not modified" not in low:
+                raise
+            if "not modified" in low:
+                return None
+
+    chat_id = msg.chat_id if msg else query.from_user.id
+    if msg:
+        try:
+            await context.bot.delete_message(chat_id=chat_id, message_id=msg.message_id)
+        except Exception:
+            pass
+    return await context.bot.send_message(chat_id=chat_id, text=text,
+                                          reply_markup=reply_markup,
+                                          parse_mode=parse_mode)
+
+
 def deregister_menu(chat_id):
     if chat_id in state_data["active_menus"]:
         del state_data["active_menus"][chat_id]

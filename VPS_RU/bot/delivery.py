@@ -16,7 +16,7 @@ from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
 from database import db
-from utils import escape_md, dt_to_moscow
+from utils import escape_md, dt_to_moscow, show_screen
 
 STUCK_HOURS = 24        # столько ждём молча, потом показываем как застрявшее
 
@@ -88,7 +88,7 @@ async def delivery_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = "\n".join(lines)
         kb.append([InlineKeyboardButton("🔙 Администрирование", callback_data="svc_menu")])
 
-    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb),
+    await show_screen(query, context, text, reply_markup=InlineKeyboardMarkup(kb),
                                   parse_mode=ParseMode.MARKDOWN)
 
 

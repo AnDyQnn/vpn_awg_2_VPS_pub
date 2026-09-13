@@ -19,7 +19,7 @@ from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
 from database import db
-from utils import escape_md, dt_to_moscow
+from utils import escape_md, dt_to_moscow, show_screen
 from wireguard_manager import delete_peer, resume_peer
 
 TERMS = [(7, "7 дней"), (30, "30 дней"), (90, "90 дней"), (0, "Бессрочно")]
@@ -100,7 +100,7 @@ async def pending_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = "\n".join(lines)
         kb.append([InlineKeyboardButton("🔙 Администрирование", callback_data="svc_menu")])
 
-    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb),
+    await show_screen(query, context, text, reply_markup=InlineKeyboardMarkup(kb),
                                   parse_mode=ParseMode.MARKDOWN)
 
 
@@ -110,7 +110,7 @@ async def decision_screen(update: Update, context: ContextTypes.DEFAULT_TYPE, uu
     if not text:
         await query.answer("Вопрос уже закрыт")
         return await pending_screen(update, context)
-    await query.edit_message_text(text, reply_markup=decision_keyboard(uuid_val),
+    await show_screen(query, context, text, reply_markup=decision_keyboard(uuid_val),
                                   parse_mode=ParseMode.MARKDOWN)
 
 
@@ -123,7 +123,7 @@ async def extend_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, uuid_v
     kb = [[InlineKeyboardButton(label, callback_data=f"kd_set_{days}_{uuid_val}")]
           for days, label in TERMS]
     kb.append([InlineKeyboardButton("✖️ Назад", callback_data=f"kd_open_{uuid_val}")])
-    await update.callback_query.edit_message_text(
+    await show_screen(update.callback_query, context, 
         f"♻️ **На сколько продлить «{escape_md(user['name'])}»?**\n\n"
         "Ключ снова заработает сразу — тот же самый, перевыпускать и "
         "пересылать конфиг не нужно.",
@@ -194,7 +194,7 @@ async def policy_menu(update: Update, context: ContextTypes.DEFAULT_TYPE,
                                     callback_data=f"kd_pol_{days}_{uuid_val}")],
               [InlineKeyboardButton("📋 Ждут решения", callback_data="kd_list")]]
 
-    await update.callback_query.edit_message_text(
+    await show_screen(update.callback_query, context, 
         text, reply_markup=InlineKeyboardMarkup(kb), parse_mode=ParseMode.MARKDOWN)
 
 
@@ -234,7 +234,7 @@ async def delete_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE, uui
 
     kb = [[InlineKeyboardButton("🗑 Удалить", callback_data=f"kd_delok_{uuid_val}"),
            InlineKeyboardButton("✖️ Отмена", callback_data=f"kd_open_{uuid_val}")]]
-    await update.callback_query.edit_message_text(
+    await show_screen(update.callback_query, context, 
         "\n".join(lines), reply_markup=InlineKeyboardMarkup(kb),
         parse_mode=ParseMode.MARKDOWN)
 

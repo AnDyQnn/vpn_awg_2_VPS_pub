@@ -18,7 +18,7 @@ from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
 from database import db
-from utils import escape_md, dt_to_moscow, state_data, safe_delete
+from utils import escape_md, dt_to_moscow, state_data, safe_delete, show_screen
 
 DEFAULT_PPS_LIMIT = 5000
 DEFAULT_BURST = 10000
@@ -182,7 +182,7 @@ async def service_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard.append([InlineKeyboardButton("🆘 Поддержка", callback_data="support_admin_menu")])
     keyboard.append([InlineKeyboardButton("🔙 Главное меню", callback_data="back_to_main")])
 
-    await query.edit_message_text("\n".join(lines),
+    await show_screen(query, context, "\n".join(lines),
                                   reply_markup=InlineKeyboardMarkup(keyboard),
                                   parse_mode=ParseMode.MARKDOWN)
 
@@ -221,7 +221,7 @@ async def toggle_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
         kb = [[InlineKeyboardButton("✅ Вернуть наблюдение", callback_data="svc_mode_off"),
                InlineKeyboardButton("✖️ Отмена", callback_data="svc_menu")]]
 
-    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb),
+    await show_screen(query, context, text, reply_markup=InlineKeyboardMarkup(kb),
                                   parse_mode=ParseMode.MARKDOWN)
 
 
@@ -271,7 +271,7 @@ async def load_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kb = [[InlineKeyboardButton("📈 График нагрузки", callback_data="svc_chart")],
           [InlineKeyboardButton("⚖️ Лимиты", callback_data="svc_limits")],
           [InlineKeyboardButton("🔙 Назад", callback_data="svc_menu")]]
-    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb),
+    await show_screen(query, context, text, reply_markup=InlineKeyboardMarkup(kb),
                                   parse_mode=ParseMode.MARKDOWN)
 
 
@@ -318,7 +318,7 @@ async def limits_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("👥 Правила по людям", callback_data="users_page_0")],
         [InlineKeyboardButton("🔙 Назад", callback_data="svc_menu")],
     ]
-    await query.edit_message_text("\n".join(lines),
+    await show_screen(query, context, "\n".join(lines),
                                   reply_markup=InlineKeyboardMarkup(kb),
                                   parse_mode=ParseMode.MARKDOWN)
 
@@ -429,7 +429,7 @@ async def peer_limit_screen(update: Update, context: ContextTypes.DEFAULT_TYPE,
                               callback_data=f"svc_rule_day_{uuid_val}")],
         [InlineKeyboardButton("🔙 К пользователю", callback_data=f"user_detail_{uuid_val}")],
     ]
-    await query.edit_message_text("\n".join(lines),
+    await show_screen(query, context, "\n".join(lines),
                                   reply_markup=InlineKeyboardMarkup(kb),
                                   parse_mode=ParseMode.MARKDOWN)
 
@@ -464,7 +464,7 @@ async def load_chart(update: Update, context: ContextTypes.DEFAULT_TYPE, uuid_va
         path = await generate_load_graph(hours=24, uuid=uuid_val,
                                          title=title, limit_line=limit_line)
     except Exception as e:
-        await query.edit_message_text(
+        await show_screen(query, context, 
             f"⚠️ График не построился: `{escape_md(str(e))}`",
             reply_markup=InlineKeyboardMarkup(
                 [[InlineKeyboardButton("🔙 Графики", callback_data="vpn_graph")]]),
@@ -547,7 +547,7 @@ async def charts_screen(update: Update, context: ContextTypes.DEFAULT_TYPE, page
     kb.append([InlineKeyboardButton("👤 Выбрать человека", callback_data="svc_pick_0")])
     kb.append([InlineKeyboardButton("🔙 Графики", callback_data="vpn_graph")])
 
-    await query.edit_message_text("\n".join(lines),
+    await show_screen(query, context, "\n".join(lines),
                                   reply_markup=InlineKeyboardMarkup(kb),
                                   parse_mode=ParseMode.MARKDOWN)
 
@@ -573,7 +573,7 @@ async def pick_peer_screen(update: Update, context: ContextTypes.DEFAULT_TYPE, p
         kb.append(nav)
     kb.append([InlineKeyboardButton("🔙 Графики", callback_data="vpn_graph")])
 
-    await query.edit_message_text("👤 **Чей график построить?**",
+    await show_screen(query, context, "👤 **Чей график построить?**",
                                   reply_markup=InlineKeyboardMarkup(kb),
                                   parse_mode=ParseMode.MARKDOWN)
 
@@ -615,7 +615,7 @@ async def graphs_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("👤 Выбрать человека", callback_data="svc_pick_0")],
         [InlineKeyboardButton("🔙 Главное меню", callback_data="back_to_main")],
     ]
-    await query.edit_message_text("\n".join(lines),
+    await show_screen(query, context, "\n".join(lines),
                                   reply_markup=InlineKeyboardMarkup(kb),
                                   parse_mode=ParseMode.MARKDOWN)
 
@@ -630,7 +630,7 @@ async def whats_new(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if link:
         text += "\n\nИсходный код: " + link
     kb = [[InlineKeyboardButton("🔙 Главное меню", callback_data="back_to_main")]]
-    await query.edit_message_text(fit(text), reply_markup=InlineKeyboardMarkup(kb),
+    await show_screen(query, context, fit(text), reply_markup=InlineKeyboardMarkup(kb),
                                   parse_mode=ParseMode.MARKDOWN)
 
 

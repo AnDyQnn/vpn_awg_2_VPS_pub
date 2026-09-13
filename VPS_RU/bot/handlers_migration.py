@@ -11,7 +11,7 @@ from telegram.ext import ContextTypes
 
 import migration as mg
 from database import db
-from utils import escape_md
+from utils import escape_md, show_screen
 
 
 async def migration_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -19,7 +19,7 @@ async def migration_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     st = await mg.status()
 
     if st.get("error"):
-        await query.edit_message_text(
+        await show_screen(query, context, 
             f"🔑 **Переезд на новый ключ**\n\nУзел не ответил: `{escape_md(st['error'])}`",
             reply_markup=InlineKeyboardMarkup(
                 [[InlineKeyboardButton("🔙 Администрирование", callback_data="svc_menu")]]),
@@ -66,7 +66,7 @@ async def migration_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
               [InlineKeyboardButton("✖️ Отменить переезд", callback_data="mig_abort")],
               [InlineKeyboardButton("🔙 Администрирование", callback_data="svc_menu")]]
 
-    await query.edit_message_text("\n".join(lines),
+    await show_screen(query, context, "\n".join(lines),
                                   reply_markup=InlineKeyboardMarkup(kb),
                                   parse_mode=ParseMode.MARKDOWN)
 
@@ -76,7 +76,7 @@ async def migration_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer("Поднимаю интерфейс…")
     ok, data = await mg.start()
     if not ok:
-        await query.edit_message_text(
+        await show_screen(query, context, 
             f"⚠️ Не получилось: `{escape_md(str(data))}`",
             reply_markup=InlineKeyboardMarkup(
                 [[InlineKeyboardButton("🔙 Назад", callback_data="mig_menu")]]),
@@ -116,7 +116,7 @@ async def migration_issue(update: Update, context: ContextTypes.DEFAULT_TYPE,
             "Старый ключ продолжит работать, пока человек не поставит новый.")
     if not chunk:
         text = "Все переехали — можно завершать."
-    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb),
+    await show_screen(query, context, text, reply_markup=InlineKeyboardMarkup(kb),
                                   parse_mode=ParseMode.MARKDOWN)
 
 
@@ -184,7 +184,7 @@ async def migration_finish_confirm(update: Update, context: ContextTypes.DEFAULT
                   ""]
         kb = [[InlineKeyboardButton("🌍 Перевести клиент-сервер", callback_data="mig_de")],
               [InlineKeyboardButton("🔙 Назад", callback_data="mig_menu")]]
-        await query.edit_message_text("\n".join(lines),
+        await show_screen(query, context, "\n".join(lines),
                                       reply_markup=InlineKeyboardMarkup(kb),
                                       parse_mode=ParseMode.MARKDOWN)
         return
@@ -203,7 +203,7 @@ async def migration_finish_confirm(update: Update, context: ContextTypes.DEFAULT
 
     kb = [[InlineKeyboardButton("🏁 Да, остановить старый", callback_data="mig_finish_ok")],
           [InlineKeyboardButton("✖️ Отмена", callback_data="mig_menu")]]
-    await query.edit_message_text("\n".join(lines),
+    await show_screen(query, context, "\n".join(lines),
                                   reply_markup=InlineKeyboardMarkup(kb),
                                   parse_mode=ParseMode.MARKDOWN)
 
@@ -217,7 +217,7 @@ async def migration_finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def migration_abort_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kb = [[InlineKeyboardButton("✖️ Да, отменить переезд", callback_data="mig_abort_ok")],
           [InlineKeyboardButton("🔙 Назад", callback_data="mig_menu")]]
-    await update.callback_query.edit_message_text(
+    await show_screen(update.callback_query, context, 
         "✖️ **Отменить переезд?**\n\n"
         "Второй интерфейс будет снят. Старый не пострадает — он и так всё это "
         "время работал. Те, кто уже поставил новый конфиг, вернутся на старый "
