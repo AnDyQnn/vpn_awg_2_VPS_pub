@@ -44,6 +44,8 @@ async def admin_counter() -> int:
             "SELECT COUNT(DISTINCT user_uuid) FROM pps_events "
             "WHERE started_at > NOW() - INTERVAL '24 HOURS'") or 0
         total += await db.fetch_val("SELECT COUNT(*) FROM pending_retire") or 0
+        total += await db.fetch_val(
+            "SELECT COUNT(*) FROM pending_decisions WHERE resolved_at IS NULL") or 0
     except Exception:
         pass
     return total
@@ -105,6 +107,23 @@ async def service_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     lines.append("")
     try:
+        decisions = await db.get_pending_decisions()
+    except Exception:
+        decisions = []
+    if decisions:
+        expired = sum(1 for d in decisions if d["reason"] == "expired")
+        dormant = len(decisions) - expired
+        parts = []
+        if expired:
+            parts.append(f"истёк срок — {expired}")
+        if dormant:
+            parts.append(f"уснули — {dormant}")
+        lines.append("📋 *Ждут решения:* " + ", ".join(parts) + " (на паузе)")
+    else:
+        lines.append("📋 *Ждут решения:* нет, все ключи живые")
+
+    lines.append("")
+    try:
         roles = await db.list_roles()
         restricted = len(await db.get_access_matrix())
     except Exception:
@@ -129,6 +148,9 @@ async def service_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("📊 Нагрузка", callback_data="svc_load"),
          InlineKeyboardButton("⚖️ Лимиты", callback_data="svc_limits")],
         [InlineKeyboardButton("🛡 Доступы · роли", callback_data="roles_menu")],
+        [InlineKeyboardButton(
+            "📋 Ждут решения" + (f" · {len(decisions)}" if decisions else ""),
+            callback_data="kd_list")],
         [InlineKeyboardButton("📄 Что нового", callback_data="svc_whatsnew")],
     ]
     if not tickets:

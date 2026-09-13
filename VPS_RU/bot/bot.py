@@ -67,6 +67,10 @@ from handlers_roles import (
     role_delete, role_apply, handle_role_text, user_roles_screen,
     user_role_toggle
 )
+from handlers_keylife import (
+    pending_screen, decision_screen, extend_menu, do_extend, set_policy,
+    delete_confirm, do_delete
+)
 from acl import apply_access_rules
 
 # --- ЗАДАЧИ БОТА (СИНХРОНИЗАЦИЯ И МОНИТОРИНГ) ---
@@ -611,7 +615,6 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     # Роутер функций
-    if data == "run_audit": await run_audit_handler(update, context); return
     
     if data == "support_start": await support_start_handler(update, context); return
     if data.startswith("support_audit_"): await support_run_audit_handler(update, context, data.split("support_audit_")[1]); return
@@ -634,7 +637,22 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "client_stats": await client_stats_handler(update, context); return
     if data == "client_bypass_info": await client_bypass_info_handler(update, context); return
     if data == "client_report_site": await client_report_site_handler(update, context); return
-    # --- Раздел администрирования ---
+    if data == "client_whats_new": await client_whats_new(update, context); return
+    if data == "client_notify_toggle": await client_notify_toggle_handler(update, context); return
+    if data == "client_notify_off": await client_notify_off_handler(update, context); return
+    if data.startswith("client_download_"): await client_download_handler(update, context, data.split("client_download_")[1]); return
+    
+    if data.startswith("client_regen_"): await client_regen_confirm(update, context, data.split("client_regen_")[1]); return
+    if data.startswith("do_client_regen_"): await client_regen_action(update, context, data.split("do_client_regen_")[1]); return
+
+    if not check_admin(update.effective_user.id): return await query.answer("Доступ запрещен")
+
+    # --- Экраны администратора ---
+    # ВСЁ, что ниже, доступно только владельцу. Раньше часть этих экранов стояла
+    # ВЫШЕ проверки, а сами обработчики прав не проверяют: защитой служило лишь то,
+    # что у пользователя нет таких кнопок. Но callback_data не секрет — обратиться
+    # по ней может кто угодно, кому она известна.
+    if data == "run_audit": await run_audit_handler(update, context); return
     if data == "svc_menu": await service_menu(update, context); return
     if data == "svc_mode_toggle": await toggle_mode(update, context); return
     if data == "svc_mode_on": await set_mode(update, context, True); return
@@ -655,19 +673,30 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await set_peer_rule(update, context, uuid_val, mode); return
 
     if data == "set_backup_pw": await ask_backup_password(update, context); return
-    if data == "client_whats_new": await client_whats_new(update, context); return
-    if data == "client_notify_toggle": await client_notify_toggle_handler(update, context); return
-    if data == "client_notify_off": await client_notify_off_handler(update, context); return
-    if data.startswith("client_download_"): await client_download_handler(update, context, data.split("client_download_")[1]); return
-    
-    if data.startswith("client_regen_"): await client_regen_confirm(update, context, data.split("client_regen_")[1]); return
-    if data.startswith("do_client_regen_"): await client_regen_action(update, context, data.split("do_client_regen_")[1]); return
-
-    if not check_admin(update.effective_user.id): return await query.answer("Доступ запрещен")
 
     # --- Роли: доступы внутри туннеля ---
     # Намеренно ПОСЛЕ проверки админа: роли решают, кто к кому ходит, и открывать
     # эти экраны кому попало нельзя.
+    # --- Судьба ключа: истёк срок или уснул ---
+    # Вопрос живёт в базе, поэтому эти кнопки работают и в старом сообщении
+    # после перезапуска бота.
+    if data == "kd_list": await pending_screen(update, context); return
+    if data.startswith("kd_open_"):
+        await decision_screen(update, context, data.split("_", 2)[2]); return
+    if data.startswith("kd_ext_"):
+        await extend_menu(update, context, data.split("_", 2)[2]); return
+    if data.startswith("kd_set_"):
+        parts = data.split("_", 3)          # kd | set | дни | uuid
+        await do_extend(update, context, parts[3], int(parts[2])); return
+    if data.startswith("kd_pol_"):
+        parts = data.split("_", 3)          # kd | pol | ask или дни | uuid
+        await set_policy(update, context, parts[3], parts[2]); return
+    # delok проверяется раньше del_: короткий префикс перехватил бы длинный
+    if data.startswith("kd_delok_"):
+        await do_delete(update, context, data.split("_", 2)[2]); return
+    if data.startswith("kd_del_"):
+        await delete_confirm(update, context, data.split("_", 2)[2]); return
+
     if data == "roles_menu": await roles_menu(update, context); return
     if data.startswith("role_ut_"):
         parts = data.split("_", 3)          # role | ut | id | uuid
