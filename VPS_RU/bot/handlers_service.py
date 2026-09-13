@@ -364,8 +364,74 @@ async def set_peer_rule(update: Update, context: ContextTypes.DEFAULT_TYPE,
     await db.log_event("Load control", f"Правило для {uuid_val}: {note}")
     await query.answer(f"Готово: {note}")
 
-    from handlers_users import render_user_detail
-    await render_user_detail(context, query.message.chat_id, query.message.message_id, uuid_val)
+    await peer_limit_screen(update, context, uuid_val)
+
+
+async def peer_limit_screen(update: Update, context: ContextTypes.DEFAULT_TYPE,
+                            uuid_val: str):
+    """Что человеку разрешено по пакетам и что можно поменять.
+
+    Ограничение считается в пакетах в секунду, а не в мегабитах: узел упирается
+    именно в пакеты. Поэтому на экране сразу написано, чему примерно равен предел
+    в привычной скорости — иначе число ни о чём не говорит."""
+    query = update.callback_query
+    user = await db.get_user_by_uuid(uuid_val)
+    if not user:
+        await query.answer("Ключ не найден")
+        return
+
+    common, _, mode = await _settings()
+    rule = (await db.get_peer_limits()).get(uuid_val)
+    try:
+        exceeded = await db.fetch_val(
+            "SELECT COUNT(*) FROM pps_events WHERE user_uuid=$1 "
+            "AND started_at > NOW() - INTERVAL '24 HOURS'", uuid_val) or 0
+    except Exception:
+        exceeded = 0
+
+    if not rule:
+        now_line = f"общий предел — **{common}** пакетов в секунду"
+    elif rule["mode"] == "unlimited":
+        now_line = "**без ограничения**"
+    else:
+        until = ""
+        if rule["expires_at"]:
+            until = (" (до " + dt_to_moscow(rule["expires_at"]).strftime("%d.%m %H:%M")
+                     + ", потом вернётся общий)")
+        now_line = f"свой предел — **{rule['limit_pps']}** пакетов в секунду{until}"
+
+    mbits = round(common * 1200 * 8 / 1_000_000)
+    lines = [
+        f"🚦 **Ограничение: {escape_md(user['name'])}**",
+        "",
+        f"Сейчас: {now_line}.",
+    ]
+    if mode != "enforce":
+        lines.append("⚠️ Режим наблюдения: ограничение записывается, но **не применяется**.")
+    if exceeded:
+        lines.append(f"За сутки упирался в предел: {exceeded} раз(а).")
+    lines += [
+        "",
+        f"_Считаем пакеты, а не мегабиты: узел упирается именно в них. "
+        f"{common} пак/с — это примерно {mbits} Мбит/с обычной загрузки, "
+        f"а торрент упрётся раньше: его пакеты мелкие._",
+    ]
+
+    half = max(1000, common // 2)
+    kb = [
+        [InlineKeyboardButton(f"📐 Общий предел · {common} пак/с",
+                              callback_data=f"svc_rule_default_{uuid_val}")],
+        [InlineKeyboardButton(f"✂️ Свой предел · {half} пак/с",
+                              callback_data=f"svc_rule_custom_{uuid_val}")],
+        [InlineKeyboardButton("♾ Снять ограничение",
+                              callback_data=f"svc_rule_unlimited_{uuid_val}")],
+        [InlineKeyboardButton(f"⏱ Придушить на сутки · {half} пак/с",
+                              callback_data=f"svc_rule_day_{uuid_val}")],
+        [InlineKeyboardButton("🔙 К пользователю", callback_data=f"user_detail_{uuid_val}")],
+    ]
+    await query.edit_message_text("\n".join(lines),
+                                  reply_markup=InlineKeyboardMarkup(kb),
+                                  parse_mode=ParseMode.MARKDOWN)
 
 async def load_chart(update: Update, context: ContextTypes.DEFAULT_TYPE, uuid_val: str = None):
     """Картинка с двумя панелями: скорость и пакеты.
