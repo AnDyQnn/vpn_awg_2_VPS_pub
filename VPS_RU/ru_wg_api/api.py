@@ -39,7 +39,17 @@ if not API_TOKEN:
 
 # --- КОНФИГУРАЦИЯ ---
 ENV_SERVER_URL = os.getenv("SERVER_URL") or os.getenv("SERVER_IP")
+# Порт слушателя. После переезда на новый ключ он меняется навсегда, поэтому
+# значение из окружения может оказаться устаревшим: файл-переопределение пишется
+# в момент завершения переезда и переживает перезапуск контейнера.
+PORT_OVERRIDE_FILE = "/etc/amnezia/amneziawg/listen_port"
 SERVER_PORT = int(os.getenv("SERVERPORT", "51820"))
+try:
+    if os.path.exists(PORT_OVERRIDE_FILE):
+        with open(PORT_OVERRIDE_FILE) as _f:
+            SERVER_PORT = int(_f.read().strip())
+except Exception:
+    pass
 VPN_SUBNET = os.getenv("INTERNAL_SUBNET", "10.13.13.0")
 
 CONF_DIR = "/etc/amnezia/amneziawg" 
@@ -188,6 +198,9 @@ class MigrationStart(BaseModel):
 class MigrationPeer(BaseModel):
     public_key: str
     client_ip: str
+
+class MigrationDe(BaseModel):
+    iface: str = "wg1"
 
 def run_cmd(cmd):
     try:
@@ -719,15 +732,31 @@ def mig_routing_rules(add=True):
     именно у тех, кто послушно переехал первым."""
     act = "-A" if add else "-D"
     cmds = [
+        # Трафик ИЗ клиент-сервера метить нельзя — иначе он пойдёт по кругу.
+        # Это правило часто забывают, а без него мир-трафик зацикливается.
+        f"iptables -t mangle {act} PREROUTING -i {MIG_IFACE} -s {DE_AGENT_IP} -j RETURN",
         f"iptables -t mangle {act} PREROUTING -i {MIG_IFACE} -m set "
         f"--match-set blocked_nets dst -j MARK --set-mark 200",
         f"iptables -t mangle {act} PREROUTING -i {MIG_IFACE} -m set "
         f"! --match-set ru_nets dst -j MARK --set-mark 200",
+        f"iptables {act} FORWARD -i {MIG_IFACE} -j ACCEPT",
+        f"iptables {act} FORWARD -o {MIG_IFACE} -j ACCEPT",
+        f"iptables -t nat {act} POSTROUTING -o {MIG_IFACE} -j MASQUERADE",
         f"iptables {act} INPUT -i {MIG_IFACE} -p tcp --dport 8000 -j DROP",
-        f"iptables -t nat {act} POSTROUTING -s {TUNNEL_NET} -o eth0 -j MASQUERADE",
+        f"iptables {act} FORWARD -i {MIG_IFACE} -o {MIG_IFACE} -p tcp "
+        f"--dport 8000 ! -s 10.13.13.1 -j DROP",
+        # Заворот DNS для тех, у кого включены фильтры: цепочка та же, просто
+        # теперь она должна ловить и второй интерфейс.
+        f"iptables -t nat {act} PREROUTING -i {MIG_IFACE} -j {DNS_CHAIN}",
     ]
     for c in cmds:
         subprocess.run(c, shell=True, stderr=subprocess.DEVNULL)
+    if add:
+        # Асимметричная маршрутизация: ответы из интернета приходят через туннель,
+        # и строгая проверка обратного пути их бы уничтожала.
+        subprocess.run(f"sysctl -w net.ipv4.conf.{MIG_IFACE}.rp_filter=0",
+                       shell=True, stderr=subprocess.DEVNULL,
+                       stdout=subprocess.DEVNULL)
 
 
 def mig_start(port=MIG_DEFAULT_PORT):
@@ -808,6 +837,25 @@ def mig_restore():
         print(f"Переезд: не удалось восстановить {MIG_IFACE}: {e}")
 
 
+def de_iface():
+    """На каком интерфейсе сейчас живёт клиент-сервер.
+
+    Мир-трафик уходит в него маршрутом `default dev <iface> table 200`. Пока
+    агент на старом интерфейсе — это wg0; как только он переехал, маршрут обязан
+    переключиться, иначе весь «зарубеж» будет уходить в пустоту."""
+    return mig_read_state().get("de_iface", "wg0")
+
+
+def mig_move_de(iface):
+    """Переключает мировой трафик на интерфейс, где теперь живёт агент."""
+    subprocess.run(f"ip route replace default dev {iface} table 200",
+                   shell=True, stderr=subprocess.DEVNULL)
+    state = mig_read_state()
+    state["de_iface"] = iface
+    mig_write_state(state)
+    return {"status": "ok", "de_iface": iface}
+
+
 def mig_add_peer(public_key, client_ip):
     """Переносит пира на новый интерфейс. Ключ пира тот же самый: меняется ключ
     СЕРВЕРА, а не клиента, поэтому человеку не нужно заводить новое устройство."""
@@ -880,21 +928,64 @@ def mig_abort():
 
 
 def mig_finish():
-    """Завершение: старый интерфейс уходит. Делается только кнопкой владельца —
-    у тех, кто не переехал, связь прекратится."""
+    """Завершение: новый интерфейс СТАНОВИТСЯ основным.
+
+    Можно было бы просто погасить wg0 и жить на wg1, но тогда пришлось бы
+    переучивать на новое имя всё остальное: выдачу пиров, статус, маршрут в
+    Германию, правила файрвола, самолечение. Поэтому делаем иначе — переносим
+    новый ключ, порт, обфускацию и переехавших пиров в основной конфиг и
+    поднимаем всё заново. После этого в системе снова ОДИН интерфейс wg0,
+    просто с новым ключом, а второго нет вовсе.
+
+    Не переехавшие сюда не попадают: их пиров в новом конфиге нет, и связь у них
+    прекращается — ровно об этом и предупреждает экран подтверждения."""
     if not mig_iface_up():
         raise RuntimeError("второй интерфейс не поднят — завершать нечего")
-    # Старый интерфейс уходит, а его адрес переезжает на новый: на 10.13.13.1
-    # живут страница отказа и панель, и он должен остаться доступным.
-    subprocess.run(["ip", "link", "delete", "wg0"], stderr=subprocess.DEVNULL)
-    server_ip_cidr = f"{VPN_SUBNET.rsplit('.', 1)[0]}.1/24"
-    subprocess.run(["ip", "address", "add", server_ip_cidr, "dev", MIG_IFACE],
-                   stderr=subprocess.DEVNULL)
     state = mig_read_state()
-    state["finished_at"] = int(time.time())
-    state["active"] = False
+    port = state.get("port", MIG_DEFAULT_PORT)
+
+    with open(MIG_CONF) as f:
+        new_conf = f.read()
+    if "[Peer]" not in new_conf:
+        raise RuntimeError("на новый интерфейс ещё никто не переехал")
+
+    # Новые ключи становятся ключами сервера.
+    with open(MIG_PRIV) as f:
+        priv = f.read().strip()
+    with open(MIG_PUB) as f:
+        pub = f.read().strip()
+    with open(PRIVATE_KEY_FILE, "w") as f:
+        f.write(priv)
+    os.chmod(PRIVATE_KEY_FILE, 0o600)
+    with open(PUBLIC_KEY_FILE, "w") as f:
+        f.write(pub)
+
+    # Конфиг основного интерфейса — это конфиг нового, целиком: его [Interface]
+    # с новой обфускацией и его [Peer] тех, кто переехал.
+    with open(CONF_FILE, "w") as f:
+        f.write(new_conf)
+    # Порт запоминаем отдельно: при следующем старте контейнера setup_network
+    # собирает [Interface] заново и иначе вернул бы старый порт из окружения.
+    with open(PORT_OVERRIDE_FILE, "w") as f:
+        f.write(str(port))
+
+    subprocess.run(["ip", "link", "delete", MIG_IFACE], stderr=subprocess.DEVNULL)
+    mig_routing_rules(add=False)
+    for path in (MIG_CONF, MIG_PRIV, MIG_PUB):
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+    state = {"finished_at": int(time.time()), "active": False,
+             "promoted_port": port, "de_iface": "wg0"}
     mig_write_state(state)
-    return {"status": "ok", "note": "старый интерфейс остановлен"}
+
+    # Поднимаем основной интерфейс заново — уже с новым ключом и портом.
+    globals()["SERVER_PORT"] = port
+    setup_network()
+    return {"status": "ok", "port": port,
+            "note": "новый ключ стал основным, второй интерфейс убран"}
 
 
 def restore_peers():
@@ -1131,6 +1222,15 @@ def api_mig_peer(req: MigrationPeer):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/migration/de")
+def api_mig_de(req: MigrationDe):
+    """Переключает мировой трафик на интерфейс, где теперь живёт клиент-сервер."""
+    try:
+        return mig_move_de(req.iface)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/api/migration/abort")
 def api_mig_abort():
     try:
@@ -1183,7 +1283,7 @@ def _set_de_route(mode):
         subprocess.run(f"ip route replace default {spec} table 200",
                        shell=True, stderr=subprocess.DEVNULL)
     else:
-        subprocess.run("ip route replace default dev wg0 table 200",
+        subprocess.run(f"ip route replace default dev {de_iface()} table 200",
                        shell=True, stderr=subprocess.DEVNULL)
         mode = "vpn"
     try:

@@ -73,6 +73,8 @@ fi
 ufw allow 80/tcp   >/dev/null 2>&1 || true
 ufw allow 443/tcp  >/dev/null 2>&1 || true
 ufw allow 51820/udp >/dev/null 2>&1 || true
+# Порт второго интерфейса: нужен на время переезда на новый ключ сервера.
+ufw allow 51821/udp >/dev/null 2>&1 || true
 
 echo "📦 Проверка и настройка Docker..."
 if ! command -v docker &> /dev/null; then

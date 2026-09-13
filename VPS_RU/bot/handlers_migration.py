@@ -56,7 +56,12 @@ async def migration_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
                          ("…" if len(lag) > 12 else ""))
         lines += ["", "_«Переехал» считается по живому рукопожатию на новом "
                       "интерфейсе, а не по факту выдачи конфига._"]
-        kb = [[InlineKeyboardButton("📨 Выдать новые конфиги", callback_data="mig_issue_0")],
+        de_moved = st.get("de_iface") == "wg1" if "de_iface" in st else False
+        kb = [[InlineKeyboardButton(
+                   ("✅ Клиент-сервер переехал" if de_moved
+                    else "🌍 Перевести клиент-сервер"),
+                   callback_data="mig_de")],
+              [InlineKeyboardButton("📨 Выдать новые конфиги", callback_data="mig_issue_0")],
               [InlineKeyboardButton("🏁 Завершить переезд", callback_data="mig_finish")],
               [InlineKeyboardButton("✖️ Отменить переезд", callback_data="mig_abort")],
               [InlineKeyboardButton("🔙 Админка", callback_data="svc_menu")]]
@@ -156,10 +161,33 @@ async def migration_send(update: Update, context: ContextTypes.DEFAULT_TYPE, uui
     await migration_issue(update, context)
 
 
+async def migration_de(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Перевод клиент-сервера. Делается ПЕРВЫМ: пока он на старом интерфейсе,
+    завершать переезд нельзя — вместе со старым интерфейсом умрёт и выход
+    в интернет для всех, кто уже переехал."""
+    query = update.callback_query
+    await query.answer("Перевожу клиент-сервер, это до минуты…")
+    ok, msg = await mg.move_de()
+    await query.answer(msg, show_alert=True)
+    await migration_menu(update, context)
+
+
 async def migration_finish_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     lag = await mg.laggards()
+    st = await mg.status()
     lines = ["🏁 **Завершить переезд?**", ""]
+    if st.get("de_iface") != "wg1":
+        lines += ["⛔ **Сначала переведите клиент-сервер.**", "",
+                  "Он тоже пир старого интерфейса. Если остановить старый сейчас, "
+                  "выход в интернет пропадёт у всех — включая тех, кто уже переехал.",
+                  ""]
+        kb = [[InlineKeyboardButton("🌍 Перевести клиент-сервер", callback_data="mig_de")],
+              [InlineKeyboardButton("🔙 Назад", callback_data="mig_menu")]]
+        await query.edit_message_text("\n".join(lines),
+                                      reply_markup=InlineKeyboardMarkup(kb),
+                                      parse_mode=ParseMode.MARKDOWN)
+        return
     if lag:
         lines.append(f"**{len(lag)} чел. ещё не переехали**: "
                      + escape_md(", ".join(l["name"] for l in lag[:12]))

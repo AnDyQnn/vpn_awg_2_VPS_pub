@@ -75,7 +75,7 @@ from delivery import delivery_screen
 from handlers_migration import (
     migration_menu, migration_start, migration_issue, migration_send,
     migration_finish_confirm, migration_finish, migration_abort_confirm,
-    migration_abort
+    migration_abort, migration_de
 )
 from filters import (
     filters_menu, pick_user as filters_pick_user, user_filters_screen,
@@ -701,6 +701,7 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # спрятана за отдельным экраном со списком тех, кто ещё не переехал.
     if data == "mig_menu": await migration_menu(update, context); return
     if data == "mig_start": await migration_start(update, context); return
+    if data == "mig_de": await migration_de(update, context); return
     if data.startswith("mig_issue_"):
         await migration_issue(update, context, int(data.split("_")[-1])); return
     if data.startswith("mig_send_"):
