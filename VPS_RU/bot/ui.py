@@ -51,7 +51,7 @@ def menu_backups():
         [InlineKeyboardButton("💾 Бэкап RU", callback_data="backup"),
          InlineKeyboardButton("♻️ Восстановить RU", callback_data="restore")],
         [InlineKeyboardButton("💾 Бэкап DE", callback_data="de_backup")],
-        [InlineKeyboardButton("📝 Логи сети · Excel", callback_data="download_logs"),
+        [InlineKeyboardButton("📊 Сводка · Excel", callback_data="download_logs"),
          InlineKeyboardButton("📊 База · Excel", callback_data="export_excel")],
         [InlineKeyboardButton("🔙 Главное меню", callback_data="back_to_main")],
     ]
