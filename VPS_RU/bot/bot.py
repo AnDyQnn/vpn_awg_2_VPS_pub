@@ -221,6 +221,17 @@ async def check_update_completion(app):
                     except Exception:
                         supp_count = 0
 
+                    # Пароль архива спрашиваем и здесь. Это отдельный путь отправки
+                    # меню, и раньше он проверку обходил — как раз сразу после
+                    # обновления, когда напомнить важнее всего.
+                    from handlers_admin import backup_password_gate
+                    
+                    class _GateCtx:
+                        bot = app.bot
+                    
+                    if await backup_password_gate(_GateCtx, ADMIN_ID):
+                        return
+                    
                     msg = await app.bot.send_message(
                         chat_id=ADMIN_ID, 
                         text="🛡 **VPN Dashboard**\nВыберите действие:", 
