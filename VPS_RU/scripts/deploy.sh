@@ -132,10 +132,13 @@ fi
 
 # 3d. Версия проекта для тегов образов. Берём из файла VERSION (сначала ноды, потом корня),
 #     чтобы в `docker images` было видно, какая версия крутится, вместо безликого latest.
-if [ -f "$NODE_DIR/VERSION" ]; then
-    APP_VERSION="$(tr -d '[:space:]' < "$NODE_DIR/VERSION")"
-elif [ -f "$PROJECT_ROOT/VERSION" ]; then
+# Источник версии ОДИН — корневой файл. Версия в папке ноды когда-то отстала
+# и молча подсовывалась вместо настоящей: образы получали чужой тег, а бот
+# показывал старый номер.
+if [ -f "$PROJECT_ROOT/VERSION" ]; then
     APP_VERSION="$(tr -d '[:space:]' < "$PROJECT_ROOT/VERSION")"
+elif [ -f "$NODE_DIR/VERSION" ]; then
+    APP_VERSION="$(tr -d '[:space:]' < "$NODE_DIR/VERSION")"
 else
     APP_VERSION="dev"
 fi
