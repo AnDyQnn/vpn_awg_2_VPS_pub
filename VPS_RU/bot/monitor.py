@@ -884,6 +884,14 @@ async def load_collector_loop(app):
                     str(p.get("allowed_ips", "")).split("/")[0]: p.get("uuid")
                     for p in peers if p.get("allowed_ips")
                 }
+                # Человек на Xray ходит с адреса-двойника. Для учёта это тот же
+                # человек: оба адреса ведут на один uuid, приросты складываются
+                # сами — часовые срезы пишутся с накоплением.
+                from xray import twin_addr
+                for ip, uuid_val in list(ip_to_uuid.items()):
+                    twin = twin_addr(ip)
+                    if twin:
+                        ip_to_uuid[twin] = uuid_val
 
                 if prev_snapshot and prev_ts and ts > prev_ts:
                     dt = ts - prev_ts
@@ -896,6 +904,11 @@ async def load_collector_loop(app):
                     personal = await db.get_peer_limits()
                     hour = datetime.utcnow().replace(minute=0, second=0, microsecond=0)
 
+                    # Сначала складываем приросты по человеку. У него может быть
+                    # два адреса сразу — пир AmneziaWG и двойник Xray, — и
+                    # проверять их порознь нельзя: лимит обходился бы делением
+                    # трафика пополам.
+                    merged = {}
                     for ip, cur in snapshot.items():
                         old = prev_snapshot.get(ip)
                         uuid_val = ip_to_uuid.get(ip)
@@ -903,11 +916,13 @@ async def load_collector_loop(app):
                             continue
 
                         # Счётчики могли обнулиться — контейнер перезапускали.
-                        d_pkt_out = max(0, cur["tx_packets"] - old["tx_packets"])
-                        d_pkt_in = max(0, cur["rx_packets"] - old["rx_packets"])
-                        d_byt_out = max(0, cur["tx_bytes"] - old["tx_bytes"])
-                        d_byt_in = max(0, cur["rx_bytes"] - old["rx_bytes"])
+                        rec = merged.setdefault(uuid_val, [0, 0, 0, 0])
+                        rec[0] += max(0, cur["rx_packets"] - old["rx_packets"])
+                        rec[1] += max(0, cur["tx_packets"] - old["tx_packets"])
+                        rec[2] += max(0, cur["rx_bytes"] - old["rx_bytes"])
+                        rec[3] += max(0, cur["tx_bytes"] - old["tx_bytes"])
 
+                    for uuid_val, (d_pkt_in, d_pkt_out, d_byt_in, d_byt_out) in merged.items():
                         pps = (d_pkt_in + d_pkt_out) / dt
                         total_pkt = d_pkt_in + d_pkt_out
                         avg_size = (d_byt_in + d_byt_out) / total_pkt if total_pkt else 0

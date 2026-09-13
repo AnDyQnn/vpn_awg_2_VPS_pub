@@ -204,6 +204,9 @@ class MigrationDe(BaseModel):
 
 class XrayConfig(BaseModel):
     config: dict
+    # Адреса людей на Xray: узел поднимает их у себя, иначе отправлять
+    # с них нечем — адрес должен принадлежать отправителю.
+    addresses: List[str] = []
 
 class ProtocolSwitch(BaseModel):
     name: str
@@ -389,16 +392,28 @@ def setup_network():
 ACCT_CHAIN = "PEER_ACCT"
 
 
-def _acct_ensure_chain():
-    """Создаёт цепочку учёта и вешает её первой в FORWARD.
-    Первой — потому что ниже стоят правила ACCEPT, после которых до нас не дошло бы."""
+def _acct_ensure_chain(flush=True):
+    """Создаёт цепочку учёта и вешает её первой в FORWARD, OUTPUT и INPUT.
+
+    `flush=False` — когда надо лишь убедиться, что цепочка на месте, и добавить
+    в неё пару счётчиков. С очисткой это обнулило бы учёт всех остальных.
+    Первой — потому что ниже стоят правила ACCEPT, после которых до нас не дошло бы.
+
+    Трёх точек не бывает много: пакет проходит ЛИБО через FORWARD (трафик пира
+    AmneziaWG идёт транзитом), ЛИБО через OUTPUT/INPUT (трафик человека на Xray
+    рождается и умирает на самом узле). Дважды один пакет не посчитается.
+
+    В цепочке нет действий — только счёт, поэтому её появление в INPUT и OUTPUT
+    ничего не решает и ничего не рвёт."""
     subprocess.run(f"iptables -N {ACCT_CHAIN}", shell=True, stderr=subprocess.DEVNULL)
-    subprocess.run(f"iptables -F {ACCT_CHAIN}", shell=True, stderr=subprocess.DEVNULL)
-    check = subprocess.run(f"iptables -C FORWARD -j {ACCT_CHAIN}", shell=True,
-                           stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
-    if check.returncode != 0:
-        subprocess.run(f"iptables -I FORWARD 1 -j {ACCT_CHAIN}", shell=True,
-                       stderr=subprocess.DEVNULL)
+    if flush:
+        subprocess.run(f"iptables -F {ACCT_CHAIN}", shell=True, stderr=subprocess.DEVNULL)
+    for chain in ("FORWARD", "OUTPUT", "INPUT"):
+        check = subprocess.run(f"iptables -C {chain} -j {ACCT_CHAIN}", shell=True,
+                               stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+        if check.returncode != 0:
+            subprocess.run(f"iptables -I {chain} 1 -j {ACCT_CHAIN}", shell=True,
+                           stderr=subprocess.DEVNULL)
 
 
 def acct_add(ip):
@@ -480,13 +495,21 @@ def _acl_ensure_chain():
     # Без привязки к интерфейсу: во время переезда пиры живут и на wg0, и на wg1,
     # а адрес назначения из туннельной сети однозначно говорит, что это свои.
     hook = f"-d {TUNNEL_NET} -j {ACL_CHAIN}"
-    check = subprocess.run(f"iptables -C FORWARD {hook}", shell=True,
-                           stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
-    if check.returncode != 0:
-        # Вторым номером: первой в FORWARD стоит цепочка учёта, и она должна
-        # посчитать пакет до того, как мы его отбросим.
-        subprocess.run(f"iptables -I FORWARD 2 {hook}", shell=True,
-                       stderr=subprocess.DEVNULL)
+    # FORWARD — транзит пиров AmneziaWG. OUTPUT — люди на Xray: их пакеты
+    # рождаются на узле, через FORWARD не проходят вовсе, и без второй точки
+    # роли на них просто не действовали бы.
+    #
+    # INPUT намеренно не трогаем: на адресах Xray никто ничего не слушает, зато
+    # в INPUT приходят обращения пиров к самому узлу — к странице отказа, DNS и
+    # панели. Правила ролей отрезали бы их человеку, у которого роль есть.
+    for chain in ("FORWARD", "OUTPUT"):
+        check = subprocess.run(f"iptables -C {chain} {hook}", shell=True,
+                               stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+        if check.returncode != 0:
+            # Вторым номером: первой стоит цепочка учёта, и она должна
+            # посчитать пакет до того, как мы его отбросим.
+            subprocess.run(f"iptables -I {chain} 2 {hook}", shell=True,
+                           stderr=subprocess.DEVNULL)
 
 
 def _acl_rule_spec(ip, grant):
@@ -550,11 +573,14 @@ def _acl_web_ensure_chain():
     subprocess.run(f"iptables -t nat -F {ACL_WEB_CHAIN}", shell=True,
                    stderr=subprocess.DEVNULL)
     hook = f"-d {TUNNEL_NET} -j {ACL_WEB_CHAIN}"
-    check = subprocess.run(f"iptables -t nat -C PREROUTING {hook}", shell=True,
-                           stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
-    if check.returncode != 0:
-        subprocess.run(f"iptables -t nat -A PREROUTING {hook}", shell=True,
-                       stderr=subprocess.DEVNULL)
+    # PREROUTING — для пиров, OUTPUT — для людей на Xray (их запрос рождается
+    # на узле и в PREROUTING не попадает вовсе).
+    for chain in ("PREROUTING", "OUTPUT"):
+        check = subprocess.run(f"iptables -t nat -C {chain} {hook}", shell=True,
+                               stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+        if check.returncode != 0:
+            subprocess.run(f"iptables -t nat -A {chain} {hook}", shell=True,
+                           stderr=subprocess.DEVNULL)
 
 
 def apply_acl_web(peers):
@@ -1038,6 +1064,52 @@ def save_proto_state(state):
         print(f"Состояние протоколов не сохранилось: {e}")
 
 
+# Служебный интерфейс, на котором живут адреса людей, подключённых по Xray.
+# Отдельный — чтобы их было видно одной командой и чтобы удаление интерфейса
+# снимало разом все адреса, не задевая ничего чужого.
+XRAY_IFACE = "xray0"
+# Смещение адреса-двойника: 10.13.13.6 → 10.13.13.134. Отсюда предел в 126
+# пиров AmneziaWG (адреса выше .127 заняты двойниками) — при тридцати людях
+# запас десятикратный, но знать об этом надо.
+XRAY_ADDR_OFFSET = 128
+
+
+def xray_iface_ensure():
+    subprocess.run(f"ip link add {XRAY_IFACE} type dummy", shell=True,
+                   stderr=subprocess.DEVNULL)
+    subprocess.run(f"ip link set up dev {XRAY_IFACE}", shell=True,
+                   stderr=subprocess.DEVNULL)
+
+
+def xray_addresses():
+    """Какие адреса-двойники сейчас подняты на узле."""
+    out = subprocess.run(f"ip -4 -o addr show dev {XRAY_IFACE}", shell=True,
+                         capture_output=True, text=True).stdout
+    return {m.group(1) for m in re.finditer(r"inet ([0-9.]+)/", out)}
+
+
+def xray_sync_addresses(addrs):
+    """Приводит адреса на узле в соответствие со списком от бота.
+
+    Лишние снимаются: адрес, оставшийся после удаления человека, продолжал бы
+    принимать ответы и считаться в статистике неизвестно за кого."""
+    xray_iface_ensure()
+    # Цепочка учёта может быть ещё не создана (первый запуск) — проверяем без
+    # очистки, иначе обнулили бы счётчики всех пиров.
+    _acct_ensure_chain(flush=False)
+    want = {a for a in (addrs or []) if a}
+    have = xray_addresses()
+    for ip in want - have:
+        subprocess.run(f"ip addr add {ip}/32 dev {XRAY_IFACE}", shell=True,
+                       stderr=subprocess.DEVNULL)
+        acct_add(ip)
+    for ip in have - want:
+        subprocess.run(f"ip addr del {ip}/32 dev {XRAY_IFACE}", shell=True,
+                       stderr=subprocess.DEVNULL)
+        acct_del(ip)
+    return sorted(want)
+
+
 def xray_running():
     """Жив ли процесс.
 
@@ -1103,13 +1175,17 @@ def xray_start():
     return True, "запущен"
 
 
-def xray_apply(config):
+def xray_apply(config, addresses=None):
     """Записывает конфиг от бота и перезапускает процесс.
 
     Две ступени защиты, потому что цена ошибки — связь у всех сразу:
       1. новый конфиг проверяется во временном файле, рабочий не трогается;
       2. если конфиг верен, а процесс всё равно не встал (занят порт, нет
          прав) — возвращается прежний конфиг и поднимается на нём."""
+    # Адреса поднимаем ДО запуска: Xray при старте привязывается к ним, и
+    # без адреса процесс просто не поднимется.
+    xray_sync_addresses(addresses)
+
     prev = None
     if os.path.exists(XRAY_CONF):
         with open(XRAY_CONF) as f:
@@ -1427,7 +1503,7 @@ def api_mig_finish():
 def api_xray_config(req: XrayConfig):
     """Принимает готовый конфиг от бота и применяет его."""
     try:
-        return xray_apply(req.config)
+        return xray_apply(req.config, req.addresses)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

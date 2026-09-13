@@ -37,6 +37,32 @@ async def peer_ip_map():
     return mapping
 
 
+async def peer_addr_map():
+    """uuid → ВСЕ адреса человека в туннеле.
+
+    Их может быть два: адрес пира AmneziaWG и адрес-двойник, с которого ходит
+    Xray. Правила пишутся на адрес, поэтому человеку, у которого есть оба
+    подключения, нужны оба — иначе запрет перестанет действовать сразу после
+    переключения протокола."""
+    ips = await peer_ip_map()
+    try:
+        from database import db
+        from xray import twin_addr
+        with_xray = {r["user_uuid"] for r in await db.list_xray_users()}
+    except Exception:
+        with_xray = set()
+
+    out = {}
+    for uuid_val, ip in ips.items():
+        addrs = [ip]
+        if uuid_val in with_xray:
+            twin = twin_addr(ip)
+            if twin:
+                addrs.append(twin)
+        out[uuid_val] = addrs
+    return out
+
+
 def _dedupe(grants):
     """Две роли легко дают одно и то же правило — в файрвол оно нужно один раз."""
     seen, out = set(), []
@@ -52,13 +78,12 @@ def _dedupe(grants):
 async def build_payload():
     """Список пиров с ограничениями. Кого здесь нет — тот ходит куда угодно."""
     matrix = await db.get_access_matrix()
-    ips = await peer_ip_map()
+    ips = await peer_addr_map()
     peers = []
     for uuid, rec in matrix.items():
-        ip = ips.get(uuid)
-        if not ip:
-            continue
-        peers.append({"ip": ip, "allow": _dedupe(rec["allow"])})
+        allow = _dedupe(rec["allow"])
+        for ip in ips.get(uuid, []):
+            peers.append({"ip": ip, "allow": allow})
     return peers
 
 
