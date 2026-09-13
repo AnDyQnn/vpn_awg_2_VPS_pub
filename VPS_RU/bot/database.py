@@ -740,6 +740,156 @@ class Database:
         wb.save(path)
         return path
 
+    # ------------------------ СВОДНЫЙ ЛИСТ ------------------------
+    @staticmethod
+    def _verdict(profile, user, exceeded):
+        """Строка-вывод по человеку: чтобы таблицу можно было не читать глазами.
+
+        Собирается из того, что реально видно в цифрах: когда человек в сети, что он
+        делает с каналом и создаёт ли проблемы. Ни одного слова наугад."""
+        if not profile:
+            return "Нет данных — активности не было"
+
+        parts = []
+
+        hours = profile["active_hours"]
+        if hours:
+            night = sum(1 for h in hours if h < 7)
+            evening = sum(1 for h in hours if 18 <= h <= 23)
+            day = sum(1 for h in hours if 9 <= h <= 17)
+            if night >= 2:
+                parts.append("ночная активность")
+            elif evening >= 2:
+                parts.append("вечерний")
+            elif day >= 2:
+                parts.append("дневной")
+
+        share = profile["upload_share"]
+        avg = profile["avg_packet"]
+        if share >= 40:
+            parts.append("профиль раздачи")
+        elif avg and avg < 500:
+            parts.append("мелкие пакеты, похоже на торрент")
+        else:
+            parts.append("потребление")
+
+        if exceeded:
+            parts.append(f"превышений лимита: {exceeded}")
+        elif profile["hours_seen"] >= 24:
+            parts.append("стабилен")
+
+        gb = (profile["bytes_in"] + profile["bytes_out"]) / 1024 ** 3
+        if gb >= 0.1:
+            parts.append(f"{gb:.1f} ГБ за период")
+
+        text = ", ".join(parts)
+        return text[:1].upper() + text[1:] if text else "Активности не было"
+
+    async def export_summary_to_excel(self, path, days=30):
+        """Одна страница, строка на человека: объёмы, поведение и вывод текстом.
+
+        Раньше выгрузка делала отдельный лист на каждого — тридцать листов, которые
+        никто не открывал. Здесь всё в одной таблице, с фильтром по колонкам.
+        """
+        users = await self.get_all_users()
+        limits = await self.get_peer_limits()
+        common_limit = int(await self.get_setting("pps_limit") or 5000)
+
+        # адреса пиров берём у узла: в базе их нет, а в таблице они полезны
+        peer_ips = {}
+        try:
+            from utils import api_session, WG_API_URL
+            async with api_session() as session:
+                async with session.get(f"{WG_API_URL}/peers", timeout=5) as r:
+                    if r.status == 200:
+                        for p in await r.json():
+                            peer_ips[p.get("uuid")] = (p.get("allowed_ips") or "").split("/")[0]
+        except Exception:
+            pass
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Сводка"
+
+        headers = [
+            "Имя", "Адрес", "Статус", "Лимит", "Скачал, ГБ", "Отдал, ГБ",
+            "Доля отдачи, %", "Средний пакет, Б", "Пик пак/с", "Превышений",
+            "Окно активности", "Дни недели", "Последняя активность", "Вывод",
+        ]
+        ws.append(headers)
+        widths = [18, 14, 10, 18, 12, 11, 14, 17, 11, 12, 20, 16, 20, 52]
+        for i, w in enumerate(widths, start=1):
+            ws.column_dimensions[get_column_letter(i)].width = w
+
+        DOW = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+        row = 2
+        total_in = total_out = 0
+
+        for u in users:
+            uuid_val = u["uuid"]
+            profile = await self.get_user_profile(uuid_val, days=days)
+            exceeded = await self.fetch_val(
+                """SELECT COUNT(*) FROM pps_events WHERE user_uuid=$1
+                   AND started_at > NOW() - ($2 || ' days')::interval""",
+                uuid_val, str(days)) or 0
+
+            rule = limits.get(uuid_val)
+            if not rule:
+                limit_text = f"общий, {common_limit}"
+            elif rule["mode"] == "unlimited":
+                limit_text = "без ограничений"
+            else:
+                limit_text = f"свой, {rule['limit_pps']}"
+
+            b_in = profile["bytes_in"] if profile else 0
+            b_out = profile["bytes_out"] if profile else 0
+            total_in += b_in
+            total_out += b_out
+
+            window = ""
+            if profile and profile["active_hours"]:
+                hrs = profile["active_hours"]
+                window = f"{min(hrs):02d}:00–{max(hrs) + 1:02d}:00"
+            dows = ""
+            if profile and profile["top_weekdays"]:
+                dows = ", ".join(DOW[d] for d in profile["top_weekdays"])
+
+            ws.cell(row=row, column=1, value=u["name"])
+            ws.cell(row=row, column=2, value=peer_ips.get(uuid_val, ""))
+            st = ws.cell(row=row, column=3, value="Активен" if u["is_active"] else "Пауза")
+            st.fill = _OK_FILL if u["is_active"] else _OFF_FILL
+            st.alignment = Alignment(horizontal="center")
+            ws.cell(row=row, column=4, value=limit_text)
+            ws.cell(row=row, column=5, value=round(b_in / 1024 ** 3, 2))
+            ws.cell(row=row, column=6, value=round(b_out / 1024 ** 3, 2))
+            ws.cell(row=row, column=7, value=profile["upload_share"] if profile else 0)
+            ws.cell(row=row, column=8, value=profile["avg_packet"] if profile else 0)
+            ws.cell(row=row, column=9, value=profile["peak_pps"] if profile else 0)
+            ex = ws.cell(row=row, column=10, value=exceeded)
+            if exceeded:
+                ex.fill = _OFF_FILL
+            ws.cell(row=row, column=11, value=window)
+            ws.cell(row=row, column=12, value=dows)
+            ws.cell(row=row, column=13,
+                    value=dt_to_moscow(u["last_active_at"]).strftime("%d.%m.%Y %H:%M")
+                    if u.get("last_active_at") else "нет данных")
+            v = ws.cell(row=row, column=14, value=self._verdict(profile, u, exceeded))
+            v.alignment = Alignment(wrap_text=True, vertical="top")
+            row += 1
+
+        # итоговая строка
+        ws.cell(row=row, column=1, value="ИТОГО").font = Font(bold=True)
+        ws.cell(row=row, column=5, value=round(total_in / 1024 ** 3, 2)).font = Font(bold=True)
+        ws.cell(row=row, column=6, value=round(total_out / 1024 ** 3, 2)).font = Font(bold=True)
+        ws.cell(row=row, column=14,
+                value=f"Пользователей: {len(users)} · период: {days} дн.").font = Font(bold=True)
+        for col in range(1, len(headers) + 1):
+            ws.cell(row=row, column=col).fill = _TOT_FILL
+
+        _style_sheet(ws)
+        wb.save(path)
+        return path
+
     async def export_logs_to_excel(self, path):
         users = await self.get_all_users()
         wb = Workbook()

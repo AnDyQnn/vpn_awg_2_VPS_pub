@@ -731,8 +731,10 @@ async def backup_now(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def download_logs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.callback_query.answer("Генерация логов...", show_alert=True)
     try:
-        path = await db.export_logs_to_excel("/volumes/backups/vpn_logs.xlsx")
-        await context.bot.send_document(chat_id=ADMIN_ID, document=open(path, "rb"), caption="📑 Логи трафика (Excel)")
+        # Раньше выгрузка делала отдельный лист на каждого — тридцать листов, которые
+        # никто не открывал. Теперь одна сводная страница с аналитикой.
+        path = await db.export_summary_to_excel("/volumes/backups/vpn_summary.xlsx")
+        await context.bot.send_document(chat_id=ADMIN_ID, document=open(path, "rb"), caption="📑 Сводка по пользователям (Excel)")
     except Exception as e: await context.bot.send_message(chat_id=ADMIN_ID, text=f"❌ Ошибка генерации: {e}")
 
 async def restore_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
