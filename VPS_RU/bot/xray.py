@@ -75,6 +75,33 @@ async def ensure_keys():
     return await settings()
 
 
+# Смещение адреса-двойника. Человек на Xray отправляет трафик не со своего
+# туннельного адреса, а с его отражения во второй половине сети:
+# 10.13.13.6 → 10.13.13.134.
+#
+# Почему не тот же адрес, как задумывалось сначала: отправлять можно только с
+# адреса, который принадлежит самому узлу. Адрес пира лежит ЗА туннелем — ответы
+# на него ушли бы в туннель, к выключенному клиенту, а не в Xray. Проверено на
+# стенде: с чужого адреса не уходит ни один запрос.
+#
+# Двойник решает это, ничего не ломая: он из той же туннельной сети, поэтому
+# правила, написанные на сеть целиком — учёт, роли, фильтры, маршрут в Германию —
+# накрывают его сами. А номер сохраняется, и человека видно по адресу как раньше.
+XRAY_ADDR_OFFSET = 128
+
+
+def twin_addr(peer_ip: str):
+    """Адрес-двойник для Xray. Пусто, если адрес не из нижней половины сети."""
+    try:
+        parts = [int(x) for x in peer_ip.split(".")]
+        if len(parts) != 4 or not 1 <= parts[3] < XRAY_ADDR_OFFSET:
+            return ""
+        parts[3] += XRAY_ADDR_OFFSET
+        return ".".join(str(x) for x in parts)
+    except Exception:
+        return ""
+
+
 async def peer_ip_map():
     """uuid человека → его адрес в туннеле. Адрес живёт в конфиге WireGuard,
     поэтому спрашиваем узел."""
@@ -96,17 +123,18 @@ async def build_config():
     ips = await peer_ip_map()
 
     clients, outbounds, rules = [], [], []
-    skipped = []
+    addresses, skipped = [], []
     for person in people:
         # Приостановленный человек в конфиг не попадает вовсе — отключает
         # сервер, а не ссылка: иначе он работал бы на старом профиле до
         # следующего обновления подписки.
         if not person["is_active"]:
             continue
-        ip = ips.get(person["user_uuid"])
-        if not ip:
+        twin = twin_addr(ips.get(person["user_uuid"]) or "")
+        if not twin:
             skipped.append(person["name"])
             continue
+        addresses.append(twin)
 
         tag = f"out-{person['user_uuid'][:8]}"
         clients.append({
@@ -118,8 +146,8 @@ async def build_config():
             "protocol": "freedom",
             "tag": tag,
             # Вот он, ключевой параметр: трафик этого человека уходит с его
-            # собственного туннельного адреса.
-            "sendThrough": ip,
+            # собственного адреса, а не с общего адреса сервера.
+            "sendThrough": twin,
         })
         rules.append({
             "type": "field",
@@ -152,20 +180,23 @@ async def build_config():
         "outbounds": outbounds + [{"protocol": "freedom", "tag": "direct"}],
         "routing": {"domainStrategy": "AsIs", "rules": rules},
     }
-    return config, (f"пропущены без адреса: {', '.join(skipped)}" if skipped else "")
+    return config, addresses, (f"пропущены без адреса: {', '.join(skipped)}"
+                               if skipped else "")
 
 
 async def apply_config(reason=""):
     """Отдаёт собранный конфиг узлу. Узел применяет его с откатом: если новый
     конфиг не поднимется, вернётся прежний."""
-    config, note = await build_config()
+    config, addresses, note = await build_config()
     if not config:
         return False, note or "конфиг не собрался"
 
     try:
         async with api_session() as session:
             async with session.post(f"{WG_API_URL}/xray/config",
-                                    json={"config": config}, timeout=30) as r:
+                                    json={"config": config,
+                                          "addresses": addresses},
+                                    timeout=30) as r:
                 data = await r.json() if r.status == 200 else await r.text()
                 if r.status != 200:
                     return False, f"узел отклонил конфиг: {data}"

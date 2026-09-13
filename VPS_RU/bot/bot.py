@@ -1065,6 +1065,18 @@ async def post_init(application):
     except Exception as e:
         print(f"Фильтры: не удалось применить: {e}")
 
+    # Xray — по той же причине, что фильтры и роли: контейнер узла при
+    # перезапуске теряет и адреса людей, и правила учёта. Пока конфиг не
+    # применён заново, человек на Xray просто не выйдет в сеть.
+    try:
+        import xray
+        state = await xray.status()
+        if state.get("xray", {}).get("enabled"):
+            ok, msg = await xray.apply_config("старт бота")
+            print(f"Xray: {msg}" if ok else f"Xray: {msg}")
+    except Exception as e:
+        print(f"Xray: не удалось применить конфиг при старте: {e}")
+
     tasks =[
         asyncio.create_task(alert_loop(application)),
         asyncio.create_task(cleanup_peers()),

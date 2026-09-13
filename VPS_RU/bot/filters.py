@@ -55,14 +55,17 @@ async def apply_filters(reason: str = ""):
     порт и подтягивает нужные списки доменов — только те, что кем-то включены."""
     try:
         by_uuid = await db.get_all_filters()
-        ips = await peer_ip_map()
+        from acl import peer_addr_map
+        ips = await peer_addr_map()
     except Exception as e:
         return False, f"не удалось собрать фильтры: {e}"
 
     clients = {}
     for uuid_val, cats in by_uuid.items():
-        ip = ips.get(uuid_val)
-        if ip and cats:
+        if not cats:
+            continue
+        # Оба адреса человека: фильтр должен работать и по AmneziaWG, и по Xray.
+        for ip in ips.get(uuid_val, []):
             clients[ip] = cats
 
     try:
