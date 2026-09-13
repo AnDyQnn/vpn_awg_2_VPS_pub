@@ -228,6 +228,20 @@ class Database:
             await self.execute(
                 "CREATE INDEX IF NOT EXISTS idx_traffic_hourly_hour ON traffic_hourly(hour);")
 
+            # --- ФИЛЬТРАЦИЯ САЙТОВ ---
+            # Категории на человека, а не на роль: роль про домашние сервисы,
+            # фильтр про внешний интернет, и людям они назначаются по разной
+            # логике. Схема ролей к фильтрам готова (role_grants.kind), но
+            # связывать их сейчас значило бы решать за владельца.
+            await self.execute("""
+                CREATE TABLE IF NOT EXISTS user_filters (
+                    user_uuid TEXT REFERENCES users(uuid) ON DELETE CASCADE,
+                    category TEXT,
+                    set_at TIMESTAMP DEFAULT NOW(),
+                    PRIMARY KEY (user_uuid, category)
+                );
+            """)
+
             # --- ДОСТАВКА КЛЮЧА ---
             # Telegram не даёт отметок «прочитано» — их нет в API вовсе, и спорить
             # с этим бесполезно. Поэтому следим не за чтением, а за действиями,
@@ -361,6 +375,36 @@ class Database:
         await self.execute("DELETE FROM pending_retire WHERE old_uuid=$1", old_uuid)
 
     # ------------------------ КОНТРОЛЬ НАГРУЗКИ ------------------------
+    # --- ФИЛЬТРАЦИЯ САЙТОВ -----------------------------------------------
+    async def get_user_filters(self, uuid):
+        rows = await self.fetch_all(
+            "SELECT category FROM user_filters WHERE user_uuid=$1 ORDER BY category", uuid)
+        return [r["category"] for r in rows]
+
+    async def set_user_filter(self, uuid, category, on: bool):
+        if on:
+            await self.execute(
+                "INSERT INTO user_filters (user_uuid, category) VALUES ($1,$2) "
+                "ON CONFLICT DO NOTHING", uuid, category)
+        else:
+            await self.execute(
+                "DELETE FROM user_filters WHERE user_uuid=$1 AND category=$2",
+                uuid, category)
+
+    async def get_all_filters(self):
+        """uuid -> список категорий. Кого здесь нет — у того фильтров нет,
+        и его запросы узел не перехватывает вовсе."""
+        rows = await self.fetch_all(
+            "SELECT user_uuid, category FROM user_filters ORDER BY user_uuid")
+        out = {}
+        for r in rows:
+            out.setdefault(r["user_uuid"], []).append(r["category"])
+        return out
+
+    async def count_filtered_users(self):
+        return await self.fetch_val(
+            "SELECT COUNT(DISTINCT user_uuid) FROM user_filters") or 0
+
     # --- ДОСТАВКА КЛЮЧА --------------------------------------------------
     async def delivery_sent(self, uuid, tg_id):
         """Конфиг ушёл в чат. Стадии сбрасываются: доставка началась заново

@@ -43,6 +43,9 @@ COPY run_api.sh /run_api.sh
 RUN chmod +x /run_api.sh && chmod +x /app/update_ru_ips.sh
 
 COPY api.py /app/api.py
+COPY dnsfilter.py /app/dnsfilter.py
+COPY blocked.html /app/blocked.html
+COPY update_dns_lists.sh /app/update_dns_lists.sh
 WORKDIR /app
 
 ENTRYPOINT ["/run_api.sh"]

@@ -178,6 +178,9 @@ class AclPeer(BaseModel):
 class AclApply(BaseModel):
     peers: List[AclPeer] = []
 
+class DnsFilters(BaseModel):
+    clients: dict = {}          # адрес пира -> список категорий
+
 def run_cmd(cmd):
     try:
         if isinstance(cmd, list):
@@ -336,6 +339,7 @@ def setup_network():
     restore_peers()
     rebuild_accounting()
     rebuild_acl()
+    rebuild_dns_filters()
 
 # --- УЧЁТ ПАКЕТОВ ПО ПИРАМ -------------------------------------------------
 # WireGuard считает по пирам только БАЙТЫ — пакетов он не отдаёт вовсе. А упирается
@@ -506,6 +510,77 @@ def rebuild_acl():
     apply_acl(peers)
 
 
+# --- ФИЛЬТРАЦИЯ САЙТОВ ПО КАТЕГОРИЯМ --------------------------------------
+# Фильтрует отдельный процесс (dnsfilter.py), здесь только две вещи: состояние
+# на диске и заворот 53-го порта на себя для тех, у кого фильтры включены.
+#
+# Заворот нужен потому, что в уже выданных конфигах записан внешний DNS. Менять
+# их означало бы перевыпуск всем — вместо этого узел молча забирает запросы себе,
+# и только у тех, кого это касается. Ни один существующий конфиг не меняется.
+DNS_CHAIN = "DNS_REDIR"
+DNS_STATE_FILE = f"{CONF_DIR}/dns_filter.json"
+DNS_LOCAL_IP = "10.13.13.1"
+
+
+def _dns_ensure_chain():
+    subprocess.run(f"iptables -t nat -N {DNS_CHAIN}", shell=True, stderr=subprocess.DEVNULL)
+    subprocess.run(f"iptables -t nat -F {DNS_CHAIN}", shell=True, stderr=subprocess.DEVNULL)
+    hook = f"-i wg0 -j {DNS_CHAIN}"
+    check = subprocess.run(f"iptables -t nat -C PREROUTING {hook}", shell=True,
+                           stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+    if check.returncode != 0:
+        subprocess.run(f"iptables -t nat -I PREROUTING 1 {hook}", shell=True,
+                       stderr=subprocess.DEVNULL)
+
+
+def apply_dns_filters(clients):
+    """clients: {адрес: [категории]}. Пустой список категорий = фильтров нет."""
+    _dns_ensure_chain()
+    redirected = 0
+    for ip, cats in (clients or {}).items():
+        if not cats:
+            continue
+        for proto in ("udp", "tcp"):
+            subprocess.run(
+                f"iptables -t nat -A {DNS_CHAIN} -s {ip} -p {proto} --dport 53 "
+                f"-j DNAT --to-destination {DNS_LOCAL_IP}:53",
+                shell=True, stderr=subprocess.DEVNULL)
+        redirected += 1
+    return redirected
+
+
+def save_dns_state(clients):
+    try:
+        with open(DNS_STATE_FILE, "w") as f:
+            json.dump({"clients": clients, "saved_at": int(time.time())}, f)
+    except Exception as e:
+        print(f"DNS state save warning: {e}")
+
+
+def read_dns_state():
+    try:
+        if os.path.exists(DNS_STATE_FILE):
+            with open(DNS_STATE_FILE) as f:
+                return (json.load(f) or {}).get("clients", {})
+    except Exception as e:
+        print(f"DNS state read warning: {e}")
+    return {}
+
+
+def refresh_dns_lists(clients):
+    """Тянет списки только включённых категорий, в фоне — загрузка не должна
+    задерживать ответ панели."""
+    cats = sorted({c for v in (clients or {}).values() for c in v})
+    if not cats:
+        return
+    subprocess.Popen(f"bash /app/update_dns_lists.sh '{' '.join(cats)}'",
+                     shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def rebuild_dns_filters():
+    apply_dns_filters(read_dns_state())
+
+
 def restore_peers():
     if not os.path.exists(CONF_FILE): return
     try:
@@ -673,6 +748,41 @@ def get_acl():
         return {"saved_at": state.get("saved_at"),
                 "peers": state.get("peers", []),
                 "chain": out}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/dns/filters")
+def set_dns_filters(req: DnsFilters):
+    """Принимает готовую раскладку «кому какие категории» и применяет её.
+
+    Узел не знает ни про людей, ни про роли — только про адреса: кто есть кто,
+    знает бот, у которого база. Здесь заворачивается порт и сохраняется состояние,
+    а сам разбор запросов делает отдельный процесс."""
+    try:
+        clients = {str(k): list(v) for k, v in (req.clients or {}).items()}
+        count = apply_dns_filters(clients)
+        save_dns_state(clients)
+        refresh_dns_lists(clients)
+        return {"status": "ok", "filtered": count}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/dns/filters")
+def get_dns_filters():
+    """Что стоит сейчас: раскладка по адресам и размеры загруженных списков."""
+    try:
+        lists = {}
+        cache = f"{CONF_DIR}/cache/dns"
+        if os.path.isdir(cache):
+            for name in os.listdir(cache):
+                if name.endswith(".txt"):
+                    path = os.path.join(cache, name)
+                    with open(path, encoding="utf-8", errors="ignore") as f:
+                        lists[name[:-4]] = sum(1 for line in f
+                                               if line.strip() and not line.startswith("#"))
+        return {"clients": read_dns_state(), "lists": lists}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

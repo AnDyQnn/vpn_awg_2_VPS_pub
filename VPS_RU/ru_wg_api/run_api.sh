@@ -29,5 +29,31 @@ fi
   done
 ) &
 
+# DNS-фильтр: отдельный процесс. Поднимается всегда, но пока никому не включены
+# категории, он просто пересылает запросы наверх и ничего не держит в памяти.
+# Заворачивать на него 53-й порт узел будет только для тех, у кого фильтры есть.
+/opt/venv/bin/python3 -u /app/dnsfilter.py &
+
+# Обновление списков категорий раз в 12 часов — только тех, что реально включены.
+(
+  while true; do
+    CATS="$(/opt/venv/bin/python3 - <<'PY'
+import json, os
+p = "/etc/amnezia/amneziawg/dns_filter.json"
+cats = set()
+try:
+    with open(p) as f:
+        for v in (json.load(f) or {}).get("clients", {}).values():
+            cats.update(v)
+except Exception:
+    pass
+print(" ".join(sorted(cats)))
+PY
+)"
+    [ -n "$CATS" ] && bash /app/update_dns_lists.sh "$CATS"
+    sleep 43200
+  done
+) &
+
 # Запуск API
 exec /opt/venv/bin/python3 -u -m uvicorn api:app --host 0.0.0.0 --port 8000 --app-dir /app
