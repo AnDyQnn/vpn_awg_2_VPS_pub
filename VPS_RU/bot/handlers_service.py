@@ -156,6 +156,22 @@ async def service_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     else "никому не включена"))
 
     lines.append("")
+    # Протоколы — про способ подключения, а не про людей, поэтому отдельной
+    # строкой и отдельным разделом.
+    try:
+        import xray
+        on_xray = await db.count_xray_users()
+        st = await xray.status()
+        awg_on = st.get("awg", {}).get("enabled", True)
+        xr_on = st.get("xray", {}).get("enabled", False)
+        lines.append("🔀 *Протоколы:* AmneziaWG "
+                     + ("включён" if awg_on else "выключен")
+                     + ", Xray " + ("включён" if xr_on else "выключен")
+                     + (f", на Xray {on_xray} чел." if on_xray else ""))
+    except Exception:
+        lines.append("🔀 *Протоколы:* узел не ответил")
+
+    lines.append("")
     lines.append(f"🆘 *Обращения:* {'открытых нет' if not tickets else f'{tickets} открытых'}")
 
     main_label = ("🚦 Включить ограничение" if mode == "observe"
@@ -168,7 +184,7 @@ async def service_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton(main_label, callback_data="svc_mode_toggle")],
         [InlineKeyboardButton("📊 Нагрузка", callback_data="svc_load"),
          InlineKeyboardButton("⚖️ Лимиты", callback_data="svc_limits")],
-        [InlineKeyboardButton("🔑 Переезд на новый ключ", callback_data="mig_menu")],
+        [InlineKeyboardButton("🔀 Протоколы", callback_data="proto_menu")],
         [InlineKeyboardButton("🛡 Доступы · роли", callback_data="roles_menu"),
          InlineKeyboardButton("🧹 Фильтры", callback_data="flt_menu")],
         [InlineKeyboardButton(

@@ -17,7 +17,7 @@ from utils import (
     get_moscow_now, dt_to_moscow, broadcast_message, DE_AGENT_URL, WG_API_URL,
     is_agent,
     ADMIN_ID, escape_md, GOSUSLUGI_APP_WARNING, analyze_resource, CONFIGS_DIR, ROUTING_VERSION,
-    get_update_info
+    get_update_info, state_data
 )
 
 # --- SPLIT-TUNNEL: дата-центро-враждебные РФ-сервисы (мимо VPN, через домашний канал) ---
@@ -917,10 +917,17 @@ async def load_collector_loop(app):
 
                         # Счётчики могли обнулиться — контейнер перезапускали.
                         rec = merged.setdefault(uuid_val, [0, 0, 0, 0])
-                        rec[0] += max(0, cur["rx_packets"] - old["rx_packets"])
-                        rec[1] += max(0, cur["tx_packets"] - old["tx_packets"])
+                        d_in = max(0, cur["rx_packets"] - old["rx_packets"])
+                        d_out = max(0, cur["tx_packets"] - old["tx_packets"])
+                        rec[0] += d_in
+                        rec[1] += d_out
                         rec[2] += max(0, cur["rx_bytes"] - old["rx_bytes"])
                         rec[3] += max(0, cur["tx_bytes"] - old["tx_bytes"])
+                        # Отметка живого трафика по адресу. У Xray нет
+                        # рукопожатия, и это единственный признак, по которому
+                        # видно, что человек сейчас на связи.
+                        if d_in or d_out:
+                            state_data["addr_seen"][ip] = time.time()
 
                     for uuid_val, (d_pkt_in, d_pkt_out, d_byt_in, d_byt_out) in merged.items():
                         pps = (d_pkt_in + d_pkt_out) / dt

@@ -73,6 +73,11 @@ from handlers_keylife import (
     delete_confirm, do_delete
 )
 from delivery import delivery_screen
+from handlers_xray import (
+    protocols_menu, awg_screen, xray_screen, switch_confirm, switch_do,
+    apply_now as xray_apply_now, apps_screen, apps_toggle, move_screen,
+    connections_screen, issue_xray, send_link, drop_awg, why_locked,
+)
 from handlers_migration import (
     migration_menu, migration_start, migration_issue, migration_send,
     migration_finish_confirm, migration_finish, migration_abort_confirm,
@@ -774,6 +779,33 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "mig_finish_ok": await migration_finish(update, context); return
     if data == "mig_abort": await migration_abort_confirm(update, context); return
     if data == "mig_abort_ok": await migration_abort(update, context); return
+
+    # --- Протоколы: AmneziaWG и Xray ---
+    if data == "proto_menu": await protocols_menu(update, context); return
+    if data == "proto_awg": await awg_screen(update, context); return
+    if data == "proto_xray": await xray_screen(update, context); return
+    if data == "proto_on_awg": await switch_do(update, context, "awg", True); return
+    if data == "proto_on_xray": await switch_do(update, context, "xray", True); return
+    # offok проверяется раньше off_: короткий префикс перехватил бы длинный
+    if data.startswith("proto_offok_"):
+        await switch_do(update, context, data.split("_")[-1], False); return
+    if data.startswith("proto_off_"):
+        await switch_confirm(update, context, data.split("_")[-1]); return
+
+    if data == "xr_apply": await xray_apply_now(update, context); return
+    if data == "xr_apps": await apps_screen(update, context); return
+    if data == "xr_apps_ok": await apps_toggle(update, context); return
+    if data == "xr_move": await move_screen(update, context); return
+    if data.startswith("xr_conn_"):
+        await connections_screen(update, context, data.split("_", 2)[2]); return
+    if data.startswith("xr_issue_"):
+        await issue_xray(update, context, data.split("_", 2)[2]); return
+    if data.startswith("xr_send_"):
+        await send_link(update, context, data.split("_", 2)[2]); return
+    if data.startswith("xr_dropawg_"):
+        await drop_awg(update, context, data.split("_", 2)[2]); return
+    if data.startswith("xr_why_"):
+        await why_locked(update, context, data.split("_", 2)[2]); return
 
     # --- Фильтрация сайтов ---
     if data == "flt_menu": await filters_menu(update, context); return
