@@ -88,6 +88,9 @@ services:
     volumes:
       - ./volumes:/volumes
       - ./VERSION:/app/VERSION_FILE:ro
+      # Ченджлог лежит в корне репозитория, а собирается образ из папки bot —
+      # поэтому монтируем файлом, а не копируем при сборке.
+      - ../CHANGELOG.md:/app/CHANGELOG.md:ro
     restart: always
     logging:
       driver: json-file
