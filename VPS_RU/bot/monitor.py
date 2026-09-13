@@ -552,6 +552,36 @@ async def de_self_healing_loop(app):
                 except Exception: pass
 
 # ------------------------ EXPIRATION LOGIC ------------------------
+async def _ask_owner(app, uuid_val, reason, last_handshake=None, was_expires_at=None):
+    """Ставит ключ на паузу и задаёт владельцу вопрос, что с ним делать.
+
+    Пауза — безопасное состояние: доступа нет, но адрес и сам ключ на месте, поэтому
+    любое решение ещё обратимо. Вопрос кладётся в базу, а сообщение — лишь способ
+    его показать: даже если чат почистится или бот перезапустится, вопрос останется
+    в разделе «Ждут решения», а кнопки в старом сообщении продолжат работать.
+    """
+    from handlers_keylife import decision_text, decision_keyboard
+
+    try:
+        async with api_session() as session:
+            await session.post(f"{WG_API_URL}/peers/{uuid_val}/pause")
+    except Exception:
+        pass
+    await db.execute("UPDATE users SET is_active=FALSE WHERE uuid=$1", uuid_val)
+    await db.add_pending_decision(uuid_val, reason, last_handshake, was_expires_at)
+
+    if not ADMIN_ID:
+        return
+    try:
+        # Намеренно не через notify_admin: тот регистрирует сообщение на удаление
+        # в полночь, а вопрос с кнопками не должен исчезать сам.
+        await app.bot.send_message(ADMIN_ID, await decision_text(uuid_val),
+                                   reply_markup=decision_keyboard(uuid_val),
+                                   parse_mode="Markdown")
+    except Exception as e:
+        print(f"KeyLife: не удалось отправить вопрос: {e}")
+
+
 async def expiration_loop(app):
     while True:
         try:
@@ -560,18 +590,33 @@ async def expiration_loop(app):
             for u in users:
                 if u['is_active'] and u['expires_at'] and u['expires_at'] < now:
                     uuid_val, safe_name = u['uuid'], escape_md(u['name'])
-                    try:
-                        async with api_session() as session:
-                            await session.post(f"{WG_API_URL}/peers/{uuid_val}/pause")
-                    except Exception: pass
-                    
-                    await db.execute("UPDATE users SET is_active=FALSE WHERE uuid=$1", uuid_val)
-                    await db.log_event("Expiration", f"Key {u['name']} expired and was paused.")
-                    
-                    if ADMIN_ID: await notify_admin(app, text=f"⏳ **Ключ просрочен!**\n\nПользователь: **{safe_name}**", parse_mode="Markdown")
-                    tg_ids = u.get('tg_ids',[])
+
+                    # Владелец мог заранее сказать «этот продлевать само» — тогда
+                    # ключ не отключается вовсе и вопрос не задаётся.
+                    policy = await db.get_key_policy(uuid_val)
+                    if policy.get("mode") == "auto" and policy.get("extend_days"):
+                        days = int(policy["extend_days"])
+                        await db.execute(
+                            "UPDATE users SET expires_at=$2 WHERE uuid=$1",
+                            uuid_val, now + timedelta(days=days))
+                        await db.log_event(
+                            "KeyLife", f"Ключ {u['name']} продлён автоматически на {days} дн.")
+                        if ADMIN_ID:
+                            await notify_admin(
+                                app,
+                                text=f"♻️ Ключ **{safe_name}** продлён автоматически "
+                                     f"на {days} дн. — так было решено в прошлый раз.",
+                                parse_mode="Markdown")
+                        continue
+
+                    await _ask_owner(app, uuid_val, "expired",
+                                     last_handshake=u.get('last_active_at'),
+                                     was_expires_at=u.get('expires_at'))
+                    await db.log_event("Expiration",
+                                       f"Key {u['name']} expired and was paused.")
+
                     kb_client = InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Личный кабинет", callback_data="client_menu")]])
-                    for tid in tg_ids:
+                    for tid in u.get('tg_ids', []):
                         try: await app.bot.send_message(chat_id=tid, text=f"⏳ Ваш VPN-ключ **{safe_name}** просрочен и был отключен.", parse_mode="Markdown", reply_markup=kb_client)
                         except Exception: pass
         except Exception as e: print(f"Expiration loop error: {e}")
@@ -579,23 +624,26 @@ async def expiration_loop(app):
 
 # ------------------------ INACTIVITY LOGIC ------------------------
 async def inactivity_loop(app):
+    """Спящие ключи. Автопродление сюда намеренно не применяется: оно про срок,
+    а спячка — про то, что ключом не пользуются. Продлевать само то, чем никто не
+    пользуется, значит вечно держать занятым адрес и живой ключ."""
     while True:
         try:
+            from handlers_keylife import dormant_days
+            threshold = await dormant_days()
             users = await db.get_all_users()
             now = datetime.utcnow()
             for u in users:
                 if u.get('is_active', False):
+                    # Свежий ключ без единого подключения считается от даты выдачи —
+                    # иначе выданный и ещё не поставленный ключ «уснул» бы сразу.
                     last_active = u.get('last_active_at') or u.get('created_at')
-                    if last_active and (now - last_active).days >= 30:
-                        uuid_val, safe_name = u['uuid'], escape_md(u['name'])
-                        try:
-                            async with api_session() as session:
-                                await session.post(f"{WG_API_URL}/peers/{uuid_val}/pause")
-                        except Exception: pass
-                        
-                        await db.execute("UPDATE users SET is_active=FALSE WHERE uuid=$1", uuid_val)
-                        await db.log_event("Inactivity", f"Key {u['name']} was paused due to 30 days of inactivity.")
-                        if ADMIN_ID: await notify_admin(app, text=f"💤 **Отключен за бездействие!**\n\nКлюч: **{safe_name}**", parse_mode="Markdown")
+                    if last_active and (now - last_active).days >= threshold:
+                        await _ask_owner(app, u['uuid'], "dormant",
+                                         last_handshake=u.get('last_active_at'))
+                        await db.log_event(
+                            "Inactivity",
+                            f"Key {u['name']} paused after {threshold} days of inactivity.")
         except Exception as e: print(f"Inactivity loop error: {e}")
         await asyncio.sleep(86400) 
 

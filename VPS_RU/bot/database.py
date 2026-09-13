@@ -228,6 +228,37 @@ class Database:
             await self.execute(
                 "CREATE INDEX IF NOT EXISTS idx_traffic_hourly_hour ON traffic_hourly(hour);")
 
+            # --- СРОК И СПЯЧКА КЛЮЧА ---
+            # Решение о судьбе ключа принимает владелец, а не таймер. Поэтому оно
+            # живёт в базе, а не в сообщении Telegram: перезапуск бота не должен
+            # терять вопрос, а кнопки в старом сообщении обязаны работать и после.
+            await self.execute("""
+                CREATE TABLE IF NOT EXISTS pending_decisions (
+                    id SERIAL PRIMARY KEY,
+                    user_uuid TEXT REFERENCES users(uuid) ON DELETE CASCADE,
+                    reason TEXT,
+                    last_handshake TIMESTAMP,
+                    was_expires_at TIMESTAMP,
+                    created_at TIMESTAMP DEFAULT NOW(),
+                    resolved_at TIMESTAMP,
+                    resolution TEXT
+                );
+            """)
+            # Один нерешённый вопрос на ключ. Частичный индекс, а не UNIQUE на колонку:
+            # решённые записи остаются историей и не должны мешать новым.
+            await self.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_open "
+                "ON pending_decisions(user_uuid) WHERE resolved_at IS NULL;")
+            # Что делать в следующий раз: спросить снова или продлить самому.
+            await self.execute("""
+                CREATE TABLE IF NOT EXISTS key_policy (
+                    user_uuid TEXT PRIMARY KEY REFERENCES users(uuid) ON DELETE CASCADE,
+                    mode TEXT DEFAULT 'ask',
+                    extend_days INTEGER,
+                    updated_at TIMESTAMP DEFAULT NOW()
+                );
+            """)
+
             # --- РОЛИ: доступы внутри туннеля ---
             # Ролей у человека может быть несколько, и права складываются. «Нет роли»
             # означает полный доступ — противоречия нет: относительно этого состояния
@@ -309,6 +340,49 @@ class Database:
         await self.execute("DELETE FROM pending_retire WHERE old_uuid=$1", old_uuid)
 
     # ------------------------ КОНТРОЛЬ НАГРУЗКИ ------------------------
+    # --- СРОК И СПЯЧКА КЛЮЧА --------------------------------------------
+    async def add_pending_decision(self, uuid, reason, last_handshake=None,
+                                   was_expires_at=None):
+        """Ставит вопрос по ключу. Если вопрос уже открыт — второй раз не задаём."""
+        await self.execute(
+            "INSERT INTO pending_decisions (user_uuid, reason, last_handshake, was_expires_at) "
+            "SELECT $1,$2,$3,$4 WHERE NOT EXISTS ("
+            "  SELECT 1 FROM pending_decisions WHERE user_uuid=$1 AND resolved_at IS NULL)",
+            uuid, reason, last_handshake, was_expires_at)
+
+    async def get_pending_decisions(self):
+        rows = await self.fetch_all("""
+            SELECT d.id, d.user_uuid, d.reason, d.last_handshake, d.was_expires_at,
+                   d.created_at, u.name
+            FROM pending_decisions d JOIN users u ON u.uuid = d.user_uuid
+            WHERE d.resolved_at IS NULL ORDER BY d.created_at
+        """)
+        return [dict(r) for r in rows]
+
+    async def get_pending_decision(self, uuid):
+        rows = await self.fetch_all(
+            "SELECT id, user_uuid, reason, last_handshake, was_expires_at, created_at "
+            "FROM pending_decisions WHERE user_uuid=$1 AND resolved_at IS NULL", uuid)
+        return dict(rows[0]) if rows else None
+
+    async def resolve_decision(self, uuid, resolution):
+        await self.execute(
+            "UPDATE pending_decisions SET resolved_at=NOW(), resolution=$2 "
+            "WHERE user_uuid=$1 AND resolved_at IS NULL", uuid, resolution)
+
+    async def get_key_policy(self, uuid):
+        """Нет записи — значит спрашивать. Умолчание намеренно осторожное:
+        молча продлевать ключ можно только по явному решению владельца."""
+        rows = await self.fetch_all(
+            "SELECT mode, extend_days FROM key_policy WHERE user_uuid=$1", uuid)
+        return dict(rows[0]) if rows else {"mode": "ask", "extend_days": None}
+
+    async def set_key_policy(self, uuid, mode, extend_days=None):
+        await self.execute(
+            "INSERT INTO key_policy (user_uuid, mode, extend_days, updated_at) "
+            "VALUES ($1,$2,$3,NOW()) ON CONFLICT (user_uuid) DO UPDATE SET "
+            "mode=$2, extend_days=$3, updated_at=NOW()", uuid, mode, extend_days)
+
     # --- РОЛИ ------------------------------------------------------------
     async def list_roles(self):
         """Список ролей с двумя числами: сколько правил внутри и сколько человек."""
