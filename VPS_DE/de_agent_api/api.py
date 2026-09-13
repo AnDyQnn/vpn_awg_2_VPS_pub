@@ -2,11 +2,31 @@ import os
 import subprocess
 import psutil
 import tarfile
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-app = FastAPI()
+# --- ДОСТУП К API ---
+# Агент умеет перенастроить туннель, отдать конфиги и перезагрузить хост, а порт 8000
+# смотрит в туннель — то есть был доступен любому пиру. Закрыто двумя рубежами:
+#   1) правила файрвола в run_api.sh (пускают только мастера 10.13.13.1);
+#   2) общий токен ниже.
+# Токен необязателен: без него агент работает как раньше, чтобы обновление не рвало связь
+# мастера с агентом, если .env на одной из нод обновили позже.
+API_TOKEN = os.getenv("API_TOKEN", "").strip()
+
+
+def verify_token(request: Request):
+    if not API_TOKEN:
+        return
+    if request.headers.get("X-Api-Key", "") != API_TOKEN:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+
+app = FastAPI(dependencies=[Depends(verify_token)])
+
+if not API_TOKEN:
+    print("⚠️  API_TOKEN не задан — агент защищён только правилами файрвола.")
 
 CONF_DIR = "/etc/amnezia/amneziawg"
 CONF_FILE = f"{CONF_DIR}/wg0.conf"

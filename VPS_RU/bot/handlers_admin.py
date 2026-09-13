@@ -10,6 +10,7 @@ from telegram.constants import ParseMode
 from telegram.error import BadRequest
 
 from utils import (
+    api_session,
     ADMIN_ID, WG_API_URL, escape_md, state_data, stop_bg_tasks, deregister_menu, 
     safe_delete, get_current_version, get_update_info, broadcast_message, get_moscow_now, ts_to_moscow, dt_to_moscow,
     DE_AGENT_URL
@@ -31,7 +32,7 @@ async def return_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     active_count = 0
     try:
-        async with aiohttp.ClientSession() as session:
+        async with api_session() as session:
             async with session.get(f"{WG_API_URL}/status", timeout=2) as resp:
                 if resp.status == 200: active_count = (await resp.json()).get("active_peers", 0)
     except Exception: pass
@@ -155,7 +156,7 @@ async def de_confirm_reboot(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def do_de_reboot_server(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.callback_query.edit_message_text("🔄 Отправка команды ребута через туннель в Германию...")
     try:
-        async with aiohttp.ClientSession() as session:
+        async with api_session() as session:
             async with session.post(f"{DE_AGENT_URL}/host/reboot", timeout=5) as resp:
                 if resp.status == 200:
                     await update.callback_query.edit_message_text("✅ **Команда принята.**\n\nСервер в Германии уходит в ребут (1-2 минуты).", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Главное меню", callback_data="back_to_main")]]), parse_mode=ParseMode.MARKDOWN)
@@ -170,7 +171,7 @@ async def de_read_logs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     deregister_menu(update.effective_chat.id)
     await update.callback_query.edit_message_text("⏳ Подключение к агенту в Германии и чтение логов...")
     try:
-        async with aiohttp.ClientSession() as session:
+        async with api_session() as session:
             async with session.get(f"{DE_AGENT_URL}/logs?lines=150", timeout=10) as resp:
                 if resp.status == 200:
                     data = await resp.json()
@@ -196,7 +197,7 @@ async def de_read_logs(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def _get_de_deploy_ts():
     """Текущая метка последнего деплоя DE (unix-ts). 0 если недоступна/не поддерживается."""
     try:
-        async with aiohttp.ClientSession() as session:
+        async with api_session() as session:
             async with session.get(f"{DE_AGENT_URL}/host/deploy_status", timeout=5) as resp:
                 if resp.status == 200:
                     return int((await resp.json()).get("ts", 0) or 0)
@@ -214,7 +215,7 @@ async def _watch_de_update(app, pre_ts):
     while time.time() < deadline:
         await asyncio.sleep(10)
         try:
-            async with aiohttp.ClientSession() as session:
+            async with api_session() as session:
                 async with session.get(f"{DE_AGENT_URL}/host/deploy_status", timeout=5) as resp:
                     if resp.status == 200:
                         data = await resp.json()
@@ -239,7 +240,7 @@ async def de_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # запоминаем текущую метку деплоя DE, чтобы потом дождаться НОВОЙ (подтверждение)
     pre_ts = await _get_de_deploy_ts()
     try:
-        async with aiohttp.ClientSession() as session:
+        async with api_session() as session:
             async with session.post(f"{DE_AGENT_URL}/host/update", timeout=5) as resp:
                 if resp.status == 200:
                     await update.callback_query.edit_message_text("✅ **Процесс обновления запущен!**\n\nАгент в Германии скачивает новую версию из Git и перезапускает контейнеры (~30-60 секунд).\n\nПришлю отдельное сообщение, когда обновление подтвердится.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Главное меню", callback_data="back_to_main")]]), parse_mode=ParseMode.MARKDOWN)
@@ -255,7 +256,7 @@ async def de_backup(update: Update, context: ContextTypes.DEFAULT_TYPE):
     deregister_menu(update.effective_chat.id)
     await update.callback_query.edit_message_text("⏳ Запрашиваю бэкап у агента в Германии...")
     try:
-        async with aiohttp.ClientSession() as session:
+        async with api_session() as session:
             async with session.get(f"{DE_AGENT_URL}/backup", timeout=15) as resp:
                 if resp.status == 200:
                     backup_path = "/tmp/de_agent_backup_received.tar.gz"
@@ -284,7 +285,7 @@ async def de_run_audit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.callback_query.edit_message_text("⏳ Запускаю аудит на сервере в Германии...")
     
     try:
-        async with aiohttp.ClientSession() as session:
+        async with api_session() as session:
             async with session.post(f"{DE_AGENT_URL}/host/audit", timeout=5) as resp:
                 if resp.status != 200:
                     raise Exception(f"HTTP {resp.status}")
@@ -294,7 +295,7 @@ async def de_run_audit(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     for _ in range(30):
         try:
-            async with aiohttp.ClientSession() as session:
+            async with api_session() as session:
                 async with session.get(f"{DE_AGENT_URL}/host/audit_result", timeout=3) as resp:
                     if resp.status == 200:
                         data = await resp.json()
@@ -402,7 +403,7 @@ async def online_users_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await stop_bg_tasks()
     deregister_menu(update.effective_chat.id)
     try:
-        async with aiohttp.ClientSession() as session:
+        async with api_session() as session:
             async with session.get(f"{WG_API_URL}/peers", timeout=3) as resp:
                 peers_data = await resp.json()
 
@@ -555,7 +556,7 @@ async def update_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
     de_started = False
     pre_ts = await _get_de_deploy_ts()
     try:
-        async with aiohttp.ClientSession() as session:
+        async with api_session() as session:
             async with session.post(f"{DE_AGENT_URL}/host/update", timeout=5) as resp:
                 de_started = (resp.status == 200)
         if de_started:

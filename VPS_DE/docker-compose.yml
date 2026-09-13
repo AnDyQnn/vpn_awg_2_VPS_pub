@@ -1,6 +1,8 @@
 services:
   de_wireguard:
     build: ./de_agent_api
+    # Тег образа — версия проекта из файла VERSION (экспортирует deploy.sh/install.sh)
+    image: vpn-de-agent:${APP_VERSION:-dev}
     container_name: de_vpn_agent
     privileged: true
     cap_add:
@@ -9,6 +11,8 @@ services:
     environment:
       - SERVERPORT=51820
       - INTERNAL_SUBNET=10.13.13.0
+      # Должен совпадать с API_TOKEN на мастере
+      - API_TOKEN=${API_TOKEN:-}
     volumes:
       - ./volumes/wireguard:/etc/amnezia/amneziawg
       - ./volumes/flags:/volumes/flags

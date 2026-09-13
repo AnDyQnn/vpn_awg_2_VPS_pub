@@ -7,6 +7,7 @@ from telegram.ext import ContextTypes
 from telegram.constants import ParseMode
 
 from utils import (
+    api_session,
     escape_md, WG_API_URL, state_data, check_admin, CONFIGS_DIR, dt_to_moscow,
     ts_to_moscow, safe_delete, GOSUSLUGI_APP_WARNING
 )
@@ -84,7 +85,7 @@ def _schedule_retire(retire_list):
 async def get_live_peers_status():
     live_map = {}
     try:
-        async with aiohttp.ClientSession() as session:
+        async with api_session() as session:
             async with session.get(f"{WG_API_URL}/peers", timeout=3) as resp:
                 if resp.status == 200:
                     data = await resp.json()
@@ -112,7 +113,7 @@ async def check_connection_animation(context, chat_id, message_id, uuid=None):
     is_online = False
     last_hs_time = 0
     try:
-        async with aiohttp.ClientSession() as session:
+        async with api_session() as session:
             async with session.get(f"{WG_API_URL}/peers", timeout=3) as resp:
                 peers = await resp.json()
                 target_uuids = [uuid] if uuid else[u['uuid'] for u in await db.get_users_by_tg_id(chat_id)]
@@ -352,7 +353,7 @@ async def client_check_all_handler(update: Update, context: ContextTypes.DEFAULT
     
     peers_data =[]
     try:
-        async with aiohttp.ClientSession() as session:
+        async with api_session() as session:
             async with session.get(f"{WG_API_URL}/peers", timeout=5) as resp:
                 if resp.status == 200: peers_data = await resp.json()
     except Exception:
@@ -442,7 +443,7 @@ async def client_stats_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     
     live_data = {}
     try:
-        async with aiohttp.ClientSession() as session:
+        async with api_session() as session:
             async with session.get(f"{WG_API_URL}/peers", timeout=5) as resp:
                 if resp.status == 200:
                     peers = await resp.json()
@@ -563,7 +564,7 @@ async def support_run_audit_handler(update: Update, context: ContextTypes.DEFAUL
     server_ok = True
     is_online = False
     try:
-        async with aiohttp.ClientSession() as session:
+        async with api_session() as session:
             async with session.get(f"{WG_API_URL}/peers", timeout=3) as resp:
                 if resp.status == 200:
                     peers = await resp.json()

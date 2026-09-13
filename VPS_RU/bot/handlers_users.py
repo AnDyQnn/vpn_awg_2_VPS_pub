@@ -6,7 +6,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from telegram.constants import ParseMode
 
-from utils import escape_md, stop_bg_tasks, deregister_menu, ADMIN_ID, CONFIGS_DIR, WG_API_URL, dt_to_moscow
+from utils import escape_md, stop_bg_tasks, deregister_menu, ADMIN_ID, CONFIGS_DIR, WG_API_URL, dt_to_moscow, api_session
 from database import db
 from wireguard_manager import create_peer, delete_peer, pause_peer, resume_peer
 from handlers_client import send_client_menu
@@ -19,7 +19,7 @@ async def users_list_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, pa
     
     live_peers = {}
     try:
-        async with aiohttp.ClientSession() as session:
+        async with api_session() as session:
             async with session.get(f"{WG_API_URL}/peers", timeout=3) as resp:
                 if resp.status == 200:
                     data = await resp.json()
@@ -81,7 +81,7 @@ async def render_user_detail(context, chat_id, message_id, uuid):
 
     is_online = False
     try:
-        async with aiohttp.ClientSession() as session:
+        async with api_session() as session:
             async with session.get(f"{WG_API_URL}/peers", timeout=3) as resp:
                 if resp.status == 200:
                     data = await resp.json()

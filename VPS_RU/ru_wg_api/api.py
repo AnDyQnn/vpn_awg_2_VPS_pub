@@ -6,10 +6,35 @@ import re
 import time
 import ipaddress
 from typing import List, Optional
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends, Request
 from pydantic import BaseModel
 
-app = FastAPI()
+# --- ДОСТУП К API ---
+# Панель управления раздаёт приватный ключ сервера и управляет пирами, поэтому она
+# закрыта двумя независимыми рубежами:
+#   1) правила файрвола в setup_network() — порт недоступен ни с eth0, ни из туннеля;
+#   2) общий токен ниже — на случай, если правила однажды слетят (iptables -F и т.п.).
+# Токен НЕОБЯЗАТЕЛЕН: если он не задан (старый .env после обновления), API продолжает
+# работать как раньше, но пишет предупреждение. Ломать прод обновлением нельзя, а дыру
+# в этом случае всё равно закрывает файрвол.
+API_TOKEN = os.getenv("API_TOKEN", "").strip()
+OPEN_PATHS = {"/api/health"}          # health дёргает deploy.sh, секретов не отдаёт
+
+
+def verify_token(request: Request):
+    if not API_TOKEN:
+        return
+    if request.url.path in OPEN_PATHS:
+        return
+    if request.headers.get("X-Api-Key", "") != API_TOKEN:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+
+app = FastAPI(dependencies=[Depends(verify_token)])
+
+if not API_TOKEN:
+    print("⚠️  API_TOKEN не задан — панель защищена только правилами файрвола. "
+          "Добавьте API_TOKEN в .env обеих нод.")
 
 # --- КОНФИГУРАЦИЯ ---
 ENV_SERVER_URL = os.getenv("SERVER_URL") or os.getenv("SERVER_IP")
@@ -283,8 +308,17 @@ def setup_network():
     subprocess.run("ip rule add fwmark 200 table 200", shell=True, stderr=subprocess.DEVNULL)
     subprocess.run("ip route add default dev wg0 table 200", shell=True, stderr=subprocess.DEVNULL)
 
-    # БЕЗОПАСНОСТЬ: Закрываем порт API (8000) от внешнего мира
+    # --- БЕЗОПАСНОСТЬ: панель управления недоступна никому, кроме самого бота ---
+    # Бот живёт в сетевом пространстве этого контейнера и ходит через 127.0.0.1, поэтому
+    # порт 8000 можно закрыть и снаружи, и со стороны туннеля.
+    # ВАЖНО: правила пишутся здесь, а не руками на сервере — setup_network() делает
+    # iptables -F при каждом старте контейнера и снесла бы всё, добавленное вручную.
     run_cmd("iptables -A INPUT -i eth0 -p tcp --dport 8000 -j DROP")
+    # Раньше закрывался только eth0, а клиенты приходят по wg0 — и любой пир мог забрать
+    # приватный ключ сервера через /api/backup_config. Это и есть та самая дыра.
+    run_cmd("iptables -A INPUT -i wg0 -p tcp --dport 8000 -j DROP")
+    # Доступ к панели немецкого агента разрешён только с адреса мастера.
+    run_cmd("iptables -A FORWARD -i wg0 -o wg0 -p tcp --dport 8000 ! -s 10.13.13.1 -j DROP")
 
     restore_peers()
 

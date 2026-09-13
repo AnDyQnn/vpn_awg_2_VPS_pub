@@ -31,6 +31,9 @@ services:
   # ---------------- AMNEZIA WG (MASTER) ----------------
   ru_wireguard:
     build: ./ru_wg_api
+    # Тег образа — версия проекта из файла VERSION (её экспортирует deploy.sh/install.sh).
+    # Без latest: по `docker images` сразу видно, какая версия реально крутится на ноде.
+    image: vpn-ru-wireguard:${APP_VERSION:-dev}
     container_name: vpn_wireguard
     privileged: true
     cap_add:
@@ -42,6 +45,9 @@ services:
     environment:
       SERVERPORT: 51820
       INTERNAL_SUBNET: 10.13.13.0
+      # Токен панели: второй рубеж поверх правил файрвола. Пустой — узел работает
+      # как раньше, обновление ничего не ломает.
+      API_TOKEN: ${API_TOKEN:-}
     volumes:
       - ./volumes/wireguard:/etc/amnezia/amneziawg
       - /lib/modules:/lib/modules
@@ -60,6 +66,7 @@ services:
   # ---------------- BOT (FRONTEND) ----------------
   vpn_bot:
     build: ./bot
+    image: vpn-ru-bot:${APP_VERSION:-dev}
     container_name: vpn_bot
     # Бот делит сеть с WireGuard для обхода блокировок Telegram
     network_mode: "service:ru_wireguard"
@@ -74,6 +81,7 @@ services:
       GIT_REPO: ${GIT_REPO}
       GIT_USERNAME: ${GIT_USERNAME}
       GIT_TOKEN: ${GIT_TOKEN}
+      API_TOKEN: ${API_TOKEN:-}
       WG_API_URL: http://127.0.0.1:8000/api
       # IP адрес агента в Германии внутри туннеля
       DE_AGENT_URL: http://10.13.13.254:8000/api

@@ -3,7 +3,7 @@ import subprocess
 from pathlib import Path
 import shutil
 import aiohttp
-from utils import get_moscow_now, WG_API_URL
+from utils import get_moscow_now, WG_API_URL, api_session
 from database import db
 
 BACKUP_DIR = Path("/volumes/backups")
@@ -54,7 +54,7 @@ async def restore_backup(path: str):
 
     print("♻️ Reloading WireGuard Interfaces...")
     try:
-        async with aiohttp.ClientSession() as session:
+        async with api_session() as session:
             async with session.post(f"{WG_API_URL}/reload", timeout=10) as resp:
                 if resp.status == 200: print("✅ WireGuard reloaded successfully.")
                 else: print(f"❌ WireGuard reload failed: {await resp.text()}")

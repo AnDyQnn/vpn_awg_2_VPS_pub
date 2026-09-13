@@ -6,7 +6,7 @@ from matplotlib.ticker import MaxNLocator
 from database import db
 import aiohttp
 import time
-from utils import get_moscow_now, dt_to_moscow, WG_API_URL
+from utils import get_moscow_now, dt_to_moscow, WG_API_URL, api_session
 
 # Палитра под тёмную тему Gateway Hub (яркие на тёмном, хорошо различимы)
 BG      = "#0e1320"
@@ -31,7 +31,7 @@ async def generate_vpn_graph():
     live_data = {}
     live_hs = {}                       # uuid → последний хендшейк (unix) — для «активен сейчас»
     try:
-        async with aiohttp.ClientSession() as session:
+        async with api_session() as session:
             async with session.get(f"{WG_API_URL}/peers", timeout=3) as resp:
                 if resp.status == 200:
                     peers = await resp.json()

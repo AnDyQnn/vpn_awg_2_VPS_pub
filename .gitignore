@@ -20,3 +20,6 @@ volumes/
 **/volumes/
 DE_AGENT_CONFIG.txt
 *.keystore
+
+# Локальные рабочие заметки
+NOTES_CLAUDE.md
