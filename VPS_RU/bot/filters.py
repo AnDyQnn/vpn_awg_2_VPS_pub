@@ -20,7 +20,7 @@ from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
 from database import db
-from utils import escape_md, WG_API_URL, api_session
+from utils import escape_md, WG_API_URL, api_session, show_screen
 
 # Адрес бота узел сам не знает: он живёт в сети, а не в Telegram. Бот сообщает
 # его вместе с раскладкой фильтров, чтобы на странице отказа было куда написать.
@@ -132,7 +132,7 @@ async def filters_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         kb.append([InlineKeyboardButton("🔄 Применить на узле", callback_data="flt_apply")])
     kb.append([InlineKeyboardButton("🔙 Администрирование", callback_data="svc_menu")])
 
-    await query.edit_message_text("\n".join(lines),
+    await show_screen(query, context, "\n".join(lines),
                                   reply_markup=InlineKeyboardMarkup(kb),
                                   parse_mode=ParseMode.MARKDOWN)
 
@@ -161,7 +161,7 @@ async def pick_user(update: Update, context: ContextTypes.DEFAULT_TYPE, page: in
         kb.append(nav)
     kb.append([InlineKeyboardButton("🔙 Фильтры", callback_data="flt_menu")])
 
-    await query.edit_message_text("\U0001F464 **Выберите человека**\n\n"
+    await show_screen(query, context, "\U0001F464 **Выберите человека**\n\n"
                                   "Отмеченные значком уже под фильтром.",
                                   reply_markup=InlineKeyboardMarkup(kb),
                                   parse_mode=ParseMode.MARKDOWN)
@@ -189,7 +189,7 @@ async def user_filters_screen(update: Update, context: ContextTypes.DEFAULT_TYPE
           for key, title in CATEGORIES]
     kb.append([InlineKeyboardButton("🔙 К списку", callback_data="flt_pick_0")])
 
-    await query.edit_message_text("\n".join(lines),
+    await show_screen(query, context, "\n".join(lines),
                                   reply_markup=InlineKeyboardMarkup(kb),
                                   parse_mode=ParseMode.MARKDOWN)
 

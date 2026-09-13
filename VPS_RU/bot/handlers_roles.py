@@ -21,7 +21,7 @@ from telegram.ext import ContextTypes
 
 from acl import apply_access_rules, peer_ip_map, grant_text
 from database import db
-from utils import escape_md
+from utils import escape_md, show_screen
 
 TUNNEL_NET = ipaddress.ip_network("10.13.13.0/24")
 MASTER_IP = ipaddress.ip_address("10.13.13.1")
@@ -67,7 +67,7 @@ async def roles_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         kb.append([InlineKeyboardButton("🔄 Применить на узле", callback_data="role_apply")])
     kb.append([InlineKeyboardButton("🔙 Администрирование", callback_data="svc_menu")])
 
-    await query.edit_message_text("\n".join(lines),
+    await show_screen(query, context, "\n".join(lines),
                                   reply_markup=InlineKeyboardMarkup(kb),
                                   parse_mode=ParseMode.MARKDOWN)
 
@@ -116,14 +116,14 @@ async def role_screen(update: Update, context: ContextTypes.DEFAULT_TYPE, role_i
     kb.append([InlineKeyboardButton("🗑 Удалить роль", callback_data=f"role_del_{role_id}")])
     kb.append(_back())
 
-    await query.edit_message_text("\n".join(lines),
+    await show_screen(query, context, "\n".join(lines),
                                   reply_markup=InlineKeyboardMarkup(kb),
                                   parse_mode=ParseMode.MARKDOWN)
 
 
 async def role_new(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["state"] = "awaiting_role_name"
-    await update.callback_query.edit_message_text(
+    await show_screen(update.callback_query, context, 
         "➕ **Новая роль**\n\nПришли название — например «Домашние сервисы» "
         "или «Только интернет».\n\nДля отмены нажми «Отмена».",
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(
@@ -149,7 +149,7 @@ async def grant_add_screen(update: Update, context: ContextTypes.DEFAULT_TYPE, r
                                     callback_data=f"role_gman_{role_id}")])
     kb.append(_back(role_id))
 
-    await query.edit_message_text(
+    await show_screen(query, context, 
         "➕ **Что открыть**\n\nВыбери, к кому роль даёт доступ. "
         "Откроется весь обмен с этим пиром.\n\n"
         "Нужен только один порт или целая подсеть — введи адрес вручную.",
@@ -159,7 +159,7 @@ async def grant_add_screen(update: Update, context: ContextTypes.DEFAULT_TYPE, r
 async def grant_manual(update: Update, context: ContextTypes.DEFAULT_TYPE, role_id: int):
     context.user_data["state"] = "awaiting_role_grant"
     context.user_data["role_id"] = role_id
-    await update.callback_query.edit_message_text(
+    await show_screen(update.callback_query, context, 
         "✍️ **Адрес доступа**\n\nПришли адрес внутри туннеля. Примеры:\n"
         "`10.13.13.7` — весь обмен с этим пиром\n"
         "`10.13.13.7 tcp 8096` — только один порт\n"
@@ -248,7 +248,7 @@ async def members_screen(update: Update, context: ContextTypes.DEFAULT_TYPE,
             "не открыто, для него закрывается.")
     if not chunk:
         text = "Все уже в этой роли."
-    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb),
+    await show_screen(query, context, text, reply_markup=InlineKeyboardMarkup(kb),
                                   parse_mode=ParseMode.MARKDOWN)
 
 
@@ -317,7 +317,7 @@ async def role_delete_confirm(update, context, role_id: int):
 
     kb = [[InlineKeyboardButton("🗑 Удалить", callback_data=f"role_delok_{role_id}"),
            InlineKeyboardButton("✖️ Отмена", callback_data=f"role_open_{role_id}")]]
-    await update.callback_query.edit_message_text(
+    await show_screen(update.callback_query, context, 
         "\n".join(lines), reply_markup=InlineKeyboardMarkup(kb),
         parse_mode=ParseMode.MARKDOWN)
 
@@ -357,7 +357,7 @@ async def user_roles_screen(update: Update, context: ContextTypes.DEFAULT_TYPE,
     kb.append([InlineKeyboardButton("🔙 К пользователю",
                                     callback_data=f"user_detail_{uuid_val}")])
 
-    await query.edit_message_text("\n".join(lines),
+    await show_screen(query, context, "\n".join(lines),
                                   reply_markup=InlineKeyboardMarkup(kb),
                                   parse_mode=ParseMode.MARKDOWN)
 
