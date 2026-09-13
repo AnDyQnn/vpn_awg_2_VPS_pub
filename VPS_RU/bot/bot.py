@@ -133,41 +133,46 @@ async def sync_wg_config():
         print(f"Error syncing wg config: {e}")
 
 async def watch_online_count(app):
+    """Держит главное меню живым.
+
+    Раньше обновлялась только клавиатура, и то по двум числам — онлайну и
+    обращениям. Текст сводки застывал, счётчик на кнопке «Администрирование»
+    терялся при первом же обновлении, а новые вопросы по ключам и застрявшая
+    доставка экран вообще не трогали.
+
+    Теперь сверяется всё, что на экране видно: пересобираем меню и сравниваем
+    с тем, что показано. Изменилось — перерисовываем целиком, нет — молчим,
+    чтобы не дёргать Telegram каждые пять секунд.
+    """
+    from handlers_admin import main_menu_view
+
     while True:
         try:
-            current_active = 0
-            async with api_session() as session:
-                async with session.get(f"{WG_API_URL}/status", timeout=2) as resp:
-                    if resp.status == 200: 
-                        current_active = (await resp.json()).get("active_peers", 0)
-
-            try:
-                supp_count = await db.fetch_val("SELECT COUNT(*) FROM support_tickets WHERE status='open'")
-                supp_count = supp_count or 0
-            except Exception:
-                supp_count = 0
-
-            last_active = state_data.get("last_known_active_count", -1)
-            last_supp = state_data.get("last_known_support_count", -1)
-
-            if current_active != last_active or supp_count != last_supp:
-                state_data["last_known_active_count"] = current_active
-                state_data["last_known_support_count"] = supp_count
-                
-                for chat_id in list(state_data["active_menus"].keys()):
-                    message_id = state_data["active_menus"][chat_id]
-                    if check_admin(chat_id):
+            if state_data["active_menus"]:
+                text, markup, _ = await main_menu_view()
+                if text != state_data.get("last_menu_text"):
+                    state_data["last_menu_text"] = text
+                    for chat_id in list(state_data["active_menus"].keys()):
+                        if not check_admin(chat_id):
+                            continue
+                        message_id = state_data["active_menus"][chat_id]
                         try:
-                            await app.bot.edit_message_reply_markup(
-                                chat_id=chat_id, 
-                                message_id=message_id, 
-                                reply_markup=main_menu(active_count=current_active, support_count=supp_count)
-                            )
+                            await app.bot.edit_message_text(
+                                chat_id=chat_id, message_id=message_id,
+                                text=text, reply_markup=markup,
+                                parse_mode=ParseMode.MARKDOWN)
                         except Exception as e:
-                            if "not found" in str(e) or "not modified" in str(e): 
+                            low = str(e).lower()
+                            # «не изменилось» — нормально; «нет сообщения» или
+                            # «нельзя редактировать» означают, что экран уехал.
+                            if "not modified" in low:
+                                continue
+                            if "not found" in low or "no text" in low or "can't be edited" in low:
                                 deregister_menu(chat_id)
-        except Exception: pass 
+        except Exception:
+            pass
         await asyncio.sleep(5)
+
 
 async def notify_users_whats_new(app):
     """Рассылает каждому только накопившееся лично для него.
