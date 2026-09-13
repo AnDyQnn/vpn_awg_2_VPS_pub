@@ -1,0 +1,102 @@
+# -*- coding: utf-8 -*-
+"""Доступы внутри туннеля: перевод ролей в правила узла.
+
+Роль — это ответ на вопрос «к каким домашним сервисам человек ходит». К интернету
+и к скорости она отношения не имеет: «мировой» трафик уходит в клиент-сервер и
+цепочкой доступов не затрагивается.
+
+Модель намеренно простая:
+  • ролей у человека может быть сколько угодно, права СКЛАДЫВАЮТСЯ;
+  • нет ни одной роли — значит без ограничений, как было до всего этого;
+  • запрета, который бьёт разрешение, нет: роль умеет только открывать. Иначе
+    пришлось бы объяснять, почему из двух ролей одна отменяет другую, — а это
+    первый шаг к правам, в которых никто не разберётся.
+
+Считает объединение бот, потому что база есть только у него; узел получает готовый
+список «кому куда можно» и раскладывает его в правила файрвола.
+"""
+from database import db
+from utils import WG_API_URL, api_session
+
+
+async def peer_ip_map():
+    """uuid → адрес пира в туннеле. Адрес живёт в конфиге WireGuard, не в базе,
+    поэтому спрашиваем узел. Пир без адреса (ещё не создан) просто пропускается."""
+    mapping = {}
+    try:
+        async with api_session() as session:
+            async with session.get(f"{WG_API_URL}/peers", timeout=5) as resp:
+                if resp.status != 200:
+                    return mapping
+                for p in await resp.json():
+                    ip = (p.get("allowed_ips") or "").split("/")[0].strip()
+                    if p.get("uuid") and ip:
+                        mapping[p["uuid"]] = ip
+    except Exception as e:
+        print(f"ACL: не удалось получить адреса пиров: {e}")
+    return mapping
+
+
+def _dedupe(grants):
+    """Две роли легко дают одно и то же правило — в файрвол оно нужно один раз."""
+    seen, out = set(), []
+    for g in grants:
+        key = (g["cidr"], (g.get("proto") or "any"), g.get("port"))
+        if key not in seen:
+            seen.add(key)
+            out.append({"cidr": g["cidr"], "proto": g.get("proto") or "any",
+                        "port": g.get("port")})
+    return out
+
+
+async def build_payload():
+    """Список пиров с ограничениями. Кого здесь нет — тот ходит куда угодно."""
+    matrix = await db.get_access_matrix()
+    ips = await peer_ip_map()
+    peers = []
+    for uuid, rec in matrix.items():
+        ip = ips.get(uuid)
+        if not ip:
+            continue
+        peers.append({"ip": ip, "allow": _dedupe(rec["allow"])})
+    return peers
+
+
+async def apply_access_rules(reason: str = ""):
+    """Применяет текущее состояние базы на узле. Вызывается после любого изменения
+    ролей и при старте бота — узел чистит таблицы при перезапуске контейнера.
+
+    Возвращает (успех, текст) — текст годится и для лога, и для показа админу."""
+    try:
+        peers = await build_payload()
+    except Exception as e:
+        return False, f"не удалось собрать правила: {e}"
+
+    try:
+        async with api_session() as session:
+            async with session.post(f"{WG_API_URL}/acl", json={"peers": peers},
+                                    timeout=10) as resp:
+                if resp.status != 200:
+                    return False, f"узел отклонил правила: {await resp.text()}"
+                data = await resp.json()
+    except Exception as e:
+        return False, f"узел недоступен: {e}"
+
+    msg = (f"Доступы применены: под ограничением {data.get('peers', 0)} чел., "
+           f"правил {data.get('rules', 0)}")
+    if reason:
+        msg += f" ({reason})"
+    try:
+        await db.log_event("Roles", msg)
+    except Exception:
+        pass
+    return True, msg
+
+
+def grant_text(grant) -> str:
+    """Человеческая запись правила: «10.13.13.7», «192.168.1.0/24 · tcp 443»."""
+    proto = (grant.get("proto") or "any").lower()
+    port = grant.get("port")
+    if proto in ("tcp", "udp"):
+        return f"{grant['cidr']} · {proto}{' ' + str(port) if port else ''}"
+    return str(grant["cidr"])

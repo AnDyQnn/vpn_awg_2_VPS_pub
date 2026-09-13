@@ -58,9 +58,16 @@ from handlers_admin import (
     de_update, de_backup, de_run_audit, update_all
 )
 from handlers_users import (
-    users_list_menu, user_detail_menu, confirm_delete_menu, action_delete_user, action_resend_config, 
+    users_list_menu, user_detail_menu, confirm_delete_menu, action_delete_user, action_resend_config,
     generate_key_request, finish_key_creation, render_user_detail, clear_user_ips
 )
+from handlers_roles import (
+    roles_menu, role_screen, role_new, grant_add_screen, grant_manual, grant_peer,
+    grant_del, members_screen, member_add, member_del, role_delete_confirm,
+    role_delete, role_apply, handle_role_text, user_roles_screen,
+    user_role_toggle
+)
+from acl import apply_access_rules
 
 # --- ЗАДАЧИ БОТА (СИНХРОНИЗАЦИЯ И МОНИТОРИНГ) ---
 async def sync_wg_config():
@@ -296,6 +303,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     state = context.user_data.get("state")
     chat_id = update.message.chat_id
     user_msg_id = update.message.message_id
+
+    # Ввод по ролям (название роли, адрес доступа) — только для админа.
+    if state in ("awaiting_role_name", "awaiting_role_grant"):
+        if not check_admin(update.effective_user.id):
+            context.user_data["state"] = None
+            return
+        if await handle_role_text(update, context, state):
+            return
 
     # Пароль архива бэкапа: записываем в .env через демон на хосте и сразу удаляем
     # сообщение — пароль не должен остаться висеть в переписке.
@@ -650,6 +665,44 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not check_admin(update.effective_user.id): return await query.answer("Доступ запрещен")
 
+    # --- Роли: доступы внутри туннеля ---
+    # Намеренно ПОСЛЕ проверки админа: роли решают, кто к кому ходит, и открывать
+    # эти экраны кому попало нельзя.
+    if data == "roles_menu": await roles_menu(update, context); return
+    if data.startswith("role_ut_"):
+        parts = data.split("_", 3)          # role | ut | id | uuid
+        await user_role_toggle(update, context, int(parts[2]), parts[3]); return
+    if data.startswith("role_u_"):
+        await user_roles_screen(update, context, data.split("_", 2)[2]); return
+    if data == "role_new": await role_new(update, context); return
+    if data == "role_apply": await role_apply(update, context); return
+    if data.startswith("role_open_"):
+        await role_screen(update, context, int(data.split("_")[-1])); return
+    if data.startswith("role_gadd_"):
+        await grant_add_screen(update, context, int(data.split("_")[-1])); return
+    if data.startswith("role_gman_"):
+        await grant_manual(update, context, int(data.split("_")[-1])); return
+    if data.startswith("role_gpeer_"):
+        parts = data.split("_", 3)          # role | gpeer | id | uuid (в uuid дефисы)
+        await grant_peer(update, context, int(parts[2]), parts[3]); return
+    if data.startswith("role_gdel_"):
+        parts = data.split("_")
+        await grant_del(update, context, int(parts[2]), int(parts[3])); return
+    if data.startswith("role_madd_"):
+        parts = data.split("_")
+        await members_screen(update, context, int(parts[2]), int(parts[3])); return
+    if data.startswith("role_mset_"):
+        await member_add(update, context, int(data.split("_")[2]),
+                         data.split("_", 3)[3]); return
+    if data.startswith("role_mdel_"):
+        await member_del(update, context, int(data.split("_")[2]),
+                         data.split("_", 3)[3]); return
+    # delok проверяется раньше del_: иначе более короткий префикс перехватил бы его
+    if data.startswith("role_delok_"):
+        await role_delete(update, context, int(data.split("_")[-1])); return
+    if data.startswith("role_del_"):
+        await role_delete_confirm(update, context, int(data.split("_")[-1])); return
+
     if data == "back_to_main": await return_to_main_menu(update, context); return
     if data == "toggle_auto_update": await toggle_auto_update(update, context); return
     if data == "schedule_update": await schedule_update_menu(update, context); return
@@ -827,6 +880,15 @@ async def post_init(application):
 
     # Чиним ключи, перевыпущенные до фикса бага (routing_version=0 при свежем конфиге)
     await reconcile_routing_versions()
+
+    # Доступы внутри туннеля восстанавливаем при каждом старте: узел чистит таблицы
+    # при перезапуске контейнера, а база — источник правды.
+    try:
+        ok, msg = await apply_access_rules("старт бота")
+        if not ok:
+            print(f"Роли: {msg}")
+    except Exception as e:
+        print(f"Роли: не удалось применить доступы: {e}")
 
     tasks =[
         asyncio.create_task(alert_loop(application)),
