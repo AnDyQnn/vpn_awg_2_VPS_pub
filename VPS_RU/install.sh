@@ -142,6 +142,42 @@ if [ ! -f "$APP_DIR/.env" ]; then
 fi
 chmod 600 "$APP_DIR/.env"
 
+# --- Токен панелей узлов ---
+# Второй рубеж поверх правил файрвола. Генерируем сами, чтобы не заставлять человека
+# придумывать строку. ВАЖНО: тот же токен нужно прописать в .env немецкой ноды —
+# он выводится ниже вместе с ключом агента.
+if ! grep -q '^API_TOKEN=.\+' "$APP_DIR/.env" 2>/dev/null; then
+    GEN_TOKEN="$(head -c 24 /dev/urandom | base64 | tr -d '/+=' | head -c 32)"
+    grep -v '^API_TOKEN=' "$APP_DIR/.env" > "$APP_DIR/.env.tmp" 2>/dev/null || true
+    mv "$APP_DIR/.env.tmp" "$APP_DIR/.env" 2>/dev/null || true
+    echo "API_TOKEN=$GEN_TOKEN" >> "$APP_DIR/.env"
+    echo "🔑 Токен панелей сгенерирован."
+fi
+
+# --- Пароль архива резервных копий ---
+# Архив уносит приватный ключ сервера и конфигурации всех пользователей, поэтому
+# он шифруется. Пароль живёт ТОЛЬКО здесь, в .env: положи его в базу — и он окажется
+# внутри того самого архива, который защищает.
+# Пропустить можно, но тогда бот при первом запуске не пустит дальше, пока не задашь.
+if ! grep -q '^BACKUP_PASSWORD=.\+' "$APP_DIR/.env" 2>/dev/null; then
+    echo ""
+    echo "🔐 Пароль для шифрования резервных копий."
+    echo "   Архив содержит ключ сервера и конфиги всех пользователей."
+    echo "   СОХРАНИТЕ пароль отдельно: без него копию не открыть."
+    read -r -s -p "   Введите пароль (Enter — пропустить и задать позже из бота): " BK_PASS
+    echo ""
+    if [ -n "$BK_PASS" ]; then
+        grep -v '^BACKUP_PASSWORD=' "$APP_DIR/.env" > "$APP_DIR/.env.tmp" 2>/dev/null || true
+        mv "$APP_DIR/.env.tmp" "$APP_DIR/.env" 2>/dev/null || true
+        echo "BACKUP_PASSWORD=$BK_PASS" >> "$APP_DIR/.env"
+        echo "   ✅ Пароль записан."
+    else
+        echo "   ⏭️  Пропущено. Бот попросит задать пароль при первом запуске."
+    fi
+    unset BK_PASS
+fi
+chmod 600 "$APP_DIR/.env"
+
 echo "🚀 Запуск контейнеров..."
 docker compose up -d --build --remove-orphans
 
@@ -157,6 +193,9 @@ if [ -f "$APP_DIR/volumes/DE_AGENT_CONFIG.txt" ]; then
     echo "🎉 КЛЮЧ ДЛЯ СЕРВЕРА В ГЕРМАНИИ УСПЕШНО СГЕНЕРИРОВАН!"
     echo "👉 $APP_DIR/DE_AGENT_CONFIG.txt"
     echo "Скопируй его в Германию по пути: /volumes/wireguard/wg0.conf"
+    echo ""
+    echo "И пропиши в .env немецкой ноды тот же токен панелей:"
+    grep '^API_TOKEN=' "$APP_DIR/.env"
     echo "================================================================"
 fi
 
