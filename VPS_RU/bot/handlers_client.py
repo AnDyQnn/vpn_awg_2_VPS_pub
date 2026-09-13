@@ -181,7 +181,109 @@ async def send_client_menu(context: ContextTypes.DEFAULT_TYPE, user_id: int, fir
     
     await context.bot.send_message(chat_id=user_id, text=text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
 
+
+# --- СВОДКА ДЛЯ КЛИЕНТСКИХ ЭКРАНОВ ---------------------------------------
+# Человеку незачем знать про роли, стадии доставки и устройство маршрутизации —
+# это кухня администратора. Ему важны четыре вещи: работает ли ключ, до какого
+# числа он живой, не упирается ли он в ограничение и сколько потратил.
+# Роли не показываются намеренно: это решение владельца, а не настройка клиента.
+
+async def _client_context(user_id):
+    """Всё, что нужно клиентским экранам, одним заходом — чтобы не дёргать базу
+    и узел по разу на каждую строчку."""
+    keys = await db.get_users_by_tg_id(user_id)
+    live = await get_live_peers_status()
+    try:
+        limits = await db.get_peer_limits()
+        common = int(await db.get_setting("pps_limit") or 5000)
+        mode = await db.get_setting("pps_mode") or "observe"
+    except Exception:
+        limits, common, mode = {}, 5000, "observe"
+    return keys, live, limits, common, mode
+
+
+def _limit_line(uuid_val, limits, common, mode):
+    """Ограничение словами клиента. В режиме наблюдения ничего не применяется,
+    и обещать человеку ограничение, которого нет, нельзя."""
+    rule = limits.get(uuid_val)
+    if mode != "enforce":
+        return "ограничение сейчас не применяется"
+    if not rule:
+        return f"общий предел — {common} пакетов в секунду"
+    if rule["mode"] == "unlimited":
+        return "без ограничения"
+    return f"ваш предел — {rule['limit_pps']} пакетов в секунду"
+
+
+async def _exceeded_24h(uuid_val):
+    try:
+        return await db.fetch_val(
+            "SELECT COUNT(*) FROM pps_events WHERE user_uuid=$1 "
+            "AND started_at > NOW() - INTERVAL '24 HOURS'", uuid_val) or 0
+    except Exception:
+        return 0
+
+
+async def _pause_reason(uuid_val):
+    """Почему ключ на паузе. Человек должен понимать, что это не поломка и что
+    ключ никуда не делся — решение принимает владелец."""
+    try:
+        dec = await db.get_pending_decision(uuid_val)
+    except Exception:
+        dec = None
+    if not dec:
+        return "приостановлен"
+    if dec["reason"] == "expired":
+        return "истёк срок, владелец решает — продлить или закрыть"
+    return "долго не использовался, владелец решает — оставить или закрыть"
+
+
+async def _traffic_24h(uuid_val):
+    try:
+        val = await db.fetch_val(
+            "SELECT COALESCE(SUM(bytes_in + bytes_out), 0) FROM traffic_hourly "
+            "WHERE user_uuid=$1 AND hour > NOW() - INTERVAL '24 HOURS'", uuid_val)
+        return int(val or 0)
+    except Exception:
+        return 0
+
+
+def _human_bytes(n):
+    for unit in ("Б", "КБ", "МБ", "ГБ", "ТБ"):
+        if n < 1024 or unit == "ТБ":
+            return f"{n:.0f} {unit}" if unit in ("Б", "КБ") else f"{n:.1f} {unit}"
+        n /= 1024
+    return f"{n:.1f} ТБ"
+
+
+def _times(n):
+    """«1 раз», «2 раза», «5 раз» — вместо «раз(а)». Мелочь, но её видно всем."""
+    if n % 10 == 1 and n % 100 != 11:
+        return f"{n} раз"
+    if n % 10 in (2, 3, 4) and n % 100 not in (12, 13, 14):
+        return f"{n} раза"
+    return f"{n} раз"
+
+
+def _days_left(dt):
+    """Сколько суток осталось, с округлением ВВЕРХ: .days отбрасывает неполные
+    сутки, и дата в строке переставала сходиться с числом дней."""
+    secs = (dt - datetime.utcnow()).total_seconds()
+    if secs <= 0:
+        return 0
+    return int(-(-secs // 86400))
+
+
+def _key_icon(k, live):
+    if not k.get("is_active", True):
+        return "⏸"
+    return "🟢" if live.get(k["uuid"]) else "🟡"
+
 async def client_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Главный экран клиента: сводка, а не просто счётчик ключей.
+
+    Порядок строк выбран по тому, о чём человек спрашивает чаще всего:
+    работает ли, до какого числа, не упираюсь ли в ограничение."""
     user_id = update.effective_user.id
     first_name = update.effective_user.first_name
     # Отметок «прочитано» Telegram не даёт, но нажатая кнопка — доказательство,
@@ -190,8 +292,9 @@ async def client_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await db.delivery_opened(user_id)
     except Exception:
         pass
-    keys = await db.get_users_by_tg_id(user_id)
-    
+
+    keys, live, limits, common, mode = await _client_context(user_id)
+
     if not keys:
         if check_admin(user_id):
             text = "❌ У вас нет привязанных ключей, но вы Админ."
@@ -208,8 +311,42 @@ async def client_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await context.bot.send_message(chat_id=user_id, text="❌ У вас нет привязанных ключей VPN.")
             return
 
-    text = f"👋 Привет, **{escape_md(first_name)}**!\n\nУ вас привязано ключей: **{len(keys)}**.\n"
-    
+    online = sum(1 for k in keys if live.get(k["uuid"]))
+    paused = [k for k in keys if not k.get("is_active", True)]
+
+    lines = [f"👋 Привет, **{escape_md(first_name)}**!", ""]
+    lines.append(f"🔑 Ключей: **{len(keys)}** · на связи сейчас: **{online}**")
+
+    # Ближайший срок — только он и нужен: остальные ещё не скоро.
+    dated = [k for k in keys if k.get("expires_at") and k.get("is_active", True)]
+    if dated:
+        soonest = min(dated, key=lambda k: k["expires_at"])
+        when = dt_to_moscow(soonest["expires_at"])
+        left = _days_left(soonest["expires_at"])
+        if left <= 7:
+            lines.append(f"⏳ «{escape_md(soonest['name'])}» — до {when.strftime('%d.%m')}, "
+                         f"это {'сегодня' if left <= 0 else f'через {left} дн.'}")
+            lines.append("     Само ничего не пропадёт: владельца спросят, продлевать ли.")
+        else:
+            lines.append(f"⏳ Ближайший срок: «{escape_md(soonest['name'])}» "
+                         f"до {when.strftime('%d.%m.%Y')}")
+
+    for k in paused:
+        lines.append(f"⏸ «{escape_md(k['name'])}» на паузе — {await _pause_reason(k['uuid'])}")
+
+    # Про ограничение говорим, только если оно вообще применяется.
+    if mode == "enforce":
+        hit = 0
+        for k in keys:
+            hit += await _exceeded_24h(k["uuid"])
+        own = _limit_line(keys[0]["uuid"], limits, common, mode)
+        lines.append(f"🚦 Ограничение: {own}")
+        if hit:
+            lines.append(f"     За сутки упирались {_times(hit)} — обычно это торренты "
+                         f"или очень много одновременных соединений.")
+
+    text = "\n".join(lines)
+
     keyboard = [
         [InlineKeyboardButton("🔑 Мои ключи", callback_data="client_my_keys"),
          InlineKeyboardButton("📊 Статистика", callback_data="client_stats")],
@@ -219,7 +356,7 @@ async def client_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     if check_admin(user_id):
         keyboard.append([InlineKeyboardButton("🚪 Выйти из режима клиента", callback_data="back_to_main")])
-    
+
     if update.callback_query:
         await update.callback_query.edit_message_text(text=text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
     else:
@@ -228,67 +365,107 @@ async def client_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # --- НОВОЕ МЕНЮ: УПРАВЛЕНИЕ КЛЮЧАМИ ---
 
 async def client_my_keys_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, send_new: bool = False):
+    """Список ключей: в подписи кнопки — состояние, в тексте — что значат значки."""
     user_id = update.effective_user.id
-    keys = await db.get_users_by_tg_id(user_id)
-    
+    keys, live, limits, common, mode = await _client_context(user_id)
+
     if not keys:
         if update.callback_query and not send_new:
             await update.callback_query.answer("У вас нет ключей.", show_alert=True)
         else:
             await context.bot.send_message(user_id, "У вас нет ключей.")
         return
-    
-    live_status = await get_live_peers_status()
-    
-    text = "🔑 **Мои ключи**\n\nВыберите ключ для управления:\n"
-    keyboard =[]
-    
+
+    lines = ["🔑 **Мои ключи**", ""]
+    keyboard = []
     for k in keys:
-        if not k.get('is_active', True): status_icon = "🔴"
-        elif live_status.get(k['uuid']): status_icon = "🟢"
-        else: status_icon = "🟡"
-        
-        btn_text = f"{status_icon} {k['name']}"
-        keyboard.append([InlineKeyboardButton(btn_text, callback_data=f"client_key_manage_{k['uuid']}")])
-    
+        icon = _key_icon(k, live)
+        if not k.get("is_active", True):
+            note = await _pause_reason(k["uuid"])
+        elif live.get(k["uuid"]):
+            note = "на связи"
+        elif k.get("expires_at"):
+            note = f"до {dt_to_moscow(k['expires_at']).strftime('%d.%m.%Y')}"
+        else:
+            note = "готов к работе"
+        lines.append(f"{icon} **{escape_md(k['name'])}** — {note}")
+        keyboard.append([InlineKeyboardButton(f"{icon} {k['name']}",
+                                              callback_data=f"client_key_manage_{k['uuid']}")])
+
+    lines += ["", "_🟢 на связи · 🟡 не подключён · ⏸ на паузе_"]
+
     if len(keys) > 1:
         keyboard.append([InlineKeyboardButton("🔄 Перевыпустить все ключи", callback_data="client_regen_all")])
-        
     keyboard.append([InlineKeyboardButton("🔙 В главное меню", callback_data="client_menu")])
-    
+
+    text = "\n".join(lines)
     if update.callback_query and not send_new:
         await update.callback_query.edit_message_text(text=text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
     else:
         await context.bot.send_message(chat_id=user_id, text=text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
 
 async def client_key_manage_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, uuid_val: str):
+    """Карточка ключа глазами владельца ключа, а не администратора."""
     query = update.callback_query
     user = await db.get_user_by_uuid(uuid_val)
     if not user:
         await query.answer("Ключ не найден.", show_alert=True)
         return
-        
-    live_status = await get_live_peers_status()
-    
-    if not user.get('is_active', True): status_text = "🔴 Отключен (Приостановлен)"
-    elif live_status.get(user['uuid']): status_text = "🟢 Онлайн"
-    else: status_text = "🟡 Офлайн"
-        
-    exp = f"до {dt_to_moscow(user['expires_at']).strftime('%d.%m.%Y')}" if user.get('expires_at') else "Навсегда"
-    
-    text = f"🔑 **Управление ключом**\n\n" \
-           f"👤 **Имя:** `{escape_md(user['name'])}`\n" \
-           f"📡 **Статус:** {status_text}\n" \
-           f"⏳ **Срок действия:** {exp}\n\n" \
-           f"Выберите действие:"
-           
+
+    live = await get_live_peers_status()
+    try:
+        limits = await db.get_peer_limits()
+        common = int(await db.get_setting("pps_limit") or 5000)
+        mode = await db.get_setting("pps_mode") or "observe"
+    except Exception:
+        limits, common, mode = {}, 5000, "observe"
+
+    lines = [f"🔑 **{escape_md(user['name'])}**", ""]
+
+    if not user.get("is_active", True):
+        lines.append(f"⏸ **На паузе** — {await _pause_reason(uuid_val)}")
+        lines.append("     Ключ не удалён: как только решение примут, он снова заработает.")
+    elif live.get(uuid_val):
+        lines.append("🟢 **На связи** — сервер видит ваше устройство")
+    else:
+        lines.append("🟡 **Не подключён** — включите VPN в приложении")
+
+    if user.get("expires_at"):
+        when = dt_to_moscow(user["expires_at"]).strftime("%d.%m.%Y")
+        left = _days_left(user["expires_at"])
+        if left == 0:
+            tail = " — истекает сегодня"
+        elif left <= 14:
+            tail = f" (осталось {left} дн.)"
+        else:
+            tail = ""
+        lines.append(f"⏳ Срок: до {when}{tail}")
+    else:
+        lines.append("⏳ Срок: бессрочно")
+
+    if mode == "enforce" and user.get("is_active", True):
+        hit = await _exceeded_24h(uuid_val)
+        lines.append(f"🚦 Ограничение: {_limit_line(uuid_val, limits, common, mode)}")
+        if hit:
+            lines.append(f"     За сутки упирались {_times(hit)}")
+
+    spent = await _traffic_24h(uuid_val)
+    if spent:
+        lines.append(f"📊 За сутки: {_human_bytes(spent)}")
+
+    lines += ["", "_Перевыпуск выдаёт новый конфиг, старый работает, пока новый "
+                  "не заработает — без обрыва._"]
+
     keyboard = [
         [InlineKeyboardButton("📥 Скачать конфиг", callback_data=f"client_download_{uuid_val}"),
-         InlineKeyboardButton("🔄 Перевыпустить", callback_data=f"client_regen_{uuid_val}")],
+         InlineKeyboardButton("⚡️ Проверить связь", callback_data=f"check_conn_{uuid_val}")],
+        [InlineKeyboardButton("🔄 Перевыпустить", callback_data=f"client_regen_{uuid_val}")],
         [InlineKeyboardButton("🔙 К списку ключей", callback_data="client_my_keys")],
     ]
-    
-    await query.edit_message_text(text=text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
+
+    await query.edit_message_text(text="\n".join(lines),
+                                  reply_markup=InlineKeyboardMarkup(keyboard),
+                                  parse_mode=ParseMode.MARKDOWN)
 
 async def client_regen_all_confirm_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
