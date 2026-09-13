@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src=".github/banner.svg" alt="Dual-Node VPN Shadow System" width="1280">
+<img src=".github/banner.svg" alt="Dual-Node VPN Shadow System" width="900">
 
 ### Распределённый VPN на AmneziaWG: инвертированный туннель между мастером и клиент-сервером, умная гибридная маршрутизация и управление через Telegram-бота
 

@@ -356,48 +356,35 @@ async def whats_new(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ------------------------ ТОКЕН ПАНЕЛЕЙ ------------------------
-# Токен должен совпадать на обеих нодах. Прописывать его руками в двух .env —
-# ровно то, чего администратор делать не должен: бот генерирует его сам и
-# раскладывает по нодам, а от человека нужно одно нажатие.
+# Токен закрывает панели узлов вторым рубежом поверх правил файрвола. Его значение
+# никого не интересует и нигде не вводится руками — бот генерирует его сам при первом
+# запуске, если в окружении пусто, и раскладывает на обе ноды. Никаких кнопок.
 
-async def api_token_notice(app):
-    """Разовое уведомление при старте, если токен ещё не выдан."""
-    from utils import API_TOKEN, ADMIN_ID
-    if API_TOKEN or not ADMIN_ID:
-        return
-    try:
-        await app.bot.send_message(
-            chat_id=ADMIN_ID,
-            text=(
-                "🔑 **Токен панелей не задан**\n\n"
-                "Панели узлов сейчас защищены только правилами файрвола. Токен — "
-                "второй рубеж на случай, если правила однажды слетят.\n\n"
-                "Бот сгенерирует его сам и пропишет на обеих нодах. Вручную в `.env` "
-                "лазить не нужно.\n\n"
-                "⚠️ При применении узел пересоздаётся — соединение у всех прервётся "
-                "на несколько секунд."
-            ),
-            reply_markup=InlineKeyboardMarkup(
-                [[InlineKeyboardButton("🔑 Выдать токен", callback_data="svc_issue_token")]]),
-            parse_mode=ParseMode.MARKDOWN)
-    except Exception as e:
-        print(f"Уведомление о токене: {e}")
+async def ensure_api_token(app):
+    """Выдаёт токен автоматически, если его нет.
 
+    Момент выбран не случайно: бот стартует сразу после деплоя, когда контейнеры
+    и так только что пересоздавались. Значит короткий разрыв, неизбежный при записи
+    переменной, приходится ровно на то же окно, а не на середину рабочего дня.
 
-async def issue_api_token(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Генерирует токен и раскладывает по обеим нодам.
-
-    Порядок здесь не важен: агент принимает мастера по адресу в туннеле и без токена,
-    поэтому те несколько секунд, пока ноды применяют настройку не одновременно, связь
-    между ними не рвётся.
+    Защита от повторов: если запись почему-то не доехала, вторая попытка будет не
+    раньше чем через час — иначе бот при каждом старте пересоздавал бы контейнеры.
     """
     import secrets
-    from utils import request_env_change, DE_AGENT_URL, api_session
+    from datetime import datetime, timedelta
+    from utils import API_TOKEN, ADMIN_ID, request_env_change, DE_AGENT_URL, api_session
 
-    query = update.callback_query
-    await query.answer("Генерирую…")
+    if API_TOKEN:
+        return
+
+    try:
+        last = await db.get_setting("api_token_issued_at")
+        if last and datetime.utcnow() - datetime.fromisoformat(last) < timedelta(hours=1):
+            return
+    except Exception:
+        pass
+
     token = secrets.token_urlsafe(24)
-
     de_ok = False
     try:
         async with api_session() as session:
@@ -406,16 +393,23 @@ async def issue_api_token(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                     timeout=10) as r:
                 de_ok = r.status == 200
     except Exception as e:
-        print(f"Токен на агента: {e}")
+        print(f"Токен на клиент-сервер: {e}")
 
     request_env_change("API_TOKEN", token)
-    await db.log_event("Security", "Выдан новый токен панелей узлов")
+    await db.set_setting("api_token_issued_at", datetime.utcnow().isoformat())
+    await db.log_event("Security", "Токен панелей выдан автоматически")
+    print("🔑 Токен панелей выдан автоматически")
 
-    text = (
-        "🔑 **Токен выдан**\n\n"
-        f"Мастер: записан, контейнеры пересоздаются.\n"
-        f"Агент: {'записан' if de_ok else '⚠️ не удалось — проверьте связь с Германией'}.\n\n"
-        "Бот сейчас перезапустится. Если агент не получил токен, повторите позже — "
-        "до тех пор панели остаются под защитой файрвола."
-    )
-    await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN)
+    if ADMIN_ID:
+        try:
+            await app.bot.send_message(
+                chat_id=ADMIN_ID,
+                text=("🔑 Токен панелей выдан автоматически — панели узлов закрыты "
+                      "вторым рубежом поверх файрвола.\n\n"
+                      + ("Клиент-сервер тоже получил его."
+                         if de_ok else
+                         "⚠️ Клиент-сервер не ответил — он получит токен при следующем "
+                         "запуске бота. До тех пор его панель защищена файрволом."))
+            )
+        except Exception:
+            pass
