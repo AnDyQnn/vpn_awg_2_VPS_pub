@@ -242,6 +242,27 @@ class Database:
             await self.execute(
                 "CREATE INDEX IF NOT EXISTS idx_traffic_hourly_hour ON traffic_hourly(hour);")
 
+            # --- ВТОРОЙ ПРОТОКОЛ: XRAY ---
+            # Человек остаётся один, меняется только способ подключения. Поэтому
+            # здесь не «вторые пользователи», а приписка к существующему: его
+            # идентификатор в Xray и токен личной ссылки на подписку.
+            #
+            # Токен отдельно от идентификатора намеренно: ссылку можно отозвать,
+            # не трогая само подключение, и наоборот — сменить доступ, не меняя
+            # ссылку, которую человек уже сохранил.
+            await self.execute("""
+                CREATE TABLE IF NOT EXISTS xray_users (
+                    user_uuid TEXT PRIMARY KEY REFERENCES users(uuid) ON DELETE CASCADE,
+                    xray_uuid TEXT NOT NULL,
+                    sub_token TEXT NOT NULL UNIQUE,
+                    created_at TIMESTAMP DEFAULT NOW(),
+                    first_seen_at TIMESTAMP,
+                    revoked_at TIMESTAMP
+                );
+            """)
+            await self.execute(
+                "CREATE INDEX IF NOT EXISTS idx_xray_token ON xray_users(sub_token);")
+
             # --- ФИЛЬТРАЦИЯ САЙТОВ ---
             # Категории на человека, а не на роль: роль про домашние сервисы,
             # фильтр про внешний интернет, и людям они назначаются по разной
@@ -389,6 +410,56 @@ class Database:
         await self.execute("DELETE FROM pending_retire WHERE old_uuid=$1", old_uuid)
 
     # ------------------------ КОНТРОЛЬ НАГРУЗКИ ------------------------
+    # --- ВТОРОЙ ПРОТОКОЛ: XRAY -------------------------------------------
+    async def add_xray_user(self, user_uuid, xray_uuid, sub_token):
+        """Заводит человеку подключение по Xray. Повторный вызов перевыпускает:
+        и идентификатор, и токен ссылки — это и есть «отозвать утёкшую ссылку»."""
+        await self.execute(
+            """INSERT INTO xray_users (user_uuid, xray_uuid, sub_token)
+               VALUES ($1,$2,$3)
+               ON CONFLICT (user_uuid) DO UPDATE SET
+                   xray_uuid=$2, sub_token=$3, created_at=NOW(),
+                   first_seen_at=NULL, revoked_at=NULL""",
+            user_uuid, xray_uuid, sub_token)
+
+    async def get_xray_user(self, user_uuid):
+        rows = await self.fetch_all(
+            "SELECT xray_uuid, sub_token, created_at, first_seen_at, revoked_at "
+            "FROM xray_users WHERE user_uuid=$1", user_uuid)
+        return dict(rows[0]) if rows else None
+
+    async def get_xray_by_token(self, token):
+        """Кому принадлежит ссылка. Отозванные не отдаём — иначе отзыв ничего
+        не значил бы до следующей выдачи."""
+        rows = await self.fetch_all(
+            "SELECT x.user_uuid, x.xray_uuid, u.name, u.is_active, u.expires_at "
+            "FROM xray_users x JOIN users u ON u.uuid = x.user_uuid "
+            "WHERE x.sub_token=$1 AND x.revoked_at IS NULL", token)
+        return dict(rows[0]) if rows else None
+
+    async def list_xray_users(self):
+        """Все действующие подключения Xray — из них собирается конфиг узла."""
+        rows = await self.fetch_all(
+            "SELECT x.user_uuid, x.xray_uuid, x.first_seen_at, u.name, u.is_active "
+            "FROM xray_users x JOIN users u ON u.uuid = x.user_uuid "
+            "WHERE x.revoked_at IS NULL ORDER BY u.name")
+        return [dict(r) for r in rows]
+
+    async def mark_xray_seen(self, user_uuid):
+        """Первое живое подключение. Именно оно считается переездом, а не факт
+        выдачи ссылки."""
+        await self.execute(
+            "UPDATE xray_users SET first_seen_at=NOW() "
+            "WHERE user_uuid=$1 AND first_seen_at IS NULL", user_uuid)
+
+    async def revoke_xray(self, user_uuid):
+        await self.execute(
+            "UPDATE xray_users SET revoked_at=NOW() WHERE user_uuid=$1", user_uuid)
+
+    async def count_xray_users(self):
+        return await self.fetch_val(
+            "SELECT COUNT(*) FROM xray_users WHERE revoked_at IS NULL") or 0
+
     # --- ФИЛЬТРАЦИЯ САЙТОВ -----------------------------------------------
     async def get_user_filters(self, uuid):
         rows = await self.fetch_all(
