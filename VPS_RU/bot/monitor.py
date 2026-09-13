@@ -13,6 +13,7 @@ from telegram import Update
 from telegram.ext import ContextTypes
 from database import db
 from utils import (
+    api_session,
     get_moscow_now, dt_to_moscow, broadcast_message, DE_AGENT_URL, WG_API_URL,
     ADMIN_ID, escape_md, GOSUSLUGI_APP_WARNING, analyze_resource, CONFIGS_DIR, ROUTING_VERSION,
     get_update_info
@@ -208,7 +209,7 @@ async def get_dashboard():
     # RU: активные VPN-сессии (и жив ли WG-API)
     active, total, ru_ok = 0, 0, True
     try:
-        async with aiohttp.ClientSession() as session:
+        async with api_session() as session:
             async with session.get(f"{WG_API_URL}/status", timeout=3) as resp:
                 if resp.status == 200:
                     data = await resp.json()
@@ -222,7 +223,7 @@ async def get_dashboard():
     # DE: ресурсы агента (и жив ли он)
     de_ok, cpu_de, ram_de, disk_de = False, 0, 0, 0
     try:
-        async with aiohttp.ClientSession() as session:
+        async with api_session() as session:
             async with session.get(f"{DE_AGENT_URL}/system_stats", timeout=3) as resp:
                 if resp.status == 200:
                     d = await resp.json()
@@ -285,7 +286,7 @@ async def resource_monitor_loop(app):
         if disk_ru > 90 and should_alert("RU_DISK"): alerts.append(f"🇷🇺 **RU Диск:** {disk_ru}%")
 
         try:
-            async with aiohttp.ClientSession() as session:
+            async with api_session() as session:
                 async with session.get(f"{DE_AGENT_URL}/system_stats", timeout=5) as resp:
                     if resp.status == 200:
                         de_data = await resp.json()
@@ -310,7 +311,7 @@ async def alert_loop(app):
     
     while True:
         try:
-            async with aiohttp.ClientSession() as session:
+            async with api_session() as session:
                 async with session.get(f"{WG_API_URL}/peers", timeout=5) as resp:
                     resp.raise_for_status()
                     peers_data = await resp.json()
@@ -344,7 +345,7 @@ async def alert_loop(app):
                     
                 if is_ghost or is_paused_violation:
                     try:
-                        async with aiohttp.ClientSession() as kill_session:
+                        async with api_session() as kill_session:
                             await kill_session.post(f"{WG_API_URL}/kill_ghost", json={"public_key": pubkey, "purge_config": is_ghost}, timeout=5)
                     except Exception: pass
                     
@@ -386,7 +387,7 @@ async def alert_loop(app):
                             # Легитимное переключение сети сюда не попадает.
                             if len(events) >= FLAP_MIN_JUMPS and distinct_ips <= FLAP_MAX_DISTINCT:
                                 try:
-                                    async with aiohttp.ClientSession() as session:
+                                    async with api_session() as session:
                                         await session.post(f"{WG_API_URL}/peers/{uuid_val}/pause")
                                 except Exception: pass
                                 
@@ -454,7 +455,7 @@ async def self_healing_loop(app):
     fail_count = 0
     while True:
         try:
-            async with aiohttp.ClientSession() as session:
+            async with api_session() as session:
                 async with session.get(f"{WG_API_URL}/health", timeout=5) as resp:
                     if resp.status == 200: fail_count = 0
                     else: fail_count += 1
@@ -491,7 +492,7 @@ async def de_self_healing_loop(app):
 
     async def _de_route(action):   # action: 'de-fallback' | 'de-restore'
         try:
-            async with aiohttp.ClientSession() as s:
+            async with api_session() as s:
                 async with s.post(f"{wg_base}/routing/{action}", timeout=8) as r:
                     return r.status == 200
         except Exception:
@@ -501,7 +502,7 @@ async def de_self_healing_loop(app):
         await asyncio.sleep(180)
         ok = False
         try:
-            async with aiohttp.ClientSession() as session:
+            async with api_session() as session:
                 async with session.get(f"{DE_AGENT_URL}/wg/status", timeout=5) as resp:
                     if resp.status == 200:
                         data = await resp.json()
@@ -530,7 +531,7 @@ async def de_self_healing_loop(app):
             await db.log_event("Self-Healing", "DE tunnel unhealthy — triggering wg reload on DE agent.")
             reloaded = False
             try:
-                async with aiohttp.ClientSession() as session:
+                async with api_session() as session:
                     async with session.post(f"{DE_AGENT_URL}/wg/reload", timeout=15) as resp:
                         reloaded = (resp.status == 200)
             except Exception:
@@ -560,7 +561,7 @@ async def expiration_loop(app):
                 if u['is_active'] and u['expires_at'] and u['expires_at'] < now:
                     uuid_val, safe_name = u['uuid'], escape_md(u['name'])
                     try:
-                        async with aiohttp.ClientSession() as session:
+                        async with api_session() as session:
                             await session.post(f"{WG_API_URL}/peers/{uuid_val}/pause")
                     except Exception: pass
                     
@@ -588,7 +589,7 @@ async def inactivity_loop(app):
                     if last_active and (now - last_active).days >= 30:
                         uuid_val, safe_name = u['uuid'], escape_md(u['name'])
                         try:
-                            async with aiohttp.ClientSession() as session:
+                            async with api_session() as session:
                                 await session.post(f"{WG_API_URL}/peers/{uuid_val}/pause")
                         except Exception: pass
                         
@@ -608,7 +609,7 @@ async def weekly_report_loop(app):
                 stats_24 = await db.get_stats_24h()
                 live_data = {}
                 try:
-                    async with aiohttp.ClientSession() as session:
+                    async with api_session() as session:
                         async with session.get(f"{WG_API_URL}/peers", timeout=5) as resp:
                             if resp.status == 200:
                                 peers = await resp.json()
@@ -660,7 +661,7 @@ async def cleanup_peers():
 async def stats_collector_loop():
     while True:
         try:
-            async with aiohttp.ClientSession() as session:
+            async with api_session() as session:
                 async with session.get(f"{WG_API_URL}/peers", timeout=10) as resp:
                     if resp.status == 200:
                         peers_data = await resp.json()
@@ -709,7 +710,7 @@ async def auto_reboot_loop(app):
                 if await db.get_setting("last_auto_reboot_de") != today_str:
                     await db.set_setting("last_auto_reboot_de", today_str)
                     try:
-                        async with aiohttp.ClientSession() as session:
+                        async with api_session() as session:
                             await session.post(f"{DE_AGENT_URL}/host/reboot", timeout=5)
                         await db.log_event("System", "Weekly DE auto-reboot triggered.")
                         if ADMIN_ID:
@@ -758,7 +759,7 @@ async def auto_update_check_loop(app):
                     await db.log_event("Update", f"Auto-update: new version {remote_ver} ({remote_hash}) — applying (RU+DE).")
                     # DE — командой по туннелю (не критично, если агент не ответил)
                     try:
-                        async with aiohttp.ClientSession() as session:
+                        async with api_session() as session:
                             await session.post(f"{DE_AGENT_URL}/host/update", timeout=5)
                     except Exception:
                         pass

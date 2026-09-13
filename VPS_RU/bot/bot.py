@@ -14,6 +14,7 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, Cal
 from telegram.constants import ParseMode
 
 from utils import (
+    api_session,
     BOT_TOKEN, ADMIN_ID, WG_API_URL, DE_AGENT_URL, escape_md, state_data, stop_bg_tasks, deregister_menu,
     safe_delete, get_current_version, broadcast_message, extract_tg_id, check_admin, sanitize_name,
     analyze_resource, CONFIGS_DIR
@@ -58,7 +59,7 @@ async def sync_wg_config():
         saved_json = await db.get_setting("wg_config_backup")
         if saved_json:
             saved_data = json.loads(saved_json)
-            async with aiohttp.ClientSession() as session:
+            async with api_session() as session:
                 async with session.get(f"{WG_API_URL}/backup_config", timeout=5) as resp:
                     if resp.status == 200:
                         current_data = await resp.json()
@@ -74,7 +75,7 @@ async def sync_wg_config():
         db_users = await db.get_all_users()
         db_uuids = [u['uuid'] for u in db_users]
         
-        async with aiohttp.ClientSession() as session:
+        async with api_session() as session:
             async with session.get(f"{WG_API_URL}/peers", timeout=5) as resp:
                 if resp.status == 200:
                     wg_peers = await resp.json()
@@ -104,7 +105,7 @@ async def watch_online_count(app):
     while True:
         try:
             current_active = 0
-            async with aiohttp.ClientSession() as session:
+            async with api_session() as session:
                 async with session.get(f"{WG_API_URL}/status", timeout=2) as resp:
                     if resp.status == 200: 
                         current_active = (await resp.json()).get("active_peers", 0)
@@ -166,7 +167,7 @@ async def check_update_completion(app):
             if ADMIN_ID:
                 try:
                     active_count = 0
-                    async with aiohttp.ClientSession() as session:
+                    async with api_session() as session:
                         async with session.get(f"{WG_API_URL}/status", timeout=2) as resp:
                             if resp.status == 200: 
                                 active_count = (await resp.json()).get("active_peers", 0)
@@ -226,7 +227,7 @@ async def _filter_bypass_cidrs(cidrs):
     (на бэке build_split_allowed_ips всё равно отфильтрует небезопасные при выдаче конфига)."""
     wg_base = WG_API_URL.rsplit("/api", 1)[0]
     try:
-        async with aiohttp.ClientSession() as s:
+        async with api_session() as s:
             async with s.post(f"{wg_base}/routing/bypass-check", json={"cidrs": list(cidrs)}, timeout=8) as r:
                 if r.status != 200:
                     return list(cidrs), []

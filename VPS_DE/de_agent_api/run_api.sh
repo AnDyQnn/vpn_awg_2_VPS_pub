@@ -37,6 +37,16 @@ else
     echo "⚠️ Warning: wg0.conf not found. Waiting for manual config upload from RU Master."
 fi
 
+# --- БЕЗОПАСНОСТЬ: панель агента доступна только мастеру ---
+# Порт 8000 смотрит в туннель, то есть был открыт любому пиру: можно было перенастроить
+# туннель, скачать конфиги и перезагрузить хост. Пускаем только мастера 10.13.13.1.
+# Правила идемпотентны (-C || добавить) и переживают перезапуск интерфейса, потому что
+# цепочку INPUT здесь никто не флашит.
+iptables -C INPUT -i wg0 -s 10.13.13.1 -p tcp --dport 8000 -j ACCEPT 2>/dev/null \
+    || iptables -I INPUT 1 -i wg0 -s 10.13.13.1 -p tcp --dport 8000 -j ACCEPT || true
+iptables -C INPUT -p tcp --dport 8000 -j DROP 2>/dev/null \
+    || iptables -A INPUT -p tcp --dport 8000 -j DROP || true
+
 echo "🚀 Starting DE Agent (AmneziaWG Client + Monitor API)..."
 
 # Запускаем API агента

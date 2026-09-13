@@ -88,6 +88,18 @@ if [ -f "$PROJECT_ROOT/scripts/ensure_host_maintenance.sh" ]; then
     bash "$PROJECT_ROOT/scripts/ensure_host_maintenance.sh" || true
 fi
 
+# 3d. Версия проекта для тегов образов. Берём из файла VERSION (сначала ноды, потом корня),
+#     чтобы в `docker images` было видно, какая версия крутится, вместо безликого latest.
+if [ -f "$NODE_DIR/VERSION" ]; then
+    APP_VERSION="$(tr -d '[:space:]' < "$NODE_DIR/VERSION")"
+elif [ -f "$PROJECT_ROOT/VERSION" ]; then
+    APP_VERSION="$(tr -d '[:space:]' < "$PROJECT_ROOT/VERSION")"
+else
+    APP_VERSION="dev"
+fi
+export APP_VERSION
+echo "[Deploy] Версия проекта: $APP_VERSION (тег образов)"
+
 # 4. СБОРКА новых образов, пока старые контейнеры ещё работают (даунтайм = 0)
 echo "[Deploy] Шаг 3: Сборка новых образов (старые контейнеры продолжают работать)..."
 if ! docker compose build; then

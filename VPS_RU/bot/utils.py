@@ -79,6 +79,21 @@ GIT_TOKEN = os.getenv("GIT_TOKEN", "")
 WG_API_URL = os.getenv("WG_API_URL", "http://127.0.0.1:8000/api")
 DE_AGENT_URL = os.getenv("DE_AGENT_URL", "http://10.13.13.254:8000/api")
 
+# Токен для панелей узлов. Все запросы бота идут только на WG_API_URL и DE_AGENT_URL —
+# наружу не ходит ни один, поэтому заголовок можно вешать на сессию целиком, не рискуя
+# отправить токен постороннему хосту. Токен необязателен: без него узлы работают как
+# раньше (см. комментарий в ru_wg_api/api.py), обновление ничего не ломает.
+API_TOKEN = os.getenv("API_TOKEN", "").strip()
+API_HEADERS = {"X-Api-Key": API_TOKEN} if API_TOKEN else {}
+
+
+def api_session(**kwargs):
+    """Сессия для запросов к панелям узлов — с токеном, если он задан."""
+    import aiohttp
+    headers = dict(kwargs.pop("headers", {}) or {})
+    headers.update(API_HEADERS)
+    return aiohttp.ClientSession(headers=headers, **kwargs)
+
 CONFIGS_DIR = Path("/volumes/configs")
 CONFIGS_DIR.mkdir(parents=True, exist_ok=True)
 
