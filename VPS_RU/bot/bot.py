@@ -45,7 +45,8 @@ from handlers_client import (
 )
 from handlers_service import (
     service_menu, toggle_mode, set_mode, load_screen, limits_screen,
-    change_limit, set_peer_rule, load_chart, whats_new
+    change_limit, set_peer_rule, load_chart, whats_new,
+    issue_api_token, api_token_notice
 )
 from handlers_admin import (
     ask_backup_password,
@@ -626,6 +627,7 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "svc_load": await load_screen(update, context); return
     if data == "svc_chart": await load_chart(update, context); return
     if data == "svc_whatsnew": await whats_new(update, context); return
+    if data == "svc_issue_token": await issue_api_token(update, context); return
     if data.startswith("svc_pchart_"):
         await load_chart(update, context, data.replace("svc_pchart_", "")); return
     if data == "svc_limits": await limits_screen(update, context); return
@@ -848,7 +850,9 @@ async def post_init(application):
         asyncio.create_task(bypass_reresolve_loop(application)),
         asyncio.create_task(midnight_alert_cleanup_loop(application)),
         asyncio.create_task(load_collector_loop(application)),
-        asyncio.create_task(retire_watch_loop(application))
+        asyncio.create_task(retire_watch_loop(application)),
+        # разовая проверка: токен панелей не задан — предложить выдать
+        asyncio.create_task(api_token_notice(application))
     ]
     state_data["bg_tasks"].update(tasks)
 

@@ -16,11 +16,25 @@ from pydantic import BaseModel
 API_TOKEN = os.getenv("API_TOKEN", "").strip()
 
 
+MASTER_IP = "10.13.13.1"
+
+
 def verify_token(request: Request):
     if not API_TOKEN:
         return
-    if request.headers.get("X-Api-Key", "") != API_TOKEN:
-        raise HTTPException(status_code=401, detail="Unauthorized")
+    if request.headers.get("X-Api-Key", "") == API_TOKEN:
+        return
+    # Запросы с адреса мастера принимаем и без токена.
+    #
+    # Это не послабление: адрес в туннеле привязан к ключу самим WireGuard, подделать
+    # его нельзя, а порт и так закрыт файрволом для всех, кроме мастера. Зато снимается
+    # проблема очерёдности: когда токен выдаётся впервые, ноды применяют его не
+    # одновременно, и без этой поблажки агент начал бы отвергать мастера на те
+    # несколько секунд, пока тот пересоздаёт контейнеры.
+    client = request.client.host if request.client else ""
+    if client == MASTER_IP:
+        return
+    raise HTTPException(status_code=401, detail="Unauthorized")
 
 
 app = FastAPI(dependencies=[Depends(verify_token)])
@@ -116,6 +130,35 @@ def get_logs(lines: int = 50):
         return {"status": "success", "logs": log_output}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+class EnvChange(BaseModel):
+    key: str
+    value: str
+
+
+@app.post("/api/host/set_env")
+def set_env(data: EnvChange):
+    """Записать переменную в .env агента и пересоздать контейнер.
+
+    Нужно, чтобы администратор не лазил по серверам руками: токен панелей должен
+    совпадать на обеих нодах, и мастер проставляет его здесь сам. Сама запись — дело
+    демона на хосте, контейнер к .env доступа не имеет.
+
+    Разрешены только известные ключи: иначе через эту ручку можно было бы дописать
+    в окружение что угодно.
+    """
+    allowed = {"API_TOKEN", "BACKUP_PASSWORD"}
+    if data.key not in allowed:
+        raise HTTPException(status_code=400, detail="Недопустимая переменная")
+    try:
+        flag = os.path.join(FLAGS_DIR, "set_env")
+        with open(flag, "w") as f:
+            f.write(f"{data.key}={data.value}\n")
+        os.chmod(flag, 0o600)
+        return {"status": "success"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.post("/api/host/reboot")
 def trigger_reboot():

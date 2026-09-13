@@ -1,11 +1,11 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 320" width="1280" height="320" role="img" aria-label="Dual-Node VPN Shadow System">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 460" width="1280" height="460" role="img" aria-label="Dual-Node VPN Shadow System">
   <title>Dual-Node VPN Shadow System</title>
 
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#0e1116"/>
-      <stop offset="0.55" stop-color="#121826"/>
-      <stop offset="1" stop-color="#0e1116"/>
+      <stop offset="0" stop-color="#0d1015"/>
+      <stop offset="0.5" stop-color="#131a28"/>
+      <stop offset="1" stop-color="#0d1015"/>
     </linearGradient>
 
     <linearGradient id="title" x1="0" y1="0" x2="1" y2="0">
@@ -13,123 +13,166 @@
       <stop offset="0.5" stop-color="#e6edf3"/>
       <stop offset="1" stop-color="#79c0ff"/>
       <animateTransform attributeName="gradientTransform" type="translate"
-                        values="-0.4 0; 0.4 0; -0.4 0" dur="9s" repeatCount="indefinite"/>
+                        values="-0.45 0; 0.45 0; -0.45 0" dur="10s" repeatCount="indefinite"/>
     </linearGradient>
 
     <linearGradient id="tunnel" x1="0" y1="0" x2="1" y2="0">
       <stop offset="0" stop-color="#3fb950"/>
-      <stop offset="1" stop-color="#58a6ff"/>
+      <stop offset="0.5" stop-color="#58a6ff"/>
+      <stop offset="1" stop-color="#a371f7"/>
     </linearGradient>
 
-    <radialGradient id="glowRu" cx="0.5" cy="0.5" r="0.5">
-      <stop offset="0" stop-color="#58a6ff" stop-opacity="0.32"/>
+    <linearGradient id="rack" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1c2430"/>
+      <stop offset="1" stop-color="#141a24"/>
+    </linearGradient>
+
+    <radialGradient id="halo" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#58a6ff" stop-opacity="0.28"/>
       <stop offset="1" stop-color="#58a6ff" stop-opacity="0"/>
     </radialGradient>
-    <radialGradient id="glowDe" cx="0.5" cy="0.5" r="0.5">
-      <stop offset="0" stop-color="#a371f7" stop-opacity="0.32"/>
+    <radialGradient id="halo2" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#a371f7" stop-opacity="0.28"/>
       <stop offset="1" stop-color="#a371f7" stop-opacity="0"/>
     </radialGradient>
 
     <style>
-      .mono { font-family: "IBM Plex Mono", ui-monospace, Consolas, monospace; }
       .sans { font-family: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif; }
+      .mono { font-family: "IBM Plex Mono", ui-monospace, Consolas, monospace; }
 
-      /* сеть на фоне: узлы мерцают вразнобой, связи дышат */
-      .node { fill: #58a6ff; opacity: .42; animation: blink 4s ease-in-out infinite; }
-      .link { stroke: #58a6ff; stroke-width: 1; opacity: .12;
-              animation: pulse 6s ease-in-out infinite; }
-      @keyframes blink { 0%,100% { opacity:.18 } 50% { opacity:.6 } }
-      @keyframes pulse { 0%,100% { opacity:.06 } 50% { opacity:.2 } }
+      .node  { fill: #58a6ff; animation: blink 4s ease-in-out infinite; }
+      .link  { stroke: #58a6ff; stroke-width: 1; animation: pulse 6s ease-in-out infinite; }
+      @keyframes blink { 0%,100% { opacity:.16 } 50% { opacity:.55 } }
+      @keyframes pulse { 0%,100% { opacity:.05 } 50% { opacity:.18 } }
 
-      /* падающий код — как в панели управления */
-      .rain { fill: #3fb950; opacity: .16; }
-      .rain text { animation: fall 7s linear infinite; }
-      @keyframes fall { from { transform: translateY(-40px) } to { transform: translateY(360px) } }
+      .rain text { animation: fall 8s linear infinite; }
+      @keyframes fall { from { transform: translateY(-30px) } to { transform: translateY(500px) } }
 
-      /* пакет, бегущий по туннелю из России в Германию */
-      .packet { fill: #9ff7a8; }
-      .beam { stroke-dasharray: 10 14; animation: dash 1.6s linear infinite; }
-      @keyframes dash { to { stroke-dashoffset: -48 } }
+      /* индикаторы на стойках — живут вразнобой, как настоящие */
+      .led { animation: led 1.6s steps(1) infinite; }
+      @keyframes led { 0%,60% { opacity:1 } 61%,100% { opacity:.25 } }
 
-      .breathe { animation: breathe 3.6s ease-in-out infinite; transform-origin: center; }
-      @keyframes breathe { 0%,100% { opacity:.55 } 50% { opacity:1 } }
+      .beam { stroke-dasharray: 12 16; animation: dash 1.8s linear infinite; }
+      @keyframes dash { to { stroke-dashoffset: -56 } }
+
+      .halo { animation: breathe 4s ease-in-out infinite; transform-origin: center; }
+      @keyframes breathe { 0%,100% { opacity:.5 } 50% { opacity:1 } }
+
+      .scan { animation: scan 3.4s cubic-bezier(.5,0,.5,1) infinite; }
+      @keyframes scan { 0% { transform: translateY(0); opacity:0 }
+                        15% { opacity:.55 }
+                        85% { opacity:.55 }
+                        100% { transform: translateY(96px); opacity:0 } }
 
       @media (prefers-reduced-motion: reduce) {
-        .node, .link, .rain text, .beam, .breathe, #title-grad { animation: none }
+        .node,.link,.rain text,.led,.beam,.halo,.scan { animation: none }
       }
     </style>
+
+    <!-- серверная стойка: рисуем один раз, ставим дважды -->
+    <g id="server">
+      <rect x="-46" y="-58" width="92" height="116" rx="9" fill="url(#rack)" stroke="#30363d"/>
+      <g stroke="#2b3340" stroke-width="1">
+        <line x1="-34" y1="-30" x2="34" y2="-30"/>
+        <line x1="-34" y1="-2"  x2="34" y2="-2"/>
+        <line x1="-34" y1="26"  x2="34" y2="26"/>
+      </g>
+      <g fill="#3fb950">
+        <rect class="led" x="26" y="-44" width="6" height="6" rx="1.5"/>
+        <rect class="led" x="26" y="-16" width="6" height="6" rx="1.5" style="animation-delay:-.5s"/>
+        <rect class="led" x="26" y="12"  width="6" height="6" rx="1.5" style="animation-delay:-1.1s"/>
+        <rect class="led" x="26" y="40"  width="6" height="6" rx="1.5" style="animation-delay:-1.4s"/>
+      </g>
+      <g fill="#58a6ff" opacity=".55">
+        <rect x="-34" y="-44" width="22" height="5" rx="2"/>
+        <rect x="-34" y="-16" width="16" height="5" rx="2"/>
+        <rect x="-34" y="12"  width="26" height="5" rx="2"/>
+        <rect x="-34" y="40"  width="14" height="5" rx="2"/>
+      </g>
+    </g>
   </defs>
 
-  <rect width="1280" height="320" fill="url(#bg)"/>
+  <rect width="1280" height="460" fill="url(#bg)"/>
 
   <!-- фоновая сеть -->
-  <g class="links">
-    <path class="link" d="M90 70 L210 130 L150 250" fill="none" style="animation-delay:-1s"/>
-    <path class="link" d="M210 130 L330 60 L420 180" fill="none" style="animation-delay:-2.4s"/>
-    <path class="link" d="M1090 80 L1170 170 L1050 250" fill="none" style="animation-delay:-3.1s"/>
-    <path class="link" d="M900 50 L1010 120 L960 230" fill="none" style="animation-delay:-0.6s"/>
-    <path class="link" d="M420 180 L520 90" fill="none" style="animation-delay:-4s"/>
-    <path class="link" d="M760 240 L860 150" fill="none" style="animation-delay:-2.9s"/>
+  <g class="links" fill="none">
+    <path class="link" d="M80 90 L200 160 L140 300" style="animation-delay:-1s"/>
+    <path class="link" d="M200 160 L330 80 L430 210" style="animation-delay:-2.4s"/>
+    <path class="link" d="M1100 100 L1190 200 L1060 300" style="animation-delay:-3.1s"/>
+    <path class="link" d="M880 70 L1010 140 L950 270" style="animation-delay:-0.6s"/>
+    <path class="link" d="M430 210 L540 110" style="animation-delay:-4s"/>
+    <path class="link" d="M740 290 L860 180" style="animation-delay:-2.9s"/>
   </g>
   <g>
-    <circle class="node" cx="90" cy="70" r="2.4"/>
-    <circle class="node" cx="210" cy="130" r="2.4" style="animation-delay:-.8s"/>
-    <circle class="node" cx="150" cy="250" r="2.4" style="animation-delay:-1.6s"/>
-    <circle class="node" cx="330" cy="60" r="2.4" style="animation-delay:-2.2s"/>
-    <circle class="node" cx="420" cy="180" r="2.4" style="animation-delay:-3s"/>
-    <circle class="node" cx="520" cy="90" r="2.4" style="animation-delay:-1.1s"/>
-    <circle class="node" cx="760" cy="240" r="2.4" style="animation-delay:-2.6s"/>
-    <circle class="node" cx="860" cy="150" r="2.4" style="animation-delay:-.4s"/>
-    <circle class="node" cx="900" cy="50" r="2.4" style="animation-delay:-3.4s"/>
-    <circle class="node" cx="1010" cy="120" r="2.4" style="animation-delay:-1.9s"/>
-    <circle class="node" cx="1090" cy="80" r="2.4" style="animation-delay:-2.8s"/>
-    <circle class="node" cx="1170" cy="170" r="2.4" style="animation-delay:-.2s"/>
-    <circle class="node" cx="1050" cy="250" r="2.4" style="animation-delay:-3.8s"/>
+    <circle class="node" cx="80"   cy="90"  r="2.6"/>
+    <circle class="node" cx="200"  cy="160" r="2.6" style="animation-delay:-.8s"/>
+    <circle class="node" cx="140"  cy="300" r="2.6" style="animation-delay:-1.6s"/>
+    <circle class="node" cx="330"  cy="80"  r="2.6" style="animation-delay:-2.2s"/>
+    <circle class="node" cx="430"  cy="210" r="2.6" style="animation-delay:-3s"/>
+    <circle class="node" cx="540"  cy="110" r="2.6" style="animation-delay:-1.1s"/>
+    <circle class="node" cx="740"  cy="290" r="2.6" style="animation-delay:-2.6s"/>
+    <circle class="node" cx="860"  cy="180" r="2.6" style="animation-delay:-.4s"/>
+    <circle class="node" cx="880"  cy="70"  r="2.6" style="animation-delay:-3.4s"/>
+    <circle class="node" cx="1010" cy="140" r="2.6" style="animation-delay:-1.9s"/>
+    <circle class="node" cx="1100" cy="100" r="2.6" style="animation-delay:-2.8s"/>
+    <circle class="node" cx="1190" cy="200" r="2.6" style="animation-delay:-.2s"/>
+    <circle class="node" cx="1060" cy="300" r="2.6" style="animation-delay:-3.8s"/>
   </g>
 
   <!-- падающий код -->
-  <g class="rain mono" font-size="13">
-    <text x="60"   y="0">01</text>
-    <text x="250"  y="0" style="animation-delay:-2.5s">{}</text>
-    <text x="470"  y="0" style="animation-delay:-4.8s">1101</text>
-    <text x="820"  y="0" style="animation-delay:-1.2s">&lt;/&gt;</text>
-    <text x="1130" y="0" style="animation-delay:-3.6s">0x1F</text>
-  </g>
-
-  <!-- узлы: Россия и Германия, между ними туннель -->
-  <g transform="translate(0,232)">
-    <ellipse cx="300" cy="14" rx="120" ry="34" fill="url(#glowRu)" class="breathe"/>
-    <ellipse cx="980" cy="14" rx="120" ry="34" fill="url(#glowDe)" class="breathe" style="animation-delay:-1.8s"/>
-
-    <rect x="228" y="-4" width="144" height="36" rx="10" fill="#161b22" stroke="#30363d"/>
-    <text x="300" y="20" class="sans" font-size="15" font-weight="600" fill="#c9d1d9" text-anchor="middle">🇷🇺 Мастер</text>
-
-    <rect x="908" y="-4" width="144" height="36" rx="10" fill="#161b22" stroke="#30363d"/>
-    <text x="980" y="20" class="sans" font-size="15" font-weight="600" fill="#c9d1d9" text-anchor="middle">🇩🇪 Выход</text>
-
-    <line x1="378" y1="14" x2="902" y2="14" stroke="url(#tunnel)" stroke-width="2" opacity=".55"/>
-    <line x1="378" y1="14" x2="902" y2="14" stroke="url(#tunnel)" stroke-width="2.5" class="beam"/>
-
-    <circle class="packet" r="3.5" cy="14">
-      <animate attributeName="cx" values="378;902" dur="2.6s" repeatCount="indefinite"/>
-      <animate attributeName="opacity" values="0;1;1;0" dur="2.6s" repeatCount="indefinite"/>
-    </circle>
-    <circle class="packet" r="3.5" cy="14" opacity="0">
-      <animate attributeName="cx" values="378;902" dur="2.6s" begin="1.3s" repeatCount="indefinite"/>
-      <animate attributeName="opacity" values="0;1;1;0" dur="2.6s" begin="1.3s" repeatCount="indefinite"/>
-    </circle>
-
-    <text x="640" y="-12" class="mono" font-size="11" fill="#8b949e" text-anchor="middle">инвертированный туннель · UDP</text>
+  <g class="rain mono" font-size="13" fill="#3fb950" opacity=".14">
+    <text x="55"   y="0">01</text>
+    <text x="245"  y="0" style="animation-delay:-2.5s">{}</text>
+    <text x="465"  y="0" style="animation-delay:-4.8s">1101</text>
+    <text x="815"  y="0" style="animation-delay:-1.2s">&lt;/&gt;</text>
+    <text x="1125" y="0" style="animation-delay:-3.6s">0x1F</text>
   </g>
 
   <!-- заголовок -->
-  <text x="640" y="118" class="sans" font-size="46" font-weight="800" text-anchor="middle" fill="url(#title)">
+  <text x="640" y="112" class="sans" font-size="52" font-weight="800" text-anchor="middle" fill="url(#title)">
     Dual-Node VPN Shadow System
   </text>
-  <text x="640" y="154" class="sans" font-size="17" text-anchor="middle" fill="#8b949e">
-    AmneziaWG · умная маршрутизация · управление через Telegram
+  <text x="640" y="150" class="sans" font-size="18" text-anchor="middle" fill="#8b949e">
+    Два сервера, один туннель, управление из Telegram
   </text>
-  <text x="640" y="186" class="mono" font-size="12.5" text-anchor="middle" fill="#6e7681">
-    контроль нагрузки по пакетам · сторож узла · шифрованные копии
+
+  <!-- два узла и туннель между ними -->
+  <g transform="translate(0,300)">
+    <ellipse cx="330" cy="0" rx="140" ry="78" fill="url(#halo)" class="halo"/>
+    <ellipse cx="950" cy="0" rx="140" ry="78" fill="url(#halo2)" class="halo" style="animation-delay:-2s"/>
+
+    <use href="#server" x="330" y="0"/>
+    <use href="#server" x="950" y="0"/>
+
+    <!-- луч сканирования внутри стоек -->
+    <g clip-path="none">
+      <rect class="scan" x="284" y="-58" width="92" height="2" fill="#9ff7a8" opacity="0"/>
+      <rect class="scan" x="904" y="-58" width="92" height="2" fill="#d2a8ff" opacity="0" style="animation-delay:-1.7s"/>
+    </g>
+
+    <text x="330" y="92" class="sans" font-size="17" font-weight="600" fill="#e6edf3" text-anchor="middle">Мастер-сервер</text>
+    <text x="330" y="114" class="mono" font-size="11.5" fill="#8b949e" text-anchor="middle">принимает людей и решает маршруты</text>
+
+    <text x="950" y="92" class="sans" font-size="17" font-weight="600" fill="#e6edf3" text-anchor="middle">Клиент-сервер</text>
+    <text x="950" y="114" class="mono" font-size="11.5" fill="#8b949e" text-anchor="middle">выпускает трафик наружу</text>
+
+    <line x1="382" y1="0" x2="894" y2="0" stroke="url(#tunnel)" stroke-width="2" opacity=".45"/>
+    <line x1="382" y1="0" x2="894" y2="0" stroke="url(#tunnel)" stroke-width="2.5" class="beam"/>
+
+    <circle r="4" cy="0" fill="#9ff7a8">
+      <animate attributeName="cx" values="382;894" dur="2.8s" repeatCount="indefinite"/>
+      <animate attributeName="opacity" values="0;1;1;0" dur="2.8s" repeatCount="indefinite"/>
+    </circle>
+    <circle r="4" cy="0" fill="#d2a8ff" opacity="0">
+      <animate attributeName="cx" values="894;382" dur="2.8s" begin="1.4s" repeatCount="indefinite"/>
+      <animate attributeName="opacity" values="0;1;1;0" dur="2.8s" begin="1.4s" repeatCount="indefinite"/>
+    </circle>
+
+    <text x="638" y="-22" class="mono" font-size="12" fill="#8b949e" text-anchor="middle">туннель поднимает клиент-сервер</text>
+    <text x="638" y="30" class="mono" font-size="11" fill="#6e7681" text-anchor="middle">снаружи это выглядит как обычное входящее соединение</text>
+  </g>
+
+  <text x="640" y="442" class="mono" font-size="12.5" text-anchor="middle" fill="#6e7681">
+    учёт нагрузки в пакетах · самовосстановление · шифрованные копии
   </text>
 </svg>
