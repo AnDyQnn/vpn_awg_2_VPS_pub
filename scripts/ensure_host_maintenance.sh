@@ -25,16 +25,25 @@ APT::Periodic::Update-Package-Lists "1";
 APT::Periodic::Unattended-Upgrade "1";
 APT::Periodic::AutocleanInterval "7";
 EOF
-# Авто-обновления — ТОЛЬКО security-патчи и БЕЗ авто-ребута (чтобы обновления не ломали
-# VPN-стек и нода сама не уходила в перезагрузку). Крупные апгрейды всех пакетов делаются
-# только вручную (apt upgrade), автоматика их не трогает.
+# Авто-обновления ставят ВСЕ пакеты, а не только security.
+#
+# Раньше здесь были одни security-патчи, а «крупные апгрейды вручную» не делал никто:
+# apt upgrade выполнялся ровно один раз, при первичной установке. Через год разница
+# между сервером и репозиторием становится заметной.
+#
+# Авто-ребут по-прежнему выключен: перезагрузку делает бот раз в неделю, и установка
+# теперь подогнана прямо под неё (см. таймеры ниже) — обновления применяются через час
+# после установки, а не лежат применёнными наполовину неделю.
 cat > /etc/apt/apt.conf.d/52vpn-unattended <<'EOF'
 Unattended-Upgrade::Allowed-Origins {
+    "${distro_id}:${distro_codename}";
+    "${distro_id}:${distro_codename}-updates";
     "${distro_id}:${distro_codename}-security";
     "${distro_id}ESMApps:${distro_codename}-apps-security";
     "${distro_id}ESM:${distro_codename}-infra-security";
 };
 Unattended-Upgrade::Automatic-Reboot "false";
+Unattended-Upgrade::Remove-Unused-Dependencies "true";
 EOF
 
 # 2. Переносим таймеры apt на ночь (пустой OnCalendar= сбрасывает вендорный дефолт).
@@ -48,11 +57,16 @@ RandomizedDelaySec=20m
 Persistent=true
 EOF
 
+# Установка обновлений — РАЗ В НЕДЕЛЮ, в ночь перед плановой перезагрузкой.
+# Бот перезагружает ноду в воскресенье в 04:00, поэтому ставим в 03:00 того же дня:
+# обновления применяются через час, а не ждут применения неделю. Заодно перезапуск
+# демона docker при апгрейде (а он рвёт контейнеры) приходится на три часа ночи и
+# гасится ближайшей перезагрузкой.
 mkdir -p /etc/systemd/system/apt-daily-upgrade.timer.d
 cat > /etc/systemd/system/apt-daily-upgrade.timer.d/override.conf <<'EOF'
 [Timer]
 OnCalendar=
-OnCalendar=*-*-* 03:00
+OnCalendar=Sun *-*-* 03:00
 RandomizedDelaySec=15m
 Persistent=true
 EOF
@@ -69,7 +83,10 @@ EOF
 #    Раньше это делал только бот на RU (ежедневно, флаг do_cleanup) — DE оставалась без
 #    очистки и копила мусор. Теперь чистятся ОБЕ ноды, независимо от бота, раз в неделю ночью.
 #    prune без --volumes: именованные тома не трогаем (данные проекта — в bind-mount ./volumes).
-cat > /etc/systemd/system/vpn-cleanup.service <<'EOF'
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Каталог ноды передаёт вызывающий скрипт; если не передан — вычисляем.
+NODE_DIR_FOR_WATCHDOG="${1:-$(dirname "$SELF_DIR")}"
+cat > /etc/systemd/system/vpn-cleanup.service <<EOF
 [Unit]
 Description=VPN node weekly cleanup (docker + journald)
 
@@ -77,6 +94,12 @@ Description=VPN node weekly cleanup (docker + journald)
 Type=oneshot
 ExecStart=/usr/bin/docker system prune -af
 ExecStart=/usr/bin/journalctl --vacuum-time=7d
+# Ротация текстовых журналов: journald чистится вакуумом выше, а вот /var/log
+# с файлами сервисов раньше никто не трогал.
+ExecStart=/usr/sbin/logrotate -f /etc/logrotate.conf
+# Проверка самого хоста: место, inode, журналы, зависшие процессы, нужна ли
+# перезагрузка после обновлений. Отчёт кладётся в volumes/flags для бота.
+ExecStart=/bin/bash ${SELF_DIR}/host_health.sh
 EOF
 cat > /etc/systemd/system/vpn-cleanup.timer <<'EOF'
 [Unit]
@@ -91,10 +114,32 @@ Persistent=true
 WantedBy=timers.target
 EOF
 
+# 5. Сторож узла — отдельной службой, а не внутри бота.
+#    Раньше за здоровьем следил сам бот: падал бот — лечить было некому. Служба
+#    поднимается сама после перезагрузки и переживает падение любого контейнера.
+cat > /etc/systemd/system/vpn-watchdog.service <<EOF
+[Unit]
+Description=VPN node watchdog (tunnel health + staged self-healing)
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+Environment=WATCHDOG_NODE_DIR=${NODE_DIR_FOR_WATCHDOG}
+ExecStart=/bin/bash ${SELF_DIR}/vpn_watchdog.sh
+Restart=always
+RestartSec=15
+
+[Install]
+WantedBy=multi-user.target
+EOF
+systemctl daemon-reload 2>/dev/null || true
+systemctl enable --now vpn-watchdog.service 2>/dev/null || true
+
 # 5. Применяем всё. (SSH-порт закрепляется в install.sh обычным sshd — здесь не трогаем.)
 systemctl daemon-reload 2>/dev/null || true
 systemctl restart apt-daily.timer apt-daily-upgrade.timer 2>/dev/null || true
 systemctl restart systemd-journald 2>/dev/null || true
 systemctl enable --now vpn-cleanup.timer 2>/dev/null || true
 
-echo "[maintenance] Настроено: ночные апдейты (~02:30/03:00), потолок journald 200M, еженедельная очистка (вс ~05:00, локальное время)."
+echo "[maintenance] Настроено: обновления вс ~03:00 перед плановым ребутом, потолок journald 200M, недельная уборка с проверкой хоста (вс ~05:00), сторож узла запущен."

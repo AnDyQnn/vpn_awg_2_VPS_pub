@@ -58,7 +58,10 @@ while true; do
     if [ -f "$CLEANUP_FLAG" ]; then
         echo "[Updater] Очистка логов и кэша Docker..."
         rm -f "$CLEANUP_FLAG"
-        docker system prune -af --volumes
+        # --volumes убран: он сносит неиспользуемые именованные тома.
+        # Сейчас данные лежат в bind-mount и не страдают, но это мина
+        # под ноги на будущее. Недельная уборка делает то же самое.
+        docker system prune -af
         journalctl --vacuum-time=3d
     fi
 

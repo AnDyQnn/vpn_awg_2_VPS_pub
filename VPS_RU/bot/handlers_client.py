@@ -14,9 +14,10 @@ from utils import (
 from database import db
 from wireguard_manager import create_peer, delete_peer
 
-# Сколько секунд старый ключ продолжает работать ПОСЛЕ выдачи нового конфига —
-# чтобы клиент успел импортировать новый и не остался без интернета во время замены.
-REGEN_GRACE_SECONDS = 45
+# Сколько минут новый ключ должен проработать, прежде чем снимать старый.
+# Одиночное рукопожатие бывает случайным: клиент дёрнулся, конфиг не прижился —
+# а старый уже снесли, и человек остался без обоих.
+RETIRE_CONFIRM_MINUTES = 10
 
 
 async def _issue_new_config(context, chat_id, user, deliver: bool = True):
@@ -46,16 +47,16 @@ async def _issue_new_config(context, chat_id, user, deliver: bool = True):
             chat_id=chat_id,
             text=(
                 f"✅ **Новый конфиг ключа «{escape_md(name)}» готов!**\n\n"
-                f"📥 Импортируйте его в AmneziaWG *прямо сейчас*. Старый ключ продолжит "
-                f"работать ещё ~{REGEN_GRACE_SECONDS} сек — чтобы вы не остались без "
-                f"интернета во время замены."
+                f"📥 Импортируйте его в AmneziaWG, когда будет удобно. "
+                f"**Старый ключ продолжает работать** — он снимется сам, как только "
+                f"новый заработает. Без вас ничего не отключится."
             ),
             parse_mode=ParseMode.MARKDOWN
         )
         await context.bot.send_document(chat_id=chat_id, document=open(c_path, "rb"), caption=f"📄 {name}")
         await context.bot.send_photo(chat_id=chat_id, photo=open(q_path, "rb"))
 
-    return old_uuid, name
+    return old_uuid, name, new_uid
 
 
 async def _retire_old_peer(old_uuid, name):
@@ -70,15 +71,12 @@ async def _retire_old_peer(old_uuid, name):
     await db.log_event("Client Regen", f"Old peer retired after grace: {name} ({old_uuid}).")
 
 
-def _schedule_retire(retire_list):
-    """Фоновая задача: ждёт grace-период и снимает старые пиры. Не блокирует хендлер."""
-    async def _finalize():
-        await asyncio.sleep(REGEN_GRACE_SECONDS)
-        for old_uuid, name in retire_list:
-            await _retire_old_peer(old_uuid, name)
-    task = asyncio.create_task(_finalize())
-    state_data.setdefault("bg_tasks", set()).add(task)
-    task.add_done_callback(state_data["bg_tasks"].discard)
+async def _queue_retire(retire_list):
+    """Ставит старые ключи в очередь на снятие. Само снятие делает retire_watch_loop
+    в мониторе — по факту живого соединения на новом ключе, а не по таймеру.
+    Очередь лежит в базе, поэтому переживает рестарт бота и деплой."""
+    for old_uuid, name, new_uuid in retire_list:
+        await db.queue_retire(old_uuid, new_uuid, name)
 
 # --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
 
@@ -280,7 +278,7 @@ async def client_regen_all_confirm_handler(update: Update, context: ContextTypes
     keyboard = [[InlineKeyboardButton("✅ ДА, перевыпустить все", callback_data="do_client_regen_all")],[InlineKeyboardButton("🔙 Отмена", callback_data="client_my_keys")]
     ]
     await query.edit_message_text(
-        "⚠️ **Массовый перевыпуск ключей**\n\nВсе ваши старые ключи будут удалены и заменены на новые. Вам придется обновить конфигурации на всех ваших устройствах.\n\nВы уверены?", 
+        "⚠️ **Массовый перевыпуск ключей**\n\nДля каждого устройства будет выдан новый конфиг. Старые продолжат работать и снимутся сами, когда заработают новые.\n\nВы уверены?", 
         reply_markup=InlineKeyboardMarkup(keyboard), 
         parse_mode=ParseMode.MARKDOWN
     )
@@ -314,8 +312,8 @@ async def client_regen_all_action_handler(update: Update, context: ContextTypes.
     await context.bot.send_message(
         chat_id=chat_id,
         text=(
-            f"✅ Новые конфиги выданы. Старые ключи будут отключены через "
-            f"~{REGEN_GRACE_SECONDS} сек — успейте импортировать новые в AmneziaWG."
+            f"✅ Новые конфиги выданы. Старые ключи продолжают работать — "
+            f"каждый снимется сам, когда заработает новый. Импортируйте, когда удобно."
         ),
         parse_mode=ParseMode.MARKDOWN
     )
@@ -323,7 +321,7 @@ async def client_regen_all_action_handler(update: Update, context: ContextTypes.
 
     # снятие старых пиров — в фоне, после grace-периода
     if retire_list:
-        _schedule_retire(retire_list)
+        await _queue_retire(retire_list)
 
 # --- НОВОЕ МЕНЮ ПРОВЕРКИ ---
 
@@ -485,7 +483,7 @@ async def client_regen_confirm(update: Update, context: ContextTypes.DEFAULT_TYP
     keyboard = [[InlineKeyboardButton("✅ ДА, перевыпустить", callback_data=f"do_client_regen_{uuid_val}")],[InlineKeyboardButton("🔙 Отмена", callback_data=f"client_key_manage_{uuid_val}")]
     ]
     await query.edit_message_text(
-        "⚠️ **Смена ключа**\n\nСтарый ключ будет безвозвратно удален. Вам выдадут новый файл конфигурации, который нужно будет заново добавить в приложение AmneziaWG.\nВы уверены?", 
+        "⚠️ **Смена ключа**\n\nВам выдадут новый файл конфигурации — его нужно добавить в AmneziaWG. Старый ключ продолжит работать и снимется сам, когда новый заработает.\nВы уверены?", 
         reply_markup=InlineKeyboardMarkup(keyboard), 
         parse_mode=ParseMode.MARKDOWN
     )
@@ -502,8 +500,8 @@ async def client_regen_action(update: Update, context: ContextTypes.DEFAULT_TYPE
         
     await query.edit_message_text(
         f"⏳ Готовлю новый конфиг…\n"
-        f"Сначала выдам новый ключ, и только спустя ~{REGEN_GRACE_SECONDS} сек сниму "
-        f"старый — чтобы вы не остались без интернета. Не выключайте VPN.",
+        f"Старый ключ останется рабочим, пока новый не заработает — "
+        f"без вас ничего не отключится.",
         parse_mode=ParseMode.MARKDOWN
     )
 
@@ -515,7 +513,7 @@ async def client_regen_action(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
 
     await safe_delete(context, chat_id, query.message.message_id)
-    _schedule_retire([retire])
+    await _queue_retire([retire])
 
 async def support_start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query

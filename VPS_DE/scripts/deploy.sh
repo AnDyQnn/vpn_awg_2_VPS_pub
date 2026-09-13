@@ -85,7 +85,7 @@ fi
 #     обновления не спайкали нагрузку среди дня на 1-ядерном VPS. Прод не трогает.
 if [ -f "$PROJECT_ROOT/scripts/ensure_host_maintenance.sh" ]; then
     echo "[Deploy] Шаг 2c: Настройка ночных авто-обновлений..."
-    bash "$PROJECT_ROOT/scripts/ensure_host_maintenance.sh" || true
+    bash "$PROJECT_ROOT/scripts/ensure_host_maintenance.sh" "$NODE_DIR" || true
 fi
 
 # 3d. Версия проекта для тегов образов. Берём из файла VERSION (сначала ноды, потом корня),
