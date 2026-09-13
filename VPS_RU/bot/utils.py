@@ -130,7 +130,10 @@ state_data = {
     "active_menus": {},
     "last_known_active_count": -1,
     "support_context": {},
-    "bg_tasks": set()
+    "bg_tasks": set(),
+    # адрес → когда по нему в последний раз шли пакеты. Отсюда «на связи»
+    # для Xray: рукопожатий там нет, а трафик есть.
+    "addr_seen": {}
 }
 
 # --- ВРЕМЯ (МОСКВА UTC+3) ---

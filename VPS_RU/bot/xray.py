@@ -299,3 +299,99 @@ async def subscription_body(token: str) -> str:
         return ""
     await db.mark_xray_seen(rec["user_uuid"])
     return base64.b64encode(link.encode()).decode()
+
+
+# --- КТО НА СВЯЗИ ---------------------------------------------------------
+# У AmneziaWG есть рукопожатие, у Xray — нет. Зато есть счётчики по
+# адресу-двойнику: если по нему только что шли пакеты, человек на связи.
+# Это даже честнее рукопожатия — оно бывает и у телефона, лежащего в кармане.
+ONLINE_WINDOW = 180
+
+
+async def online_uuids():
+    """Кто сейчас на связи по Xray."""
+    import time as _time
+    from utils import state_data
+
+    seen = state_data.get("addr_seen", {})
+    now = _time.time()
+    out = set()
+    for uuid_val, ip in (await peer_ip_map()).items():
+        twin = twin_addr(ip)
+        if twin and now - seen.get(twin, 0) < ONLINE_WINDOW:
+            out.add(uuid_val)
+    return out
+
+
+async def person_state(uuid_val):
+    """Сводка по подключениям одного человека — для карточки и экрана.
+
+    Собирается из двух источников: пиры узла (AmneziaWG) и наша таблица (Xray).
+    Ключевое поле — `first_seen_at`: переездом считается живое подключение, а
+    не факт выдачи ссылки."""
+    rec = await db.get_xray_user(uuid_val)
+    state = {
+        "has_xray": bool(rec),
+        "xray_seen": rec["first_seen_at"] if rec else None,
+        "xray_online": uuid_val in await online_uuids(),
+        "sub_token": rec["sub_token"] if rec else "",
+        "awg_ip": None,
+        "awg_handshake": None,
+    }
+    try:
+        import time as _time
+        async with api_session() as session:
+            async with session.get(f"{WG_API_URL}/peers", timeout=5) as r:
+                if r.status == 200:
+                    for peer in await r.json():
+                        if peer.get("uuid") != uuid_val:
+                            continue
+                        state["awg_ip"] = (peer.get("allowed_ips") or "").split("/")[0]
+                        hs = peer.get("latest_handshake", 0)
+                        if hs:
+                            state["awg_handshake"] = int(_time.time()) - hs
+    except Exception:
+        pass
+    return state
+
+
+# --- ПРИЛОЖЕНИЯ -----------------------------------------------------------
+# Только названия, без ссылок: отправлять человека по ссылке, которую никто не
+# проверял, нельзя. Ссылки владелец добавляет сам, когда утверждает список.
+DEFAULT_APPS = {
+    "iPhone / iPad": ["Streisand", "V2Box", "Shadowrocket (платное)"],
+    "Android": ["v2rayNG", "Hiddify", "NekoBox"],
+    "Windows": ["Hiddify", "v2rayN", "NekoRay"],
+    "macOS": ["Streisand", "V2Box", "Hiddify"],
+    "Linux": ["Hiddify", "NekoRay"],
+}
+
+
+async def apps_list():
+    """Список приложений по платформам. Свой, если владелец его правил."""
+    raw = await db.get_setting("xray_apps")
+    if raw:
+        try:
+            return json.loads(raw)
+        except Exception:
+            pass
+    return DEFAULT_APPS
+
+
+async def apps_approved():
+    """Показывать ли список людям.
+
+    Пока владелец его не утвердил, человек видит только ссылку: советовать
+    родственникам приложения, которых никто не смотрел, — плохая идея."""
+    return (await db.get_setting("xray_apps_ok")) == "1"
+
+
+async def qr_file(uuid_val):
+    """QR со ссылкой на профиль — его сканируют приложением на телефоне."""
+    link = await profile_link(uuid_val)
+    if not link:
+        return None
+    import qrcode
+    path = f"/tmp/xray_{uuid_val}.png"
+    qrcode.make(link, error_correction=qrcode.constants.ERROR_CORRECT_L).save(path)
+    return path

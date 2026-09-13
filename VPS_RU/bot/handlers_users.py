@@ -188,6 +188,17 @@ async def render_user_detail(context, chat_id, message_id, uuid):
     except Exception:
         pass
 
+    # Подключения: человек один, протоколов у него может быть два. Блок
+    # собирается там же, где экран подключений, чтобы они не разошлись.
+    conn_text, conn_state = "", None
+    try:
+        import xray
+        from handlers_xray import connections_block
+        conn_state = await xray.person_state(uuid)
+        conn_text = "\n" + connections_block(conn_state) + "\n"
+    except Exception:
+        pass
+
     # Доставка: Telegram не говорит, прочитано ли сообщение, поэтому показываем
     # цепочку действий — она точнее отвечает на вопрос «ключ дошёл», чем галочка.
     try:
@@ -206,6 +217,7 @@ async def render_user_detail(context, chat_id, message_id, uuid):
         + f"⏳ Годен до: {exp_str} (МСК)\n"
         f"📱 TG ID: {tg_status}\n"
         f"📅 Создан: {created_str}\n"
+        f"{conn_text}"
         f"{delivery_line}"
         f"{roles_text}"
         f"{ips_text}"
@@ -229,6 +241,10 @@ async def render_user_detail(context, chat_id, message_id, uuid):
     keyboard.append([
         InlineKeyboardButton("📉 История нагрузки", callback_data=f"svc_pchart_{uuid}"),
     ])
+    if conn_state is not None:
+        label = ("🔌 Подключения" if conn_state["has_xray"]
+                 else "🔌 Подключения · выдать Xray")
+        keyboard.append([InlineKeyboardButton(label, callback_data=f"xr_conn_{uuid}")])
     keyboard.append([InlineKeyboardButton("🛡 Доступы · роли", callback_data=f"role_u_{uuid}"),
                      InlineKeyboardButton("🧹 Фильтры", callback_data=f"flt_user_{uuid}")])
     keyboard.append([InlineKeyboardButton("✏️ Переименовать ключ", callback_data=f"rename_user_{uuid}")])
