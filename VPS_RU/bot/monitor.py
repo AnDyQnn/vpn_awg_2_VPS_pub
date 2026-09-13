@@ -15,6 +15,7 @@ from database import db
 from utils import (
     api_session,
     get_moscow_now, dt_to_moscow, broadcast_message, DE_AGENT_URL, WG_API_URL,
+    is_agent,
     ADMIN_ID, escape_md, GOSUSLUGI_APP_WARNING, analyze_resource, CONFIGS_DIR, ROUTING_VERSION,
     get_update_info
 )
@@ -886,6 +887,10 @@ async def load_collector_loop(app):
 
                 if prev_snapshot and prev_ts and ts > prev_ts:
                     dt = ts - prev_ts
+                    # Клиент-сервер — не человек: он несёт трафик всех остальных
+                    # и под человеческие лимиты попадать не должен.
+                    agent_uuids = {u["uuid"] for u in await db.get_all_users()
+                                   if is_agent(u["name"])}
                     common = int(await db.get_setting("pps_limit") or DEFAULT_PPS_LIMIT)
                     mode = (await db.get_setting("pps_mode") or "observe")
                     personal = await db.get_peer_limits()
@@ -910,6 +915,8 @@ async def load_collector_loop(app):
                         await db.add_hourly(uuid_val, hour, d_byt_in, d_byt_out,
                                             d_pkt_in, d_pkt_out, pps)
 
+                        if uuid_val in agent_uuids:
+                            continue
                         limit = await _effective_limit(uuid_val, common, personal)
                         if limit and pps > limit:
                             rec = hot.setdefault(uuid_val, {"peak": 0, "size": 0, "misses": 0})

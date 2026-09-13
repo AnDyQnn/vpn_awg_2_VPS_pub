@@ -127,10 +127,10 @@ async def filters_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lines += ["", "⚠️ _В браузере с DNS-over-HTTPS фильтр обходится: там запрос "
                   "уходит внутри HTTPS и на уровне DNS его не видно._"]
 
-    kb = [[InlineKeyboardButton("👤 Кому включить", callback_data="flt_pick_0")]]
+    kb = [[InlineKeyboardButton("👤 Выбрать человека", callback_data="flt_pick_0")]]
     if by_uuid:
         kb.append([InlineKeyboardButton("🔄 Применить на узле", callback_data="flt_apply")])
-    kb.append([InlineKeyboardButton("🔙 Админка", callback_data="svc_menu")])
+    kb.append([InlineKeyboardButton("🔙 Администрирование", callback_data="svc_menu")])
 
     await query.edit_message_text("\n".join(lines),
                                   reply_markup=InlineKeyboardMarkup(kb),
@@ -161,7 +161,8 @@ async def pick_user(update: Update, context: ContextTypes.DEFAULT_TYPE, page: in
         kb.append(nav)
     kb.append([InlineKeyboardButton("🔙 Фильтры", callback_data="flt_menu")])
 
-    await query.edit_message_text("👤 **Кому настроить фильтры?**",
+    await query.edit_message_text("\U0001F464 **Выберите человека**\n\n"
+                                  "Отмеченные значком уже под фильтром.",
                                   reply_markup=InlineKeyboardMarkup(kb),
                                   parse_mode=ParseMode.MARKDOWN)
 

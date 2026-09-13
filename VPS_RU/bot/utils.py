@@ -282,6 +282,15 @@ async def stop_bg_tasks():
         state_data["graph_task"].cancel()
         state_data["graph_task"] = None
 
+# Имя пира клиент-сервера. Он не человек: через него проходит мировой трафик
+# всех остальных, поэтому в лимитах, подборе и сводке ему не место.
+AGENT_PEER_NAME = "DE_AGENT"
+
+
+def is_agent(name) -> bool:
+    return (name or "").strip().upper() == AGENT_PEER_NAME
+
+
 def deregister_menu(chat_id):
     if chat_id in state_data["active_menus"]:
         del state_data["active_menus"][chat_id]

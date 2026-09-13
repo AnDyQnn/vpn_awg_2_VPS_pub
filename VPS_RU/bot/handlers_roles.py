@@ -65,7 +65,7 @@ async def roles_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kb.append([InlineKeyboardButton("➕ Создать роль", callback_data="role_new")])
     if roles:
         kb.append([InlineKeyboardButton("🔄 Применить на узле", callback_data="role_apply")])
-    kb.append([InlineKeyboardButton("🔙 Админка", callback_data="svc_menu")])
+    kb.append([InlineKeyboardButton("🔙 Администрирование", callback_data="svc_menu")])
 
     await query.edit_message_text("\n".join(lines),
                                   reply_markup=InlineKeyboardMarkup(kb),

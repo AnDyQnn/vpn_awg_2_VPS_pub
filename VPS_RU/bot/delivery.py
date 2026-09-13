@@ -71,7 +71,7 @@ async def delivery_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not items:
         text = ("📨 **Доставка ключей**\n\n"
                 "Все отправленные ключи дошли до подключения.")
-        kb = [[InlineKeyboardButton("🔙 Админка", callback_data="svc_menu")]]
+        kb = [[InlineKeyboardButton("🔙 Администрирование", callback_data="svc_menu")]]
     else:
         lines = ["📨 **Доставка ключей**", "",
                  "Отправлено, но человек ещё не подключился:", ""]
@@ -86,7 +86,7 @@ async def delivery_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines += ["", f"_Молчание первые {STUCK_HOURS} ч нормально — сюда попадают "
                       "только те, кто дольше._"]
         text = "\n".join(lines)
-        kb.append([InlineKeyboardButton("🔙 Админка", callback_data="svc_menu")])
+        kb.append([InlineKeyboardButton("🔙 Администрирование", callback_data="svc_menu")])
 
     await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb),
                                   parse_mode=ParseMode.MARKDOWN)

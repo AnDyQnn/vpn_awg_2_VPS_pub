@@ -46,7 +46,7 @@ from handlers_client import (
 from handlers_service import (
     service_menu, toggle_mode, set_mode, load_screen, limits_screen,
     change_limit, set_peer_rule, load_chart, whats_new,
-    ensure_api_token, charts_screen, pick_peer_screen
+    ensure_api_token, charts_screen, pick_peer_screen, graphs_menu
 )
 from handlers_admin import (
     ask_backup_password,
@@ -168,6 +168,39 @@ async def watch_online_count(app):
         except Exception: pass 
         await asyncio.sleep(5)
 
+async def notify_users_whats_new(app):
+    """Рассылает каждому только накопившееся лично для него.
+
+    Текст у всех разный: кто-то видел прошлую версию, кто-то — нет. Поэтому не
+    общая рассылка, а по человеку; отметка о просмотре ставится только тем, кому
+    сообщение действительно ушло, иначе новость молча пропала бы."""
+    try:
+        from changelog import user_text, fit
+        version = get_current_version()
+        tg_ids = await db.get_all_tg_ids()
+    except Exception as e:
+        print(f"Что нового: не удалось подготовить рассылку: {e}")
+        return
+
+    sent = 0
+    for tg_id in tg_ids or []:
+        try:
+            seen = await db.get_seen_version(tg_id)
+            body = user_text(since_version=seen)
+            if not body:
+                continue
+            await app.bot.send_message(chat_id=tg_id, text=fit(body, 3500),
+                                       parse_mode=ParseMode.MARKDOWN)
+            await db.set_seen_version(tg_id, version)
+            sent += 1
+        except Exception as e:
+            # Заблокировал бота или закрыл личку — не повод останавливать рассылку
+            # и не повод считать, что он прочитал.
+            print(f"Что нового: {tg_id} не получил: {e}")
+    if sent:
+        await db.log_event("System", f"«Что нового» отправлено: {sent} чел.")
+
+
 async def check_update_completion(app):
     flag_update = "/volumes/flags/was_updating"
     flag_reboot = "/volumes/flags/was_rebooting"
@@ -206,6 +239,7 @@ async def check_update_completion(app):
         try:
             await broadcast_message(app, text, db)
             await db.log_event("System", "Server update/reboot sequence completed successfully.")
+            await notify_users_whats_new(app)
             
             if ADMIN_ID:
                 try:
@@ -628,6 +662,13 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     query = update.callback_query
     data = query.data
+
+    # Любой переход означает, что сообщение больше не показывает главное меню.
+    # Снимаем его с авто-перерисовки здесь, а не в каждом экране по отдельности:
+    # иначе фоновый счётчик онлайна подменяет клавиатуру и
+    # получается текст одного экрана с кнопками другого.
+    if data != "back_to_main":
+        deregister_menu(update.effective_chat.id)
     
     # Подменю управления серверами
     if data in ["menu_ru_server", "menu_de_server", "menu_backups"]:
@@ -680,6 +721,7 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "svc_mode_off": await set_mode(update, context, False); return
     if data == "svc_load": await load_screen(update, context); return
     if data == "svc_chart": await load_chart(update, context); return
+    if data == "vpn_graph": await graphs_menu(update, context); return
     if data == "svc_charts": await charts_screen(update, context); return
     if data.startswith("svc_pick_"):
         await pick_peer_screen(update, context, int(data.split("_")[-1])); return
@@ -917,7 +959,7 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     actions = {
         "start_dashboard": start_dashboard, "stop_dashboard": return_to_main_menu,
         "confirm_reboot": confirm_reboot, "do_reboot_server": do_reboot_server,
-        "gen_key": generate_key_request, "vpn_graph": send_vpn_graph,
+        "gen_key": generate_key_request, "graph_traffic": send_vpn_graph,
         "show_online": online_users_menu, "backup": backup_now, 
         "download_logs": download_logs, "restore": restore_cmd, 
         "check_update": check_update, "do_update": do_update,

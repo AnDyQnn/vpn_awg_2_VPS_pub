@@ -12,9 +12,23 @@ from openpyxl.styles import Alignment, Font, PatternFill, Border, Side
 # --- Единый аккуратный стиль Excel-выгрузок ---
 _HDR_FILL = PatternFill("solid", fgColor="1F4E78")   # тёмно-синяя шапка
 _HDR_FONT = Font(bold=True, color="FFFFFF", size=11)
-_OK_FILL = PatternFill("solid", fgColor="E2EFDA")    # мягкий зелёный (актив)
-_OFF_FILL = PatternFill("solid", fgColor="FCE4E4")   # мягкий красный (пауза)
+# Светофор. Бледные пастельные заливки не работали: в таблице на тридцать строк
+# критичное значение не отличалось от обычного, и глазами всё равно приходилось
+# читать каждую строку. Берём насыщенные цвета и белый текст поверх — так
+# проблемные места видно, не вчитываясь.
+_OK_FILL = PatternFill("solid", fgColor="107C41")    # зелёный: всё в порядке
+_WARN_FILL = PatternFill("solid", fgColor="E8A317")  # жёлтый: стоит посмотреть
+_BAD_FILL = PatternFill("solid", fgColor="C00000")   # красный: требует решения
+_OFF_FILL = PatternFill("solid", fgColor="7F7F7F")   # серый: выключено, не авария
 _TOT_FILL = PatternFill("solid", fgColor="FFF2CC")   # мягкий жёлтый (итоги)
+_WHITE_BOLD = Font(bold=True, color="FFFFFF")
+
+
+def _mark(cell, fill):
+    """Заливка плюс белый жирный текст: на насыщенном фоне чёрный не читается."""
+    cell.fill = fill
+    cell.font = _WHITE_BOLD
+    cell.alignment = Alignment(horizontal="center")
 _THIN = Side(style="thin", color="D9D9D9")
 _BORDER = Border(left=_THIN, right=_THIN, top=_THIN, bottom=_THIN)
 
@@ -30,7 +44,7 @@ def _style_sheet(ws, header_row=1, autofilter=True):
     ws.freeze_panes = ws.cell(row=header_row + 1, column=1).coordinate
     if autofilter and ws.max_column >= 1 and ws.max_row >= 1:
         ws.auto_filter.ref = ws.dimensions
-from utils import dt_to_moscow, BASE_BYPASS, ROUTING_VERSION
+from utils import dt_to_moscow, BASE_BYPASS, ROUTING_VERSION, is_agent
 
 CONFIGS_DIR = Path("/volumes/configs")
 WG_CONF_PATH = Path("/volumes/wireguard/wg0.conf")
@@ -718,9 +732,10 @@ class Database:
             "packets_in": p_in, "packets_out": p_out,
             "peak_pps": peak,
             "avg_packet": int((b_in + b_out) / total_packets) if total_packets else 0,
-            # доля именно ОТДАЧИ: bytes_out — то, что пир отправил. Профиль раздачи
+            # Доля ОТДАЧИ считается от bytes_in: это то, что сервер принял от пира,
+            # то есть отправленное человеком. Профиль раздачи
             # отличается от профиля потребления как раз этой долей.
-            "upload_share": round(b_out / (b_in + b_out) * 100) if (b_in + b_out) else 0,
+            "upload_share": round(b_in / (b_in + b_out) * 100) if (b_in + b_out) else 0,
             "active_hours": hours_sorted,
             "top_weekdays": [d for d, _ in top_dow],
             "exceeded": exceeded,
@@ -992,7 +1007,7 @@ class Database:
             ws.cell(row=index, column=2, value=u['uuid'])
             ws.cell(row=index, column=3, value=u['device'] or "")
             st_cell = ws.cell(row=index, column=4, value=status_text)
-            st_cell.fill = _OK_FILL if u['is_active'] else _OFF_FILL
+            _mark(st_cell, _OK_FILL if u['is_active'] else _OFF_FILL)
             st_cell.alignment = Alignment(horizontal="center")
             ws.cell(row=index, column=5, value=exp_text)
             
@@ -1106,7 +1121,9 @@ class Database:
         Раньше выгрузка делала отдельный лист на каждого — тридцать листов, которые
         никто не открывал. Здесь всё в одной таблице, с фильтром по колонкам.
         """
-        users = await self.get_all_users()
+        # Клиент-сервер из сводки исключаем: это канал, а не человек, и его
+        # строка всегда выглядела бы аварийной, оттягивая внимание от живых.
+        users = [u for u in await self.get_all_users() if not is_agent(u["name"])]
         limits = await self.get_peer_limits()
         common_limit = int(await self.get_setting("pps_limit") or 5000)
 
@@ -1172,30 +1189,64 @@ class Database:
             ws.cell(row=row, column=1, value=u["name"])
             ws.cell(row=row, column=2, value=peer_ips.get(uuid_val, ""))
             st = ws.cell(row=row, column=3, value="Активен" if u["is_active"] else "Пауза")
-            st.fill = _OK_FILL if u["is_active"] else _OFF_FILL
-            st.alignment = Alignment(horizontal="center")
+            _mark(st, _OK_FILL if u["is_active"] else _OFF_FILL)
             ws.cell(row=row, column=4, value=limit_text)
-            ws.cell(row=row, column=5, value=round(b_in / 1024 ** 3, 2))
-            ws.cell(row=row, column=6, value=round(b_out / 1024 ** 3, 2))
-            ws.cell(row=row, column=7, value=profile["upload_share"] if profile else 0)
-            ws.cell(row=row, column=8, value=profile["avg_packet"] if profile else 0)
-            ws.cell(row=row, column=9, value=profile["peak_pps"] if profile else 0)
+            # Колонки с точки зрения ЧЕЛОВЕКА, а не сервера: он «скачал» то, что
+            # сервер ему отдал, и «отдал» то, что сервер от него принял.
+            ws.cell(row=row, column=5, value=round(b_out / 1024 ** 3, 2))
+            ws.cell(row=row, column=6, value=round(b_in / 1024 ** 3, 2))
+            # Доля отдачи: у обычного человека она мала. Высокая — это раздача.
+            share = profile["upload_share"] if profile else 0
+            sh = ws.cell(row=row, column=7, value=share)
+            if share >= 40:
+                _mark(sh, _BAD_FILL)
+            elif share >= 25:
+                _mark(sh, _WARN_FILL)
+
+            # Средний размер пакета: ниже полукилобайта — почерк торрента.
+            avg_p = profile["avg_packet"] if profile else 0
+            ap = ws.cell(row=row, column=8, value=avg_p)
+            if avg_p and avg_p < 500:
+                _mark(ap, _BAD_FILL)
+            elif avg_p and avg_p < 700:
+                _mark(ap, _WARN_FILL)
+
+            # Пик пакетов в секунду — относительно того, что реально тянет узел.
+            peak = profile["peak_pps"] if profile else 0
+            pk = ws.cell(row=row, column=9, value=peak)
+            if peak >= 7000:
+                _mark(pk, _BAD_FILL)
+            elif peak >= 4000:
+                _mark(pk, _WARN_FILL)
+
             ex = ws.cell(row=row, column=10, value=exceeded)
-            if exceeded:
-                ex.fill = _OFF_FILL
+            if exceeded >= 3:
+                _mark(ex, _BAD_FILL)
+            elif exceeded:
+                _mark(ex, _WARN_FILL)
             ws.cell(row=row, column=11, value=window)
             ws.cell(row=row, column=12, value=dows)
             ws.cell(row=row, column=13,
                     value=dt_to_moscow(u["last_active_at"]).strftime("%d.%m.%Y %H:%M")
                     if u.get("last_active_at") else "нет данных")
-            v = ws.cell(row=row, column=14, value=self._verdict(profile, u, exceeded))
+            verdict = self._verdict(profile, u, exceeded)
+            v = ws.cell(row=row, column=14, value=verdict)
             v.alignment = Alignment(wrap_text=True, vertical="top")
+            # Красим сам вывод: строка с «торрентом» или превышениями должна
+            # находиться взглядом, а не чтением всех тридцати строк.
+            low = verdict.lower()
+            if "торрент" in low or "превышений" in low:
+                v.fill = _BAD_FILL
+                v.font = Font(bold=True, color="FFFFFF")
+            elif "раздачи" in low or "ночная" in low:
+                v.fill = _WARN_FILL
+                v.font = Font(bold=True, color="FFFFFF")
             row += 1
 
         # итоговая строка
         ws.cell(row=row, column=1, value="ИТОГО").font = Font(bold=True)
-        ws.cell(row=row, column=5, value=round(total_in / 1024 ** 3, 2)).font = Font(bold=True)
-        ws.cell(row=row, column=6, value=round(total_out / 1024 ** 3, 2)).font = Font(bold=True)
+        ws.cell(row=row, column=5, value=round(total_out / 1024 ** 3, 2)).font = Font(bold=True)
+        ws.cell(row=row, column=6, value=round(total_in / 1024 ** 3, 2)).font = Font(bold=True)
         ws.cell(row=row, column=14,
                 value=f"Пользователей: {len(users)} · период: {days} дн.").font = Font(bold=True)
         for col in range(1, len(headers) + 1):
