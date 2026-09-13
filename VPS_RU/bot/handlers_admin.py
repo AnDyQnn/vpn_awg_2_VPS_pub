@@ -107,14 +107,19 @@ async def return_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
     except Exception:
         version = ""
 
-    lines = ["🛡 **VPN Dashboard** · мастер и клиент-сервер", ""]
-    lines.append(f"🟢 На связи: **{active_count}** из {total_keys}")
+    # Строки намеренно длинные: ширину клавиатуры Telegram берёт от ширины
+    # сообщения, и короткий заголовок давал кнопки в два пальца.
+    lines = ["🛡 **VPN Dashboard** · мастер-сервер и клиент-сервер", ""]
+    lines.append(f"🟢 *На связи сейчас:* **{active_count}** из {total_keys} ключей, "
+                 f"туннель работает")
     if version:
-        lines.append(f"📦 Версия: `{version}`")
+        lines.append(f"📦 *Версия системы:* `{version}`")
     if admin_count:
-        lines.append(f"⚙️ Ждёт внимания: **{admin_count}** — в «Админке»")
+        lines.append(f"⚙️ *Ждёт внимания:* **{admin_count}** — загляните в "
+                     f"«Администрирование»")
     else:
-        lines.append("⚙️ Ничего не ждёт внимания")
+        lines.append("⚙️ *Ждёт внимания:* ничего — ни очередей, ни превышений, "
+                     "ни обращений")
     lines += ["", "Выберите действие:"]
     text = "\n".join(lines)
     markup = main_menu(active_count=active_count, support_count=support_count,

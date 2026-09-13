@@ -266,13 +266,15 @@ async def check_update_completion(app):
                     if await backup_password_gate(_GateCtx, ADMIN_ID):
                         return
                     
-                    msg = await app.bot.send_message(
-                        chat_id=ADMIN_ID, 
-                        text="🛡 **VPN Dashboard**\nВыберите действие:", 
-                        reply_markup=main_menu(active_count=active_count, support_count=supp_count), 
-                        parse_mode=ParseMode.MARKDOWN
-                    )
-                    state_data["active_menus"][ADMIN_ID] = msg.message_id
+                    # Раньше здесь строилось своё короткое сообщение — из-за него
+                    # меню после обновления приходило узким и без сводки. Одна
+                    # отрисовка на оба пути: и по кнопке, и после деплоя.
+                    from handlers_admin import return_to_main_menu
+                    
+                    class _MenuCtx:
+                        bot = app.bot
+                    
+                    await return_to_main_menu(None, _MenuCtx, chat_id=ADMIN_ID)
                 except Exception: pass
         except Exception as e:
             print(f"Check update completion error: {e}")
