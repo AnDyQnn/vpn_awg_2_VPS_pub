@@ -90,12 +90,33 @@ async def return_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
     if await backup_password_gate(context, chat_id, message_id):
         return
 
-    text = "🛡 **VPN Dashboard (Dual Node)**\nВыберите действие:"
     try:
         from handlers_service import admin_counter
         admin_count = await admin_counter()
     except Exception:
         admin_count = support_count
+
+    # Короткая сводка вместо одной строки: сразу видно состояние, а заодно
+    # сообщение становится шире — Telegram подгоняет кнопки под его ширину.
+    try:
+        total_keys = await db.fetch_val("SELECT COUNT(*) FROM users") or 0
+    except Exception:
+        total_keys = 0
+    try:
+        version = get_current_version()
+    except Exception:
+        version = ""
+
+    lines = ["🛡 **VPN Dashboard** · мастер и клиент-сервер", ""]
+    lines.append(f"🟢 На связи: **{active_count}** из {total_keys}")
+    if version:
+        lines.append(f"📦 Версия: `{version}`")
+    if admin_count:
+        lines.append(f"⚙️ Ждёт внимания: **{admin_count}** — в «Админке»")
+    else:
+        lines.append("⚙️ Ничего не ждёт внимания")
+    lines += ["", "Выберите действие:"]
+    text = "\n".join(lines)
     markup = main_menu(active_count=active_count, support_count=support_count,
                        admin_count=admin_count)
     sent_msg = None

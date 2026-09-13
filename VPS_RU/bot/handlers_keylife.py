@@ -85,7 +85,7 @@ async def pending_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not items:
         text = ("📋 **Ждут решения**\n\nПусто — все ключи живые, "
                 "ни один не истёк и не уснул.")
-        kb = [[InlineKeyboardButton("🔙 Админка", callback_data="svc_menu")]]
+        kb = [[InlineKeyboardButton("🔙 Администрирование", callback_data="svc_menu")]]
     else:
         lines = ["📋 **Ждут решения**", "",
                  "Все они сейчас на паузе и ждут, что с ними делать.", ""]
@@ -98,7 +98,7 @@ async def pending_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
             kb.append([InlineKeyboardButton(f"{mark} {it['name']}",
                                             callback_data=f"kd_open_{it['user_uuid']}")])
         text = "\n".join(lines)
-        kb.append([InlineKeyboardButton("🔙 Админка", callback_data="svc_menu")])
+        kb.append([InlineKeyboardButton("🔙 Администрирование", callback_data="svc_menu")])
 
     await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb),
                                   parse_mode=ParseMode.MARKDOWN)
@@ -183,7 +183,7 @@ async def policy_menu(update: Update, context: ContextTypes.DEFAULT_TYPE,
                 "Срок больше не истечёт, спрашивать будет не о чем. "
                 "Ключ всё ещё может уснуть — если им не пользоваться.")
         kb = [[InlineKeyboardButton("📋 Ждут решения", callback_data="kd_list")],
-              [InlineKeyboardButton("🔙 Админка", callback_data="svc_menu")]]
+              [InlineKeyboardButton("🔙 Администрирование", callback_data="svc_menu")]]
     else:
         text = (f"✅ **«{name}» продлён на {days} дн.**\n\n"
                 f"Что делать, когда срок истечёт снова?\n"

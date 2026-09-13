@@ -354,6 +354,11 @@ async def client_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
          InlineKeyboardButton("🌐 Рос. сервисы", callback_data="client_bypass_info")],
         [InlineKeyboardButton("🆘 Сообщить о проблеме", callback_data="support_start")],
     ]
+    # Кнопку показываем только при непрочитанном — при переделке меню она
+    # потерялась, и люди не узнали даже про то, что им предназначалось.
+    if await has_unseen_changes(user_id):
+        keyboard.insert(2, [InlineKeyboardButton("✨ Что нового",
+                                                 callback_data="client_whats_new")])
     if check_admin(user_id):
         keyboard.append([InlineKeyboardButton("🚪 Выйти из режима клиента", callback_data="back_to_main")])
 

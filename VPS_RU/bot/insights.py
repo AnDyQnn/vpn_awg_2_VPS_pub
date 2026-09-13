@@ -17,12 +17,14 @@
 пирам только байты, пакетов у него нет вовсе.
 """
 from database import db
+from utils import is_agent
 
 SMALL_PACKET = 500          # байт: ниже этого поток «неестественный»
 MIN_PACKETS = 20000         # меньше — выборка слишком мелкая, чтобы судить
 MIN_BYTES = 50 * 1024 * 1024
 UPLOAD_RATIO = 0.7          # отдача от приёма, при которой это уже раздача
 SPIKE_TIMES = 3             # во сколько раз час выбился из собственной нормы
+SPIKE_MIN_NORM = 50 * 1024 * 1024   # ниже этой нормы сравнивать не с чем
 
 
 async def _last24():
@@ -55,24 +57,36 @@ async def _week_norm():
 
 
 def _reasons(rec, norm, online, exceeded):
+    # online здесь не используется намеренно: он добавляется отдельной
+    # пометкой после того, как нашёлся настоящий повод.
     """Причины попадания в список — словами, а не кодами."""
     out = []
-    if online:
-        out.append("сейчас на связи")
     if exceeded:
         out.append(f"выходил за лимит ({exceeded})")
 
-    packets = (rec["packets_in"] or 0) + (rec["packets_out"] or 0)
-    total = (rec["bytes_in"] or 0) + (rec["bytes_out"] or 0)
+    # Счётчики — со стороны СЕРВЕРА, и это главная ловушка этих цифр:
+    #   bytes_in  — сервер принял от человека  = его ОТДАЧА (upload)
+    #   bytes_out — сервер отдал человеку      = его ПРИЁМ  (download)
+    # Если перепутать, «раздаёт больше, чем качает» срабатывает вообще у всех:
+    # у любого нормального пользователя download в разы больше upload.
+    upload = float(rec["bytes_in"] or 0)
+    download = float(rec["bytes_out"] or 0)
+    packets = float(rec["packets_in"] or 0) + float(rec["packets_out"] or 0)
+    total = upload + download
+
     if packets >= MIN_PACKETS:
         avg = total / packets
         if avg < SMALL_PACKET:
             out.append(f"мелкие пакеты (~{int(avg)} Б) — похоже на торрент")
-    if total >= MIN_BYTES and rec["bytes_in"]:
-        ratio = (rec["bytes_out"] or 0) / rec["bytes_in"]
-        if ratio >= UPLOAD_RATIO:
-            out.append("отдаёт почти столько же, сколько получает")
-    if norm and rec["busiest_hour"] > norm * SPIKE_TIMES and rec["busiest_hour"] >= MIN_BYTES:
+    if total >= MIN_BYTES and download > 0:
+        if upload / download >= UPLOAD_RATIO:
+            out.append("раздаёт почти столько же, сколько качает")
+    # Всплеск считаем только относительно ОСМЫСЛЕННОЙ нормы: если человек всю
+    # неделю почти молчал, любой обычный вечер превысит её втрое, и в подбор
+    # попадут все подряд — что и случилось на первом боевом запуске.
+    if (norm >= SPIKE_MIN_NORM
+            and float(rec["busiest_hour"] or 0) > norm * SPIKE_TIMES
+            and float(rec["busiest_hour"] or 0) >= MIN_BYTES):
         out.append("резкий всплеск против своей нормы за неделю")
     return out
 
@@ -100,9 +114,16 @@ async def chart_candidates(online_uuids=None):
         rec = last24.get(uid) or {"name": None, "bytes_in": 0, "bytes_out": 0,
                                   "packets_in": 0, "packets_out": 0,
                                   "peak_pps": 0, "busiest_hour": 0}
+        # Клиент-сервер в подборе не нужен: он всегда «раздаёт» и всегда в пике.
+        if is_agent(rec.get("name")):
+            continue
         why = _reasons(rec, norm.get(uid, 0), uid in online_uuids, exceeded.get(uid, 0))
         if not why:
             continue
+        # «Сейчас на связи» — пометка, а не повод: на связи бывает половина
+        # семьи, и если считать это поводом, подбор превращается в список всех.
+        if uid in online_uuids:
+            why = why + ["и сейчас на связи"]
         name = rec.get("name")
         if not name:
             user = await db.get_user_by_uuid(uid)

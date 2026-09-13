@@ -168,7 +168,6 @@ async def service_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton(main_label, callback_data="svc_mode_toggle")],
         [InlineKeyboardButton("📊 Нагрузка", callback_data="svc_load"),
          InlineKeyboardButton("⚖️ Лимиты", callback_data="svc_limits")],
-        [InlineKeyboardButton("📉 Графики · подбор", callback_data="svc_charts")],
         [InlineKeyboardButton("🔑 Переезд на новый ключ", callback_data="mig_menu")],
         [InlineKeyboardButton("🛡 Доступы · роли", callback_data="roles_menu"),
          InlineKeyboardButton("🧹 Фильтры", callback_data="flt_menu")],
@@ -178,7 +177,6 @@ async def service_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
          InlineKeyboardButton(
             "📨 Доставка" + (f" · {len(stuck)}" if stuck else ""),
             callback_data="deliv_list")],
-        [InlineKeyboardButton("📄 Что нового", callback_data="svc_whatsnew")],
     ]
     if not tickets:
         keyboard.append([InlineKeyboardButton("🆘 Поддержка", callback_data="support_admin_menu")])
@@ -443,14 +441,20 @@ async def charts_screen(update: Update, context: ContextTypes.DEFAULT_TYPE, page
     else:
         lines.append("Подобраны по поведению за сутки:")
         lines.append("")
-        for p in picks[:8]:
-            lines.append(f"• **{escape_md(p['name'])}** — " + "; ".join(p["reasons"]))
+        # Не больше пяти и по одной причине в строке: список из восьми человек
+        # с одинаковым длинным хвостом причин читать невозможно, а решение по
+        # нему всё равно принимается по верхним.
+        for p in picks[:5]:
+            lines.append(f"• **{escape_md(p['name'])}** — {p['reasons'][0]}")
+            if len(p["reasons"]) > 1:
+                lines.append(f"    и ещё: {'; '.join(p['reasons'][1:3])}")
             kb.append([InlineKeyboardButton(f"📉 {p['name']}",
                                             callback_data=f"svc_pchart_{p['uuid']}")])
+        if len(picks) > 5:
+            lines.append(f"\n_И ещё {len(picks) - 5} — через «Выбрать человека»._")
 
-    kb.append([InlineKeyboardButton("📊 Общий график", callback_data="svc_chart")])
-    kb.append([InlineKeyboardButton("👤 Показать любого", callback_data="svc_pick_0")])
-    kb.append([InlineKeyboardButton("🔙 Админка", callback_data="svc_menu")])
+    kb.append([InlineKeyboardButton("👤 Выбрать человека", callback_data="svc_pick_0")])
+    kb.append([InlineKeyboardButton("🔙 Графики", callback_data="vpn_graph")])
 
     await query.edit_message_text("\n".join(lines),
                                   reply_markup=InlineKeyboardMarkup(kb),
@@ -476,9 +480,51 @@ async def pick_peer_screen(update: Update, context: ContextTypes.DEFAULT_TYPE, p
         if page < total - 1:
             nav.append(InlineKeyboardButton("➡️", callback_data=f"svc_pick_{page+1}"))
         kb.append(nav)
-    kb.append([InlineKeyboardButton("🔙 Подбор", callback_data="svc_charts")])
+    kb.append([InlineKeyboardButton("🔙 Графики", callback_data="vpn_graph")])
 
     await query.edit_message_text("👤 **Чей график построить?**",
+                                  reply_markup=InlineKeyboardMarkup(kb),
+                                  parse_mode=ParseMode.MARKDOWN)
+
+
+async def graphs_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Единый вход во все графики.
+
+    Три картинки отвечают на разные вопросы, и это написано прямо на экране:
+    сколько прокачали, упираемся ли в потолок узла, и кого стоит посмотреть
+    отдельно."""
+    from insights import chart_candidates
+
+    query = update.callback_query
+    try:
+        picks = await chart_candidates()
+    except Exception:
+        picks = []
+
+    lines = [
+        "📈 **Графики**",
+        "",
+        "📊 *Трафик* — сколько прокачали за период, по людям.",
+        "🚦 *Нагрузка* — скорость и пакеты на двух панелях с линией потолка "
+        "узла: видно, упираемся или нет.",
+        "📉 *Подбор* — у кого за сутки было что-то примечательное.",
+    ]
+    if picks:
+        lines.append("")
+        lines.append(f"Сейчас в подборе: **{len(picks)}** — "
+                     + escape_md(", ".join(p["name"] for p in picks[:5]))
+                     + ("…" if len(picks) > 5 else ""))
+
+    kb = [
+        [InlineKeyboardButton("📊 Трафик по людям", callback_data="graph_traffic")],
+        [InlineKeyboardButton("🚦 Нагрузка · скорость и пакеты", callback_data="svc_chart")],
+        [InlineKeyboardButton(
+            "📉 Подбор" + (f" · {len(picks)}" if picks else ""),
+            callback_data="svc_charts")],
+        [InlineKeyboardButton("👤 Выбрать человека", callback_data="svc_pick_0")],
+        [InlineKeyboardButton("🔙 Главное меню", callback_data="back_to_main")],
+    ]
+    await query.edit_message_text("\n".join(lines),
                                   reply_markup=InlineKeyboardMarkup(kb),
                                   parse_mode=ParseMode.MARKDOWN)
 
@@ -486,14 +532,14 @@ async def whats_new(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Три последних версии. Кнопка нужна и админу: догадаться, что список изменений
     лежит в клиентском режиме, невозможно — особенно если проект кто-то скачал."""
     query = update.callback_query
-    from changelog import admin_text, repo_link
+    from changelog import admin_text, repo_link, fit
 
     text = admin_text()
     link = repo_link()
     if link:
         text += "\n\nИсходный код: " + link
-    kb = [[InlineKeyboardButton("🔙 Назад", callback_data="svc_menu")]]
-    await query.edit_message_text(text[:4000], reply_markup=InlineKeyboardMarkup(kb),
+    kb = [[InlineKeyboardButton("🔙 Главное меню", callback_data="back_to_main")]]
+    await query.edit_message_text(fit(text), reply_markup=InlineKeyboardMarkup(kb),
                                   parse_mode=ParseMode.MARKDOWN)
 
 

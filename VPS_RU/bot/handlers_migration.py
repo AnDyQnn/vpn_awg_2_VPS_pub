@@ -22,7 +22,7 @@ async def migration_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(
             f"🔑 **Переезд на новый ключ**\n\nУзел не ответил: `{escape_md(st['error'])}`",
             reply_markup=InlineKeyboardMarkup(
-                [[InlineKeyboardButton("🔙 Админка", callback_data="svc_menu")]]),
+                [[InlineKeyboardButton("🔙 Администрирование", callback_data="svc_menu")]]),
             parse_mode=ParseMode.MARKDOWN)
         return
 
@@ -40,7 +40,7 @@ async def migration_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
         kb = [[InlineKeyboardButton("▶️ Поднять второй интерфейс",
                                     callback_data="mig_start")],
-              [InlineKeyboardButton("🔙 Админка", callback_data="svc_menu")]]
+              [InlineKeyboardButton("🔙 Администрирование", callback_data="svc_menu")]]
     else:
         lag = await mg.laggards()
         lines += [
@@ -64,7 +64,7 @@ async def migration_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
               [InlineKeyboardButton("📨 Выдать новые конфиги", callback_data="mig_issue_0")],
               [InlineKeyboardButton("🏁 Завершить переезд", callback_data="mig_finish")],
               [InlineKeyboardButton("✖️ Отменить переезд", callback_data="mig_abort")],
-              [InlineKeyboardButton("🔙 Админка", callback_data="svc_menu")]]
+              [InlineKeyboardButton("🔙 Администрирование", callback_data="svc_menu")]]
 
     await query.edit_message_text("\n".join(lines),
                                   reply_markup=InlineKeyboardMarkup(kb),

@@ -150,10 +150,10 @@ def user_text(since_version=None):
 
     lines = ["✨ **Что изменилось**", ""]
     for ver, _when, body in fresh:
+        # Только раздел, написанный для людей. Раньше при его отсутствии брались
+        # все пункты, кроме «технических на вид», и человеку прилетало про экраны
+        # админки и обходы проверок. Нет раздела — значит для него ничего нового.
         items = _bullets(body, only_section="Для пользователей")
-        if not items:
-            items = [b for b in _bullets(body)
-                     if not any(w in b.lower() for w in TECH_WORDS)]
         for item in items:
             lines.append(f"• {_plain(item)}")
 
@@ -165,10 +165,49 @@ def user_text(since_version=None):
 
 
 def _cmp(a, b):
-    """Сравнение версий по трём числам."""
-    pa = [int(x) for x in a.split(".")]
-    pb = [int(x) for x in b.split(".")]
-    return (pa > pb) - (pa < pb)
+    """Сравнение версий по трём числам, с поправкой на суффикс.
+
+    На `7.1.0-alpha.1` прежний разбор падал с ValueError, исключение глушилось
+    выше по стеку — и кнопка «Что нового» у клиента просто не появлялась.
+    Предрелиз считаем МЛАДШЕ одноимённого релиза: 7.1.0-alpha.1 < 7.1.0."""
+    def parts(v):
+        base, _, suffix = str(v).partition("-")
+        nums = []
+        for chunk in base.split("."):
+            try:
+                nums.append(int(chunk))
+            except ValueError:
+                nums.append(0)
+        while len(nums) < 3:
+            nums.append(0)
+        # релиз без суффикса старше любого предрелиза той же тройки
+        return nums[:3], (1, "") if not suffix else (0, suffix)
+
+    na, sa = parts(a)
+    nb, sb = parts(b)
+    if na != nb:
+        return (na > nb) - (na < nb)
+    return (sa > sb) - (sa < sb)
+
+
+def fit(text: str, limit: int = 3900) -> str:
+    """Подрезает текст под лимит Telegram, не разрывая разметку.
+
+    Слепое text[:4000] оставляло незакрытую пару ** и сообщение не отправлялось
+    вовсе — вместо длинного текста человек получал ошибку."""
+    if len(text) <= limit:
+        return text
+    cut = text[:limit]
+    # отходим до конца последней целой строки
+    nl = cut.rfind("\n")
+    if nl > limit // 2:
+        cut = cut[:nl]
+    # и до состояния, когда парные метки снова парные
+    for mark in ("**", "`", "__"):
+        if cut.count(mark) % 2:
+            pos = cut.rfind(mark)
+            cut = cut[:pos]
+    return cut.rstrip() + "\n\n…"
 
 
 def repo_link():

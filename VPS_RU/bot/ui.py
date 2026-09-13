@@ -15,12 +15,13 @@ def main_menu(active_count=0, support_count=0, admin_count=0):
          InlineKeyboardButton(f"🟢 Онлайн · {active_count}", callback_data="show_online")],
         [InlineKeyboardButton("👥 Пользователи", callback_data="users_page_0"),
          InlineKeyboardButton(
-             "⚙️ Админка" + (f" · {admin_count}" if admin_count else ""),
+             "⚙️ Администрирование" + (f" · {admin_count}" if admin_count else ""),
              callback_data="svc_menu")],
         [InlineKeyboardButton("🖥 Мастер-сервер", callback_data="menu_ru_server"),
          InlineKeyboardButton("🌍 Клиент-сервер", callback_data="menu_de_server")],
         [InlineKeyboardButton("💾 Бэкапы и база", callback_data="menu_backups"),
          InlineKeyboardButton("👤 Режим клиента", callback_data="client_menu")],
+        [InlineKeyboardButton("📄 Что нового", callback_data="svc_whatsnew")],
     ]
     return InlineKeyboardMarkup(keyboard)
 

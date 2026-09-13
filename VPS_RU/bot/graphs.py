@@ -191,9 +191,12 @@ async def generate_load_graph(hours=24, uuid=None, title=None, limit_line=None):
     else:
         times = [dt_to_moscow(r["hour"]) for r in rows]
         # час агрегата → средние значения в секунду
-        down = [(r["bytes_in"] or 0) * 8 / 3600 / 1e6 for r in rows]
-        up = [(r["bytes_out"] or 0) * 8 / 3600 / 1e6 for r in rows]
-        pps = [((r["packets_in"] or 0) + (r["packets_out"] or 0)) / 3600 for r in rows]
+        # float() обязателен: SUM по BIGINT приезжает из Postgres как Decimal,
+        # а Decimal с float не делится — график падал с ошибкой типов.
+        down = [float(r["bytes_in"] or 0) * 8 / 3600 / 1e6 for r in rows]
+        up = [float(r["bytes_out"] or 0) * 8 / 3600 / 1e6 for r in rows]
+        pps = [(float(r["packets_in"] or 0) + float(r["packets_out"] or 0)) / 3600
+               for r in rows]
         peaks = [r["peak_pps"] or 0 for r in rows]
 
         for ax in (ax1, ax2):
