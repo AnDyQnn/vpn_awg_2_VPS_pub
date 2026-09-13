@@ -95,7 +95,9 @@ services:
       DE_AGENT_URL: http://10.13.13.254:8000/api
     volumes:
       - ./volumes:/volumes
-      - ./VERSION:/app/VERSION_FILE:ro
+      # Версия — ОДНА на весь проект, из корня. Раньше монтировался
+      # VPS_RU/VERSION, который никто не обновлял, и бот показывал старый номер.
+      - ../VERSION:/app/VERSION_FILE:ro
       # Ченджлог лежит в корне репозитория, а собирается образ из папки bot —
       # поэтому монтируем файлом, а не копируем при сборке.
       - ../CHANGELOG.md:/app/CHANGELOG.md:ro

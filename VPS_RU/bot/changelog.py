@@ -66,6 +66,21 @@ def parse_releases(limit=SHOW_RELEASES):
     return out
 
 
+def _short(text, limit=95):
+    """Первая фраза пункта без разметки.
+
+    В changelog пункт устроен как «суть. Дальше почему именно так» — боту нужна
+    только суть. Режем строго по концу предложения: по тире или точке с запятой
+    фраза часто теряет смысл на противоположный."""
+    s = _plain(text).strip()
+    head = s.split(". ")[0]
+    if 25 <= len(head) < len(s):
+        s = head
+    if len(s) > limit:
+        s = s[:limit].rsplit(" ", 1)[0] + "…"
+    return s.rstrip(" .")
+
+
 def admin_text(limit=SHOW_RELEASES):
     """Три последних версии целиком — как в файле, без пересказа."""
     releases = parse_releases(limit)
@@ -73,15 +88,55 @@ def admin_text(limit=SHOW_RELEASES):
         return "📄 История изменений пока пуста."
 
     parts = ["📄 **Что нового**", ""]
+    budget = 3500          # с запасом под подпись и ссылку на репозиторий
+    used = len(parts[0])
+    skipped = 0
+
     for ver, when, body in releases:
-        parts.append(f"**{ver}**" + (f" · {when}" if when else ""))
-        for line in body:
-            if line.startswith("### "):
-                parts.append(f"_{line[4:].strip()}_")
-            else:
+        head = f"**{ver}**" + (f" · {when}" if when else "")
+        parts.append(head)
+        used += len(head)
+        for name, items in _by_section(body).items():
+            items = [i for i in items if i.strip()]
+            if not items:
+                continue
+            title = f"_{name}_"
+            shown = 0
+            for item in items:
+                line = f"• {_short(item)}"
+                # Место кончилось — дальше только считаем, что не поместилось:
+                # обрывать текст на полуслове хуже, чем честно сказать сколько.
+                if used + len(line) + len(title) > budget:
+                    skipped += 1
+                    continue
+                if shown == 0:
+                    parts.append(title)
+                    used += len(title)
                 parts.append(line)
+                used += len(line)
+                shown += 1
         parts.append("")
+
+    if skipped:
+        parts.append(f"_И ещё {skipped} пунктов — целиком в CHANGELOG.md._")
     return "\n".join(parts).strip()
+
+
+def _by_section(body):
+    """Пункты, разложенные по разделам, в порядке появления."""
+    out, current = {}, ""
+    for raw in body:
+        line = raw.rstrip()
+        if line.startswith("### "):
+            current = line[4:].strip()
+            out.setdefault(current, [])
+            continue
+        out.setdefault(current, [])
+        if line.strip().startswith("- "):
+            out[current].append(line.strip()[2:])
+        elif out[current] and line.strip() and not line.strip().startswith(">"):
+            out[current][-1] += " " + line.strip()
+    return out
 
 
 def _bullets(body, only_section=None):
@@ -155,7 +210,7 @@ def user_text(since_version=None):
         # админки и обходы проверок. Нет раздела — значит для него ничего нового.
         items = _bullets(body, only_section="Для пользователей")
         for item in items:
-            lines.append(f"• {_plain(item)}")
+            lines.append(f"• {_short(item, 120)}")
 
     if len(lines) <= 2:
         return None
