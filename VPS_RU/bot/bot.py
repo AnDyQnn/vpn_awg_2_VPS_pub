@@ -46,7 +46,7 @@ from handlers_client import (
 from handlers_service import (
     service_menu, toggle_mode, set_mode, load_screen, limits_screen,
     change_limit, set_peer_rule, load_chart, whats_new,
-    ensure_api_token
+    ensure_api_token, charts_screen, pick_peer_screen
 )
 from handlers_admin import (
     ask_backup_password,
@@ -660,6 +660,9 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "svc_mode_off": await set_mode(update, context, False); return
     if data == "svc_load": await load_screen(update, context); return
     if data == "svc_chart": await load_chart(update, context); return
+    if data == "svc_charts": await charts_screen(update, context); return
+    if data.startswith("svc_pick_"):
+        await pick_peer_screen(update, context, int(data.split("_")[-1])); return
     if data == "svc_whatsnew": await whats_new(update, context); return
     if data.startswith("svc_pchart_"):
         await load_chart(update, context, data.replace("svc_pchart_", "")); return
