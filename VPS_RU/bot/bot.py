@@ -75,6 +75,7 @@ from handlers_keylife import (
     delete_confirm, do_delete
 )
 from delivery import delivery_screen
+from xray import sync_person as xray_sync
 from handlers_xray import (
     protocols_menu, awg_screen, xray_screen, switch_confirm, switch_do,
     apply_now as xray_apply_now, apps_screen, apps_toggle, move_screen,
@@ -1007,6 +1008,8 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("Заморозка...")
         await pause_peer(uuid_val)
         await db.execute("UPDATE users SET is_active=FALSE WHERE uuid=$1", uuid_val)
+        # Пауза должна действовать сразу на обоих протоколах.
+        await xray_sync("пауза")
         await db.log_event("Pause", f"Manually paused key {uuid_val}")
         await user_detail_menu(update, context, uuid_val)
         return
@@ -1019,6 +1022,7 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # вырублен inactivity_loop в течение суток. Реальный handshake обновит поле
         # заново в течение 5 мин, если клиент действительно подключится.
         await db.execute("UPDATE users SET is_active=TRUE, last_active_at=NOW() WHERE uuid=$1", uuid_val)
+        await xray_sync("разморозка")
         await db.log_event("Resume", f"Manually resumed key {uuid_val}")
         await user_detail_menu(update, context, uuid_val)
         return
