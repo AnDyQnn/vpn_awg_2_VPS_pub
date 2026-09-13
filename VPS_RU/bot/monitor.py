@@ -722,6 +722,44 @@ async def stats_collector_loop():
         except Exception: pass
         await asyncio.sleep(300)
 
+async def migration_watch_loop(app):
+    """Пока переезд идёт, раз в сутки напоминает, кто ещё не переехал.
+
+    Напоминание, а не действие: выключить старый интерфейс может только владелец
+    кнопкой. Смысл в том, чтобы переезд не завис молча на полпути — забытый
+    второй интерфейс это лишний открытый порт и половина людей на старом ключе.
+    """
+    await asyncio.sleep(300)          # даём узлу подняться после деплоя
+    while True:
+        try:
+            import migration as mg
+            st = await mg.status()
+            if st.get("active"):
+                lag = await mg.laggards()
+                if lag:
+                    names = ", ".join(l["name"] for l in lag[:15])
+                    if len(lag) > 15:
+                        names += f" и ещё {len(lag) - 15}"
+                    await notify_admin(
+                        app,
+                        text=(f"🔑 **Переезд на новый ключ идёт**\n\n"
+                              f"Переехали: {st.get('connected', 0)}, "
+                              f"осталось: {len(lag)}.\n\n"
+                              f"Ещё на старом ключе: {escape_md(names)}.\n\n"
+                              f"Старый интерфейс работает и сам не выключится."),
+                        parse_mode="Markdown")
+                else:
+                    await notify_admin(
+                        app,
+                        text=("🔑 **Все переехали на новый ключ.**\n\n"
+                              "Старый интерфейс можно останавливать — "
+                              "«Админка → Переезд на новый ключ»."),
+                        parse_mode="Markdown")
+        except Exception as e:
+            print(f"Migration watch error: {e}")
+        await asyncio.sleep(86400)
+
+
 async def log_cleanup_loop(app):
     while True:
         try:
