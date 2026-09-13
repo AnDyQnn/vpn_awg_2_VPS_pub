@@ -160,6 +160,7 @@ async def service_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton(main_label, callback_data="svc_mode_toggle")],
         [InlineKeyboardButton("📊 Нагрузка", callback_data="svc_load"),
          InlineKeyboardButton("⚖️ Лимиты", callback_data="svc_limits")],
+        [InlineKeyboardButton("📉 Графики · подбор", callback_data="svc_charts")],
         [InlineKeyboardButton("🛡 Доступы · роли", callback_data="roles_menu")],
         [InlineKeyboardButton(
             "📋 Ждут решения" + (f" · {len(decisions)}" if decisions else ""),
@@ -389,6 +390,87 @@ async def load_chart(update: Update, context: ContextTypes.DEFAULT_TYPE, uuid_va
     except Exception as e:
         await context.bot.send_message(chat_id=query.message.chat_id,
                                        text=f"⚠️ График не построился: {e}")
+
+
+async def charts_screen(update: Update, context: ContextTypes.DEFAULT_TYPE, page: int = 0):
+    """Кого стоит посмотреть на графике.
+
+    Картинок ровно столько же, сколько людей, и листать их все бессмысленно —
+    интересны двое-трое. Поэтому экран отвечает не «вот все», а «вот эти, и вот
+    почему». Кнопка «показать любого» остаётся: подбор — подсказка, а не запрет.
+    """
+    from insights import chart_candidates
+
+    query = update.callback_query
+    online = set()
+    try:
+        from utils import WG_API_URL, api_session
+        import time as _time
+        async with api_session() as session:
+            async with session.get(f"{WG_API_URL}/peers", timeout=5) as resp:
+                if resp.status == 200:
+                    now = int(_time.time())
+                    for p in await resp.json():
+                        hs = p.get("latest_handshake", 0)
+                        if hs and now - hs < 180 and p.get("uuid"):
+                            online.add(p["uuid"])
+    except Exception:
+        pass
+
+    try:
+        picks = await chart_candidates(online)
+    except Exception as e:
+        picks = []
+        print(f"Подбор графиков: {e}")
+
+    lines = ["📉 **Кому смотреть графики**", ""]
+    kb = []
+    if not picks:
+        lines.append("Ничего примечательного за сутки: ни превышений, ни "
+                     "неестественного потока, ни всплесков.")
+        lines.append("")
+        lines.append("Можно посмотреть общий график или выбрать человека вручную.")
+    else:
+        lines.append("Подобраны по поведению за сутки:")
+        lines.append("")
+        for p in picks[:8]:
+            lines.append(f"• **{escape_md(p['name'])}** — " + "; ".join(p["reasons"]))
+            kb.append([InlineKeyboardButton(f"📉 {p['name']}",
+                                            callback_data=f"svc_pchart_{p['uuid']}")])
+
+    kb.append([InlineKeyboardButton("📊 Общий график", callback_data="svc_chart")])
+    kb.append([InlineKeyboardButton("👤 Показать любого", callback_data="svc_pick_0")])
+    kb.append([InlineKeyboardButton("🔙 Админка", callback_data="svc_menu")])
+
+    await query.edit_message_text("\n".join(lines),
+                                  reply_markup=InlineKeyboardMarkup(kb),
+                                  parse_mode=ParseMode.MARKDOWN)
+
+
+async def pick_peer_screen(update: Update, context: ContextTypes.DEFAULT_TYPE, page: int = 0):
+    """Полный список — на случай, когда подбор не угадал."""
+    query = update.callback_query
+    users = await db.get_all_users()
+    per = 8
+    total = max(1, (len(users) + per - 1) // per)
+    page = max(0, min(page, total - 1))
+    chunk = users[page * per:(page + 1) * per]
+
+    kb = [[InlineKeyboardButton(u["name"], callback_data=f"svc_pchart_{u['uuid']}")]
+          for u in chunk]
+    if total > 1:
+        nav = []
+        if page > 0:
+            nav.append(InlineKeyboardButton("⬅️", callback_data=f"svc_pick_{page-1}"))
+        nav.append(InlineKeyboardButton(f"{page+1}/{total}", callback_data="svc_noop"))
+        if page < total - 1:
+            nav.append(InlineKeyboardButton("➡️", callback_data=f"svc_pick_{page+1}"))
+        kb.append(nav)
+    kb.append([InlineKeyboardButton("🔙 Подбор", callback_data="svc_charts")])
+
+    await query.edit_message_text("👤 **Чей график построить?**",
+                                  reply_markup=InlineKeyboardMarkup(kb),
+                                  parse_mode=ParseMode.MARKDOWN)
 
 async def whats_new(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Три последних версии. Кнопка нужна и админу: догадаться, что список изменений
