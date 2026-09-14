@@ -34,6 +34,8 @@ ALLOWED = {
     # Ссылка подписки — её тоже выделяют и копируют. Идёт сразу за
     # объяснением, у которого кнопки есть.
     ("handlers_client.py", "text=sub"),
+    # Та же ссылка с хвостом «/full» — её тоже копируют.
+    ("handlers_client.py", 'text=sub + "/full"'),
 }
 
 SCREEN = re.compile(r"(_screen|_menu|show_screen|return_to_main|handout|_picker)\s*\(")

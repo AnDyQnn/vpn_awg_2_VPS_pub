@@ -480,6 +480,85 @@ async def subscription_url(token: str) -> str:
     return f"{base}/sub/{token}"
 
 
+async def _vless_outbound(rec, port, dest, tag):
+    """Один канал наружу — тот же вход, что и в ссылке, но полем в профиле."""
+    cfg = await settings()
+    host = await server_host()
+    return {
+        "tag": tag,
+        "protocol": "vless",
+        "settings": {"vnext": [{
+            "address": host,
+            "port": int(port),
+            "users": [{
+                "id": rec["xray_uuid"],
+                "encryption": "none",
+                "flow": "xtls-rprx-vision",
+            }],
+        }]},
+        "streamSettings": {
+            "network": "tcp",
+            "security": "reality",
+            "realitySettings": {
+                "serverName": mask_for(dest, rec["user_uuid"]),
+                "fingerprint": "chrome",
+                "publicKey": cfg["public_key"],
+                "shortId": cfg["short_id"],
+            },
+        },
+    }
+
+
+async def subscription_config(token: str) -> str:
+    """Готовый профиль с исключениями — то, чего не умеет ссылка.
+
+    На AmneziaWG перечисленные в исключениях адреса не входят в туннель: запрос
+    к Госуслугам идёт с домашнего адреса, и они его принимают. На Xray всё идёт
+    через узел, то есть с адреса хостинга.
+
+    Серверной стороной это не лечится: трафик уже пришёл, отправить его «как
+    будто из дома» неоткуда. Значит, правила должны попасть в приложение.
+
+    Пусто отдаём при тех же условиях, что и обычную подписку: приостановленный
+    или отозванный получает пустоту, и профиль у него исчезает.
+    """
+    rec = await db.get_xray_by_token(token)
+    if not rec or not rec["is_active"]:
+        return ""
+    host = await server_host()
+    cfg = await settings()
+    if not host or not cfg["public_key"]:
+        return ""
+
+    ways = await entries()
+    outs = []
+    for n, (port, dest) in enumerate(ways):
+        outs.append(await _vless_outbound(rec, port, dest,
+                                          "proxy" if n == 0 else f"proxy-{port}"))
+    outs.append({"protocol": "freedom", "tag": "direct"})
+
+    try:
+        cidrs = [c for c in (await db.get_all_bypass_cidrs() or []) if c]
+    except Exception:
+        cidrs = []
+
+    rules = []
+    if cidrs:
+        # Мимо туннеля, с домашнего адреса — как на AmneziaWG. Список тот же
+        # самый, что уходит в конфиги AmneziaWG: одна правда на оба протокола.
+        rules.append({"type": "field", "ip": cidrs, "outboundTag": "direct"})
+    # Домашняя сеть тоже мимо: до принтера и роутера ходят напрямую.
+    rules.append({"type": "field", "ip": ["geoip:private"],
+                  "outboundTag": "direct"})
+
+    config = {
+        "log": {"loglevel": "warning"},
+        "outbounds": outs,
+        "routing": {"domainStrategy": "IPIfNonMatch", "rules": rules},
+    }
+    return json.dumps(config, ensure_ascii=False, indent=1)
+
+
 async def subscription_body(token: str) -> str:
     """Тело подписки: список профилей в base64 — формат, который понимают
     все клиенты этого семейства.
