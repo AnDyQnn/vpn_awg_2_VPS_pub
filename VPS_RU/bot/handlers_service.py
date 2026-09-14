@@ -505,8 +505,14 @@ async def load_chart(update: Update, context: ContextTypes.DEFAULT_TYPE, uuid_va
                    f"Сверху скорость, снизу пакеты. Линия — потолок узла, "
                    f"около {NODE_CEILING} пакетов в секунду.")
 
-    kb = [[InlineKeyboardButton("👤 Выбрать человека", callback_data="svc_pick_0")],
-          [InlineKeyboardButton("🔙 Графики", callback_data="vpn_graph")]]
+    # График про человека умеет вернуть к этому человеку: чаще всего сюда и
+    # заходят из его карточки, а не из списка графиков.
+    kb = []
+    if uuid_val:
+        kb.append([InlineKeyboardButton("🔙 К человеку",
+                                        callback_data=f"user_detail_{uuid_val}")])
+    kb.append([InlineKeyboardButton("👤 Выбрать человека", callback_data="svc_pick_0")])
+    kb.append([InlineKeyboardButton("📊 Графики", callback_data="vpn_graph")])
 
     await safe_delete(context, query.message.chat_id, query.message.message_id)
     with open(path, "rb") as f:

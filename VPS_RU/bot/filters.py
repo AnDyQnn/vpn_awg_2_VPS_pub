@@ -196,7 +196,9 @@ async def user_filters_screen(update: Update, context: ContextTypes.DEFAULT_TYPE
     kb = [[InlineKeyboardButton(("✅ " if key in mine else "➖ ") + title,
                                 callback_data=f"flt_set_{key}_{uuid_val}")]
           for key, title in CATEGORIES]
-    kb.append([InlineKeyboardButton("🔙 К списку", callback_data="flt_pick_0")])
+    kb.append([InlineKeyboardButton("🔙 К человеку",
+                                    callback_data=f"user_detail_{uuid_val}")])
+    kb.append([InlineKeyboardButton("🧹 К списку фильтров", callback_data="flt_pick_0")])
 
     await show_screen(query, context, "\n".join(lines),
                                   reply_markup=InlineKeyboardMarkup(kb),
