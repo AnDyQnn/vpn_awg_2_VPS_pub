@@ -85,7 +85,9 @@ async def main():
             head = dict(r.headers)
         link = base64.b64decode(body).decode()
         print(link[:90] + "…")
-        assert link == await xray.profile_link("sb-1")
+        # Подписка отдаёт список входов; основной — первый.
+        assert link.split(chr(10))[0] == await xray.profile_link("sb-1")
+        assert len(link.split(chr(10))) == len(await xray.entries())
         print("отдан профиль этого человека: ок")
 
         print("\n=== что видит клиент ===")

@@ -1181,21 +1181,38 @@ XRAY_LOG_LIMIT = 10 * 1024 * 1024
 XRAY_LOG_KEEP = 3
 
 
-def xray_port_gate(open_it: bool):
-    """Дверь для Xray: порт 443 снаружи.
+def xray_ports():
+    """Порты входов из применённого конфига — источник правды один.
 
-    Открыт ровно пока Xray включён. Правило одно и то же, поэтому перед
+    Вписывать их список в узел вторым экземпляром нельзя: мастер поменяет порт
+    на экране, а узел продолжит открывать прежний, и вход окажется за
+    закрытой дверью. Молча — ровно так уже было с 443.
+    """
+    try:
+        with open(XRAY_CONF) as f:
+            conf = json.load(f)
+        found = [int(i["port"]) for i in conf.get("inbounds", []) if i.get("port")]
+        return found or [443]
+    except (OSError, ValueError, KeyError, TypeError):
+        return [443]
+
+
+def xray_port_gate(open_it: bool, ports=None):
+    """Двери для Xray: порты входов снаружи.
+
+    Открыты ровно пока Xray включён. Правила одинаковые, поэтому перед
     добавлением всегда сначала снимаем — иначе при повторных переключениях
     накопится десяток одинаковых строк.
     """
-    rule = "INPUT -i eth0 -p tcp --dport 443 -j DROP"
-    while subprocess.run(f"iptables -C {rule}", shell=True,
-                         stdout=subprocess.DEVNULL,
-                         stderr=subprocess.DEVNULL).returncode == 0:
-        subprocess.run(f"iptables -D {rule}", shell=True,
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    if not open_it:
-        run_cmd(f"iptables -A {rule}")
+    for port in (ports if ports is not None else xray_ports()):
+        rule = f"INPUT -i eth0 -p tcp --dport {port} -j DROP"
+        while subprocess.run(f"iptables -C {rule}", shell=True,
+                             stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL).returncode == 0:
+            subprocess.run(f"iptables -D {rule}", shell=True,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if not open_it:
+            run_cmd(f"iptables -A {rule}")
 
 
 def proto_state():
@@ -1345,6 +1362,13 @@ def xray_start():
     xray_stop()
 
     xray_log_rotate()
+
+    # Порты входов могли смениться вместе с конфигом — двери приводим в
+    # соответствие с тем, что в нём написано.
+    try:
+        xray_port_gate(True)
+    except Exception as e:
+        print(f"Двери Xray не открылись: {e}")
 
     xray_env = dict(os.environ, GOMEMLIMIT=XRAY_MEM_LIMIT)
     proc = subprocess.Popen([XRAY_BIN, "run", "-c", XRAY_CONF],
