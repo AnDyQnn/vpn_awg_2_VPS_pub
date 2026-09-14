@@ -95,8 +95,21 @@ async def resolve_grants(grants):
     from dnsnames import resolve_all
 
     table = None
+    people = None
     out, unresolved = [], []
     for grant in grants:
+        # Цель-человек: его сегодняшний адрес спрашиваем у узла прямо сейчас.
+        # Записанные цифры устаревают при первом же перевыпуске ключа, а
+        # человек — нет.
+        if grant.get("target_uuid"):
+            if people is None:
+                people = await peer_ip_map()
+            ip = people.get(grant["target_uuid"])
+            if not ip:
+                unresolved.append(f"человек {grant['target_uuid'][:8]}")
+                continue
+            out.append({**grant, "cidr": f"{ip}/32"})
+            continue
         if not grant.get("name"):
             out.append(grant)
             continue
@@ -164,7 +177,11 @@ def grant_text(grant) -> str:
 
     Имя показываем как есть, а не разрешённый адрес: правило написано про имя,
     и подстановка цифр только запутала бы — завтра они будут другие."""
-    target = grant.get("name") or grant.get("cidr") or "?"
+    # У правила-на-человека имени туннеля нет — там подпись с его именем.
+    if grant.get("target_uuid"):
+        target = grant.get("note") or "человек"
+    else:
+        target = grant.get("name") or grant.get("cidr") or "?"
     proto = (grant.get("proto") or "any").lower()
     port = grant.get("port")
     if proto in ("tcp", "udp"):

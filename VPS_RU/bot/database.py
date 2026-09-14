@@ -382,6 +382,10 @@ class Database:
                     created_at TIMESTAMP DEFAULT NOW()
                 );
             """)
+            # Цель-человек: правило указывает на него, а не на его
+            # сегодняшний адрес. Адрес подставляется при раскладке.
+            await self.execute(
+                "ALTER TABLE role_grants ADD COLUMN IF NOT EXISTS target_uuid TEXT")
             # Таблица могла быть создана до появления имён — дополняем.
             await self.execute(
                 "ALTER TABLE role_grants ADD COLUMN IF NOT EXISTS name TEXT;")
@@ -729,11 +733,17 @@ class Database:
         return [dict(r) for r in rows]
 
     async def add_role_grant(self, role_id, cidr=None, proto="any", port=None,
-                             note=None, name=None):
-        """Разрешение в роли. Либо адрес, либо имя — имя лучше: оно не устаревает."""
+                             note=None, name=None, target_uuid=None):
+        """Разрешение в роли: адрес, имя или человек.
+
+        Адрес — самое хрупкое: он меняется при перевыпуске ключа, и правило
+        начинает означать чужую машину. Имя и человек разрешаются в адрес при
+        каждой раскладке и переживают смену."""
         await self.execute(
-            "INSERT INTO role_grants (role_id, kind, name, cidr, proto, port, note) "
-            "VALUES ($1,'net',$2,$3,$4,$5,$6)", role_id, name, cidr, proto, port, note)
+            "INSERT INTO role_grants "
+            "(role_id, kind, name, cidr, proto, port, note, target_uuid) "
+            "VALUES ($1,'net',$2,$3,$4,$5,$6,$7)",
+            role_id, name, cidr, proto, port, note, target_uuid)
 
     async def delete_role_grant(self, grant_id):
         await self.execute("DELETE FROM role_grants WHERE id=$1", grant_id)
@@ -767,7 +777,8 @@ class Database:
         рядом с правилом, чтобы в карточке было видно, откуда взялся доступ."""
         rows = await self.fetch_all("""
             SELECT ur.uuid, u.name AS user_name, r.name AS role_name,
-                   g.name AS grant_name, g.cidr, g.proto, g.port
+                   g.name AS grant_name, g.cidr, g.proto, g.port,
+                   g.target_uuid, g.note AS grant_note
             FROM user_roles ur
             JOIN users u ON u.uuid = ur.uuid
             JOIN roles r ON r.id = ur.role_id
@@ -777,8 +788,10 @@ class Database:
         matrix = {}
         for r in rows:
             rec = matrix.setdefault(r["uuid"], {"name": r["user_name"], "allow": []})
-            if r["cidr"] or r["grant_name"]:
+            if r["cidr"] or r["grant_name"] or r["target_uuid"]:
                 rec["allow"].append({"cidr": r["cidr"], "name": r["grant_name"],
+                                     "target_uuid": r["target_uuid"],
+                                     "note": r["grant_note"],
                                      "proto": r["proto"], "port": r["port"],
                                      "role": r["role_name"]})
         return matrix
