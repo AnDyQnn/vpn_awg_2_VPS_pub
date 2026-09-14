@@ -18,6 +18,8 @@ PER_PAGE = 8
 
 
 def _target_line(row):
+    if row["name"] == dn.NODE_NAME:
+        return "→ страница отказа на узле (служебное)"
     if row["target_uuid"]:
         who = escape_md(row["person"] or "человек удалён")
         return f"→ {who} (адрес подставляется сам)"

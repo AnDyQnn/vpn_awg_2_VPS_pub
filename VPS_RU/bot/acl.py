@@ -75,16 +75,46 @@ def _dedupe(grants):
     return out
 
 
+async def resolve_grants(grants):
+    """Превращает имена в адреса. Возвращает (правила, непонятые имена).
+
+    Имя разрешается здесь, а не при добавлении правила: между «открыть доступ
+    к дом.vpn» и раскладкой адрес мог смениться, и правило обязано означать
+    по-прежнему домашний сервер, а не бывший его адрес.
+
+    Имя без адреса пропускается: открыть «неизвестно что» опаснее, чем не
+    открыть ничего."""
+    from dnsnames import resolve_all
+
+    table = None
+    out, unresolved = [], []
+    for grant in grants:
+        if not grant.get("name"):
+            out.append(grant)
+            continue
+        if table is None:
+            table, _ = await resolve_all()
+        ip = table.get(grant["name"])
+        if not ip:
+            unresolved.append(grant["name"])
+            continue
+        # /32: имя всегда указывает на одну машину, а не на сеть.
+        out.append({**grant, "cidr": f"{ip}/32"})
+    return out, unresolved
+
+
 async def build_payload():
     """Список пиров с ограничениями. Кого здесь нет — тот ходит куда угодно."""
     matrix = await db.get_access_matrix()
     ips = await peer_addr_map()
-    peers = []
+    peers, skipped = [], []
     for uuid, rec in matrix.items():
-        allow = _dedupe(rec["allow"])
+        allow, unresolved = await resolve_grants(rec["allow"])
+        skipped += unresolved
+        allow = _dedupe(allow)
         for ip in ips.get(uuid, []):
             peers.append({"ip": ip, "allow": allow})
-    return peers
+    return peers, sorted(set(skipped))
 
 
 async def apply_access_rules(reason: str = ""):
@@ -93,7 +123,7 @@ async def apply_access_rules(reason: str = ""):
 
     Возвращает (успех, текст) — текст годится и для лога, и для показа админу."""
     try:
-        peers = await build_payload()
+        peers, unresolved = await build_payload()
     except Exception as e:
         return False, f"не удалось собрать правила: {e}"
 
@@ -109,6 +139,9 @@ async def apply_access_rules(reason: str = ""):
 
     msg = (f"Доступы применены: под ограничением {data.get('peers', 0)} чел., "
            f"правил {data.get('rules', 0)}")
+    if unresolved:
+        # Молчать нельзя: человек считает доступ открытым, а правила нет.
+        msg += f" · не разрешились имена: {', '.join(unresolved)}"
     if reason:
         msg += f" ({reason})"
     try:
@@ -119,9 +152,13 @@ async def apply_access_rules(reason: str = ""):
 
 
 def grant_text(grant) -> str:
-    """Человеческая запись правила: «10.13.13.7», «192.168.1.0/24 · tcp 443»."""
+    """Человеческая запись правила: «дом.vpn», «10.13.13.7 · tcp 443».
+
+    Имя показываем как есть, а не разрешённый адрес: правило написано про имя,
+    и подстановка цифр только запутала бы — завтра они будут другие."""
+    target = grant.get("name") or grant.get("cidr") or "?"
     proto = (grant.get("proto") or "any").lower()
     port = grant.get("port")
     if proto in ("tcp", "udp"):
-        return f"{grant['cidr']} · {proto}{' ' + str(port) if port else ''}"
-    return str(grant["cidr"])
+        return f"{target} · {proto}{' ' + str(port) if port else ''}"
+    return str(target)

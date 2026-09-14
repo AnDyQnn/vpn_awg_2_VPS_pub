@@ -57,6 +57,23 @@ def to_punycode(name: str) -> str:
         return name
 
 
+# Служебное имя самого узла: на нём живёт страница отказа, на которую
+# уводятся закрытые сайты и сервисы. Заводится само — иначе страница так и
+# осталась бы адресом с цифрами, который никто не помнит.
+NODE_NAME = f"закрыто.{ZONE}"
+NODE_IP = "10.13.13.1"
+
+
+async def ensure_node_name():
+    """Проверяет, что служебное имя на месте. Удалить его владелец может —
+    это его система; но само оно не пропадёт."""
+    if await db.get_dns_name(NODE_NAME):
+        return False
+    await db.set_dns_name(NODE_NAME, target_ip=NODE_IP,
+                          comment="страница отказа на узле")
+    return True
+
+
 async def resolve_all():
     """Собирает таблицу «имя → адрес» для узла.
 
@@ -82,10 +99,34 @@ async def resolve_all():
     return table, skipped
 
 
+async def client_upstreams():
+    """Адрес в туннеле → верхний DNS, который выбрал сам человек.
+
+    Берётся из его же конфига: там строка `DNS = ...`, записанная при выдаче
+    ключа. Ради этого и читаем файлы, а не гадаем: часть людей сознательно
+    выбрала AdGuard, и заворот на узел не должен у них это отнять."""
+    import re
+    from pathlib import Path
+    from utils import CONFIGS_DIR
+
+    by_name = {}
+    try:
+        for path in Path(CONFIGS_DIR).glob("*.conf"):
+            text = path.read_text(encoding="utf-8", errors="ignore")
+            dns = re.search(r"^DNS\s*=\s*([^\n,]+)", text, re.MULTILINE)
+            addr = re.search(r"^Address\s*=\s*([\d.]+)", text, re.MULTILINE)
+            if dns and addr:
+                by_name[addr.group(1).strip()] = dns.group(1).strip()
+    except Exception as e:
+        print(f"Имена: не удалось прочитать конфиги: {e}")
+    return by_name
+
+
 async def apply_names(reason: str = ""):
     """Отдаёт таблицу узлу. Узел заворачивает DNS туннеля на себя, только пока
     имена есть; когда последнее удалено — заворот снимается сам."""
     try:
+        await ensure_node_name()
         table, skipped = await resolve_all()
     except Exception as e:
         return False, f"не удалось собрать имена: {e}"
@@ -93,7 +134,9 @@ async def apply_names(reason: str = ""):
     try:
         async with api_session() as session:
             async with session.post(f"{WG_API_URL}/dns/names",
-                                    json={"names": table}, timeout=15) as resp:
+                                    json={"names": table,
+                                          "upstreams": await client_upstreams()},
+                                    timeout=15) as resp:
                 if resp.status != 200:
                     return False, f"узел отклонил имена: {await resp.text()}"
     except Exception as e:

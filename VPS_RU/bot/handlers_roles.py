@@ -138,37 +138,75 @@ async def grant_add_screen(update: Update, context: ContextTypes.DEFAULT_TYPE, r
     ips = await peer_ip_map()
     users = await db.get_all_users()
 
+    try:
+        names = await db.list_dns_names()
+    except Exception:
+        names = []
+
     kb = []
+    # Имена первыми: правило по имени читается и через полгода, а «10.13.13.5»
+    # требует помнить, что такое .5.
+    for row in names[:8]:
+        kb.append([InlineKeyboardButton(
+            f"\U0001f3f7 {row['name']}",
+            callback_data=f"role_gname_{role_id}_{row['name']}")])
     for u in users:
         ip = ips.get(u["uuid"])
         if not ip:
             continue
-        kb.append([InlineKeyboardButton(f"{u['name']} · {ip}",
+        kb.append([InlineKeyboardButton(f"{u['name']} \u00b7 {ip}",
                                         callback_data=f"role_gpeer_{role_id}_{u['uuid']}")])
-    kb.append([InlineKeyboardButton("✍️ Ввести адрес вручную",
+    kb.append([InlineKeyboardButton("\u270d\ufe0f Ввести имя или адрес",
                                     callback_data=f"role_gman_{role_id}")])
     kb.append(_back(role_id))
 
-    await show_screen(query, context, 
-        "➕ **Что открыть**\n\nВыбери, к кому роль даёт доступ. "
-        "Откроется весь обмен с этим пиром.\n\n"
-        "Нужен только один порт или целая подсеть — введи адрес вручную.",
-        reply_markup=InlineKeyboardMarkup(kb), parse_mode=ParseMode.MARKDOWN)
+    head = "\u2795 **Что открыть**" + chr(10) * 2 + "Выбери, к чему роль даёт доступ."
+    if names:
+        head += (chr(10) * 2 + "\U0001f3f7 Имена сверху — их лучше и выбирать: "
+                 "имя разрешается в адрес каждый раз заново и переживает "
+                 "перевыпуск ключа.")
+    head += chr(10) * 2 + "Нужен только один порт или целая подсеть — введи вручную."
+
+    await show_screen(query, context, head,
+                      reply_markup=InlineKeyboardMarkup(kb),
+                      parse_mode=ParseMode.MARKDOWN)
+
+
+async def grant_name(update: Update, context: ContextTypes.DEFAULT_TYPE,
+                     role_id: int, name: str):
+    """Открыть доступ к имени целиком, без указания порта."""
+    query = update.callback_query
+    if not await db.get_dns_name(name):
+        await query.answer("Такого имени уже нет", show_alert=True)
+        return await grant_add_screen(update, context, role_id)
+    await db.add_role_grant(role_id, name=name)
+    ok, msg = await apply_access_rules("добавлено правило по имени")
+    await query.answer(msg if ok else f"Не вышло: {msg}", show_alert=not ok)
+    await role_screen(update, context, role_id)
 
 
 async def grant_manual(update: Update, context: ContextTypes.DEFAULT_TYPE, role_id: int):
     context.user_data["state"] = "awaiting_role_grant"
     context.user_data["role_id"] = role_id
     await show_screen(update.callback_query, context, 
-        "✍️ **Адрес доступа**\n\nПришли адрес внутри туннеля. Примеры:\n"
-        "`10.13.13.7` — весь обмен с этим пиром\n"
-        "`10.13.13.7 tcp 8096` — только один порт\n"
+        "✍️ **Что открыть**\n\nПришли имя или адрес внутри туннеля. Примеры:\n"
+        "`дом.vpn` — всё, что на этой машине\n"
+        "`дом.vpn tcp 8096` — только один порт\n"
+        "`10.13.13.7` — то же самое, но адресом\n"
         "`10.13.13.0/28` — диапазон адресов\n\n"
-        "Адрес должен быть внутри `10.13.13.0/24`: роли управляют доступом "
-        "внутри туннеля, а не выходом в интернет.",
+        "Имя лучше адреса: оно разрешается в адрес каждый раз заново и "
+        "переживает перевыпуск ключа. Адрес должен быть внутри "
+        "`10.13.13.0/24`: роли управляют доступом внутри туннеля, а не "
+        "выходом в интернет.",
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(
             "✖️ Отмена", callback_data=f"role_open_{role_id}")]]),
         parse_mode=ParseMode.MARKDOWN)
+
+
+def _looks_like_address(token: str) -> bool:
+    """Адрес это или имя. Достаточно первого знака: имя начинается с буквы."""
+    head = token.split("/")[0]
+    return bool(head) and head[0].isdigit()
 
 
 def parse_grant(text: str):
@@ -195,6 +233,14 @@ def parse_grant(text: str):
 
     if not cidr:
         return None, "не вижу адреса"
+
+    # Не похоже на адрес — считаем именем. Проверять его существование здесь
+    # нельзя (это синхронный разбор), поэтому проверка живёт выше, там же, где
+    # видно базу: имя, которого нет, до правил не доедет.
+    if not _looks_like_address(cidr):
+        return {"name": cidr.lower().rstrip("."), "cidr": None,
+                "proto": proto, "port": port}, None
+
     try:
         net = ipaddress.ip_network(cidr, strict=False)
     except ValueError:
@@ -419,7 +465,22 @@ async def handle_role_text(update, context, state: str) -> bool:
                 chat_id, f"⚠️ Не добавил: {err}.",
                 reply_markup=InlineKeyboardMarkup(kb), parse_mode=ParseMode.MARKDOWN)
             return True
-        await db.add_role_grant(role_id, grant["cidr"], grant["proto"], grant["port"])
+        if grant.get("name"):
+            # Имя должно существовать: правило на выдуманное имя выглядит
+            # настроенным, а доступа не даёт.
+            from dnsnames import normalize
+            full, err_name = normalize(grant["name"])
+            if err_name or not await db.get_dns_name(full):
+                await context.bot.send_message(
+                    chat_id,
+                    f"⚠️ Имени `{escape_md(grant['name'])}` нет. Заведите его в "
+                    f"разделе «Имена в туннеле» или укажите адрес.",
+                    reply_markup=InlineKeyboardMarkup(kb),
+                    parse_mode=ParseMode.MARKDOWN)
+                return True
+            grant["name"] = full
+        await db.add_role_grant(role_id, cidr=grant["cidr"], proto=grant["proto"],
+                                port=grant["port"], name=grant.get("name"))
         ok, msg = await apply_access_rules("добавлено правило")
         await context.bot.send_message(
             chat_id,
