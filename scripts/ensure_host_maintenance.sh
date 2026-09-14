@@ -92,16 +92,14 @@ Description=VPN node weekly cleanup (docker, journald, apt)
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/docker system prune -af
-ExecStart=/usr/bin/journalctl --vacuum-time=7d
-# Кэш пакетов: после установки он не нужен никому и восстанавливается
-# скачиванием. На немецком узле он однажды дорос до 879 МБ при диске в 10 ГБ.
-ExecStart=/usr/bin/apt-get clean
-# Старые ядра и осиротевшие пакеты. autoremove сносит только то, от чего
-# ничего не зависит, поэтому запускать его безопасно без присмотра.
-ExecStart=/usr/bin/apt-get -y autoremove --purge
-# Ротация текстовых журналов: journald чистится вакуумом выше, а вот /var/log
-# с файлами сервисов раньше никто не трогал.
+Environment=GC_FLAGS_DIR=${NODE_DIR_FOR_WATCHDOG}/volumes/flags
+# Сборщик мусора: докер, журналы, кэш пакетов, старые ядра, хвосты удалённых
+# пакетов, прошивки несуществующего железа. Каждое удаление он сначала
+# проигрывает всухую и отказывается от шага, если под нож идёт что-то нужное —
+# ядро, докер, systemd, туннель. Что освободил — пишет в volumes/flags для бота.
+ExecStart=/bin/bash ${SELF_DIR}/gc.sh
+# Ротация текстовых журналов: журнал systemd чистит сборщик, а вот /var/log
+# с файлами служб раньше никто не трогал.
 ExecStart=/usr/sbin/logrotate -f /etc/logrotate.conf
 # Проверка самого хоста: место, inode, журналы, зависшие процессы, нужна ли
 # перезагрузка после обновлений. Отчёт кладётся в volumes/flags для бота.
