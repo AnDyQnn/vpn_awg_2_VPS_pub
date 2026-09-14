@@ -1026,11 +1026,33 @@ async def has_unseen_changes(tg_id) -> bool:
 async def client_how_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, uuid_val: str):
     """Те же три шага, что при выдаче — человек забывает, и это нормально."""
     query = update.callback_query
+    from handlers_xray import platform_keyboard
+    await query.edit_message_text(
+        "❓ **Как подключить**\n\nВыберите свою систему:",
+        reply_markup=platform_keyboard(uuid_val,
+                                       back=f"client_key_manage_{uuid_val}"),
+        parse_mode=ParseMode.MARKDOWN)
+
+
+async def client_platform_handler(update: Update, context: ContextTypes.DEFAULT_TYPE,
+                                  platform: str, uuid_val: str):
+    """Три шага под выбранную систему — и кнопка прислать ссылку заново."""
+    query = update.callback_query
     from handlers_xray import instructions
-    text = await instructions(uuid_val)
+    text = await instructions(uuid_val, platform)
     keyboard = [[InlineKeyboardButton("📥 Прислать ссылку заново",
                                       callback_data=f"client_download_{uuid_val}")],
-                [InlineKeyboardButton("🔙 Назад",
-                                      callback_data=f"client_key_manage_{uuid_val}")]]
-    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard),
-                                  parse_mode=ParseMode.MARKDOWN)
+                [InlineKeyboardButton("🔙 Другая система",
+                                      callback_data=f"client_how_{uuid_val}")]]
+    try:
+        await query.edit_message_text(text,
+                                      reply_markup=InlineKeyboardMarkup(keyboard),
+                                      parse_mode=ParseMode.MARKDOWN,
+                                      disable_web_page_preview=True)
+    except Exception:
+        # Сообщение при выдаче — не наше меню, его могли уже тронуть: тогда
+        # просто присылаем инструкцию новым.
+        await context.bot.send_message(chat_id=query.message.chat_id, text=text,
+                                       reply_markup=InlineKeyboardMarkup(keyboard),
+                                       parse_mode=ParseMode.MARKDOWN,
+                                       disable_web_page_preview=True)

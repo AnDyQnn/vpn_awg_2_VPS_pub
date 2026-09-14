@@ -1623,9 +1623,40 @@ def api_xray_status():
         awg_up_now = subprocess.run("ip link show wg0 up", shell=True,
                                     stdout=subprocess.DEVNULL,
                                     stderr=subprocess.DEVNULL).returncode == 0
+        # Порт и обфускация лежат в конфиге интерфейса — читаем оттуда, а не
+        # держим вторую копию в настройках: копия однажды разойдётся с правдой.
+        port, obf = 0, {}
+        try:
+            head = read_config_blocks()[0]
+            m = re.search(r"ListenPort\s*=\s*(\d+)", head)
+            if m:
+                port = int(m.group(1))
+            for key in ("Jc", "Jmin", "Jmax", "S1", "S2", "H1", "H2", "H3", "H4"):
+                m = re.search(rf"^{key}\s*=\s*(\S+)", head, re.MULTILINE)
+                if m:
+                    obf[key] = m.group(1)
+        except Exception:
+            pass
+
+        # Онлайн — по свежему рукопожатию, тем же мерилом, что и везде.
+        online = 0
+        try:
+            now = int(time.time())
+            dump = subprocess.run("wg show wg0 dump", shell=True,
+                                  capture_output=True, text=True).stdout.splitlines()
+            for line in dump[1:]:
+                parts = line.split("	")
+                if len(parts) >= 5 and parts[4].isdigit():
+                    hs = int(parts[4])
+                    if hs and now - hs < 180:
+                        online += 1
+        except Exception:
+            online = -1
+
         return {
             "awg": {"enabled": state["awg"], "up": awg_up_now,
-                    "peers": len(read_config_blocks()) - 1},
+                    "peers": len(read_config_blocks()) - 1,
+                    "port": port, "obfuscation": obf, "online": online},
             "xray": {"enabled": state["xray"], "up": xray_running(),
                      "connections": xray_users_online(),
                      "has_config": os.path.exists(XRAY_CONF)},

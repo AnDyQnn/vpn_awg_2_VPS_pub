@@ -40,7 +40,7 @@ from handlers_client import (
     client_regen_confirm, client_regen_action, support_start_handler, support_run_audit_handler, 
     support_ask_msg_handler, client_download_handler, client_select_check_menu, client_check_all_handler,
     client_my_keys_handler, client_key_manage_handler, client_regen_all_confirm_handler, client_regen_all_action_handler,
-    client_how_handler,
+    client_how_handler, client_platform_handler,
     client_bypass_info_handler, client_report_site_handler, client_notify_toggle_handler, client_notify_off_handler,
     cmd_keys, cmd_status, cmd_support, cmd_help, client_whats_new
 )
@@ -746,6 +746,9 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "client_notify_off": await client_notify_off_handler(update, context); return
     if data.startswith("client_download_"): await client_download_handler(update, context, data.split("client_download_")[1]); return
     
+    if data.startswith("client_plat_"):
+        parts = data.split("_", 3)          # client | plat | система | uuid
+        await client_platform_handler(update, context, parts[2], parts[3]); return
     if data.startswith("client_how_"): await client_how_handler(update, context, data.split("client_how_")[1]); return
     if data.startswith("client_regen_"): await client_regen_confirm(update, context, data.split("client_regen_")[1]); return
     if data.startswith("do_client_regen_"): await client_regen_action(update, context, data.split("do_client_regen_")[1]); return
