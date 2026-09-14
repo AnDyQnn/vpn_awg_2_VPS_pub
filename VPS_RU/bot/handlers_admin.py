@@ -259,7 +259,13 @@ async def confirm_reboot(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def do_reboot_server(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await broadcast_message(context.application, "⚠️ **Внимание!**\n\nСервер уходит на перезагрузку. VPN будет недоступен 2-3 минуты.", db)
     await db.log_event("System", "Admin requested RU physical server reboot.")
-    await update.callback_query.edit_message_text("🔄 **Команда на перезагрузку отправлена!**\n\nRU Сервер уходит в ребут.", parse_mode=ParseMode.MARKDOWN)
+    await update.callback_query.edit_message_text(
+        "🔄 **Команда на перезагрузку отправлена**\n\n"
+        "Мастер уходит на перезагрузку, связь вернётся через 2–3 минуты. "
+        "Бот перезапустится вместе с ним.",
+        reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton("🔙 Главное меню", callback_data="back_to_main")]]),
+        parse_mode=ParseMode.MARKDOWN)
     
     os.makedirs("/volumes/flags", exist_ok=True)
     with open("/volumes/flags/was_rebooting", "w") as f: f.write("true")
@@ -289,7 +295,26 @@ async def do_de_reboot_server(update: Update, context: ContextTypes.DEFAULT_TYPE
     except Exception as e:
         await update.callback_query.edit_message_text(f"❌ **Ошибка связи с агентом:**\n`{e}`\nВозможно туннель упал.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Главное меню", callback_data="back_to_main")]]), parse_mode=ParseMode.MARKDOWN)
 
-async def de_read_logs(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# Строки, которые в журнале только мешают: мастер опрашивает агента каждые
+# несколько секунд, и без отсева журнал состоит из них почти целиком.
+NOISE = ('"GET /api/', '"POST /api/', "INFO:     10.13.13.1:")
+
+
+def _useful_lines(raw):
+    """Оставляет то, ради чего в журнал и смотрят.
+
+    Возвращает (интересное, сколько отсеяно). Сколько именно — говорим вслух:
+    иначе непонятно, то ли событий не было, то ли их спрятали."""
+    keep, dropped = [], 0
+    for line in (raw or "").splitlines():
+        if any(n in line for n in NOISE):
+            dropped += 1
+            continue
+        keep.append(line)
+    return keep, dropped
+
+
+async def de_read_logs(update: Update, context: ContextTypes.DEFAULT_TYPE, full=False):
     await stop_bg_tasks()
     deregister_menu(update.effective_chat.id)
     await update.callback_query.edit_message_text("⏳ Подключение к агенту в Германии и чтение логов...")
@@ -298,19 +323,37 @@ async def de_read_logs(update: Update, context: ContextTypes.DEFAULT_TYPE):
             async with session.get(f"{DE_AGENT_URL}/logs?lines=150", timeout=10) as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    logs = data.get("logs", "Логи пусты")
-                    
+                    logs = data.get("logs", "")
+                    keep, dropped = _useful_lines(logs)
+                    body = logs if full else "\n".join(keep)
+
                     log_path = "/tmp/de_agent_logs.txt"
-                    with open(log_path, "w") as f:
-                        f.write("=== LOGS FROM DE AGENT ===\n\n")
-                        f.write(logs)
-                        
-                    await safe_delete(context, update.callback_query.message.chat_id, update.callback_query.message.message_id)
+                    with open(log_path, "w", encoding="utf-8") as f:
+                        f.write("Журнал немецкого узла\n")
+                        if not full and dropped:
+                            f.write(f"(скрыто {dropped} строк опроса панели — "
+                                    f"их шлёт мастер каждые несколько секунд)\n")
+                        f.write("\n" + (body or "событий не было"))
+
+                    await safe_delete(context, update.callback_query.message.chat_id,
+                                      update.callback_query.message.message_id)
+                    caption = "📑 **Журнал немецкого узла**\n"
+                    caption += ("Полный, со всеми обращениями к панели." if full
+                                else f"Событий: {len(keep)}"
+                                     + (f", скрыто {dropped} строк опроса панели"
+                                        if dropped else ""))
+                    kb = []
+                    if not full:
+                        kb.append([InlineKeyboardButton(
+                            "📄 Полный журнал", callback_data="de_read_logs_full")])
+                    kb.append([InlineKeyboardButton(
+                        "🔙 Клиент-сервер", callback_data="menu_de_server")])
                     await context.bot.send_document(
                         chat_id=update.effective_chat.id,
                         document=open(log_path, "rb"),
-                        caption="📑 Системные логи агента в Германии",
-                        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Главное меню", callback_data="back_to_main")]])
+                        caption=caption,
+                        parse_mode=ParseMode.MARKDOWN,
+                        reply_markup=InlineKeyboardMarkup(kb)
                     )
                 else:
                     await update.callback_query.edit_message_text(f"❌ **Ошибка API агента:** HTTP {resp.status}", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Главное меню", callback_data="back_to_main")]]), parse_mode=ParseMode.MARKDOWN)
@@ -827,7 +870,15 @@ async def restore_file_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
     try:
         if not update.message.document.file_name.endswith(".tar.gz"):
-            if menu_id: await context.bot.edit_message_text(chat_id=chat_id, message_id=menu_id, text="❌ Пожалуйста, отправьте правильный файл архива с расширением `.tar.gz`", parse_mode=ParseMode.MARKDOWN)
+            if menu_id:
+                await context.bot.edit_message_text(
+                    chat_id=chat_id, message_id=menu_id,
+                    text="❌ Нужен файл архива с расширением `.tar.gz`. "
+                         "Пришлите его сообщением или вернитесь в меню.",
+                    reply_markup=InlineKeyboardMarkup(
+                        [[InlineKeyboardButton("🔙 Главное меню",
+                                               callback_data="back_to_main")]]),
+                    parse_mode=ParseMode.MARKDOWN)
             return
 
         file = await context.bot.get_file(update.message.document.file_id)
@@ -1000,8 +1051,8 @@ async def sub_menu_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     deregister_menu(query.message.chat_id)  # снять с авто-перерисовки, иначе подменю «прыгает» в главное
     from ui import menu_ru_server, menu_de_server, menu_backups
     if query.data == "menu_ru_server":
-        await query.edit_message_text("🇷🇺 **Панель управления RU (Мастер)**\n\nУправление российской нодой и ядром VPN.", reply_markup=menu_ru_server(), parse_mode=ParseMode.MARKDOWN)
+        await query.edit_message_text("🇷🇺 **Мастер-сервер**\n\nРоссийский узел: ядро VPN, обновления, исключения.", reply_markup=menu_ru_server(), parse_mode=ParseMode.MARKDOWN)
     elif query.data == "menu_de_server":
-        await query.edit_message_text("🇩🇪 **Панель управления DE (Агент)**\n\nУправление агентом для обхода блокировок.", reply_markup=menu_de_server(), parse_mode=ParseMode.MARKDOWN)
+        await query.edit_message_text("🇩🇪 **Клиент-сервер**\n\nНемецкий узел: через него уходит мировой трафик.", reply_markup=menu_de_server(), parse_mode=ParseMode.MARKDOWN)
     elif query.data == "menu_backups":
         await query.edit_message_text("💾 **Управление резервными копиями и логами**", reply_markup=menu_backups(), parse_mode=ParseMode.MARKDOWN)

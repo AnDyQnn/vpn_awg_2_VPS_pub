@@ -9,7 +9,7 @@ def main_menu(active_count=0, support_count=0, admin_count=0):
     и обращения — это одна кухня, и в главном меню им тесно. На освободившемся
     месте — «Админка» со счётчиком всего, что ждёт внимания."""
     keyboard = [
-        [InlineKeyboardButton("📊 Наблюдение", callback_data="start_dashboard"),
+        [InlineKeyboardButton("📊 Состояние серверов", callback_data="start_dashboard"),
          InlineKeyboardButton("📈 Трафик", callback_data="vpn_graph")],
         [InlineKeyboardButton("🔑 Создать ключ", callback_data="gen_key"),
          InlineKeyboardButton(f"🟢 Онлайн · {active_count}", callback_data="show_online")],

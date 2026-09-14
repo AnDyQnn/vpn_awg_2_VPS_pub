@@ -63,14 +63,35 @@ def to_punycode(name: str) -> str:
 NODE_NAME = f"закрыто.{ZONE}"
 NODE_IP = "10.13.13.1"
 
+# Название служебного имени владелец может сменить, поэтому текущее живёт в
+# настройках, а не в коде. Иначе переименование выглядело бы как создание
+# второго имени: старое название система заводила бы заново.
+NODE_NAME_KEY = "dns_node_name"
+NODE_NAME_DONE = "dns_node_name_created"
+
+
+async def node_name():
+    """Как сейчас называется служебное имя."""
+    return (await db.get_setting(NODE_NAME_KEY)) or NODE_NAME
+
+
+async def remember_node_name(name):
+    """Запоминает новое название после переименования."""
+    await db.set_setting(NODE_NAME_KEY, name)
+
 
 async def ensure_node_name():
-    """Проверяет, что служебное имя на месте. Удалить его владелец может —
-    это его система; но само оно не пропадёт."""
-    if await db.get_dns_name(NODE_NAME):
+    """Заводит служебное имя ОДИН раз, при первом запуске.
+
+    Дальше оно живёт своей жизнью: переименовали — запомнили новое название,
+    удалили — значит удалили. Спорить с владельцем о содержимом его же системы
+    система не должна."""
+    if await db.get_setting(NODE_NAME_DONE):
         return False
     await db.set_dns_name(NODE_NAME, target_ip=NODE_IP,
                           comment="страница отказа на узле")
+    await db.set_setting(NODE_NAME_KEY, NODE_NAME)
+    await db.set_setting(NODE_NAME_DONE, "1")
     return True
 
 
