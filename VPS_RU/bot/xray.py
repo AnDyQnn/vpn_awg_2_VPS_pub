@@ -20,7 +20,8 @@ import secrets
 import uuid as uuid_lib
 
 from database import db
-from utils import WG_API_URL, api_session
+import os
+from utils import CONFIGS_DIR, WG_API_URL, api_session
 
 # Порт входа. 443 выбран не для красоты: трафик к нему неотличим от обычного
 # HTTPS, а блокировка этого порта ломает провайдеру половину интернета.
@@ -290,6 +291,37 @@ async def issue(user_uuid):
     return ok, (token if ok else msg)
 
 
+async def server_host() -> str:
+    """Адрес, по которому до узла достучится человек снаружи.
+
+    Сначала — настройка: владелец мог задать имя вместо адреса. Если её нет,
+    берём из конфигов AmneziaWG: там в `Endpoint` стоит ровно тот адрес, по
+    которому люди подключаются сейчас, то есть заведомо верный.
+
+    У самого узла спрашивать бесполезно: наружу он ходит через Германию и
+    ответит немецким адресом.
+    """
+    host = (await db.get_setting("server_host") or "").strip()
+    if host:
+        return host
+    try:
+        for name in os.listdir(CONFIGS_DIR):
+            if not name.endswith(".conf"):
+                continue
+            with open(os.path.join(CONFIGS_DIR, name), encoding="utf-8") as f:
+                for line in f:
+                    if line.strip().lower().startswith("endpoint"):
+                        found = line.split("=", 1)[1].strip().rsplit(":", 1)[0]
+                        if found:
+                            # Запоминаем: искать заново при каждой выдаче ключа
+                            # незачем, а владелец сможет переопределить.
+                            await db.set_setting("server_host", found)
+                            return found
+    except OSError:
+        pass
+    return ""
+
+
 async def profile_link(user_uuid) -> str:
     """Сама строка подключения — то, что человек вставляет в приложение."""
     rec = await db.get_xray_user(user_uuid)
@@ -297,7 +329,7 @@ async def profile_link(user_uuid) -> str:
         return ""
     cfg = await settings()
     user = await db.get_user_by_uuid(user_uuid)
-    host = await db.get_setting("server_host") or ""
+    host = await server_host()
     if not host or not cfg["public_key"]:
         return ""
     name = (user or {}).get("name", "vpn")

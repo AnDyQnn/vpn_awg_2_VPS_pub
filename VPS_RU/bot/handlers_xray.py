@@ -520,6 +520,18 @@ async def handout(update, context, uuid_val, name, tg_id=None):
         return False
 
     link = await xray.profile_link(uuid_val)
+    if not link:
+        # Пустой текст Telegram не принимает: раньше здесь падала вся выдача, и
+        # ссылки не оставалось ни у владельца, ни у человека. Причина всегда
+        # одна — неизвестен адрес, по которому до узла достучатся снаружи.
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=("\u26a0\ufe0f Ключ создан, но ссылку собрать не вышло.\n\n"
+                  "Не задан адрес сервера для Xray. Он берётся из конфигов "
+                  "AmneziaWG сам; если конфигов ещё нет, задайте его вручную."),
+            reply_markup=exit_kb(("\U0001f465 Люди", "list_users")))
+        return False
+
     qr = await xray.qr_file(uuid_val)
     text = await instructions(uuid_val)
 
@@ -548,8 +560,10 @@ async def handout(update, context, uuid_val, name, tg_id=None):
                 parse_mode=ParseMode.MARKDOWN)
             if qr:
                 await context.bot.send_photo(chat_id=tg_id, photo=open(qr, "rb"))
+            # Человеку — его личный кабинет. Кнопка «Люди» владельческая,
+            # у него такого экрана нет вовсе.
             await context.bot.send_message(chat_id=tg_id, text=link,
-        reply_markup=exit_kb(("👥 Люди", "list_users")))
+                                           reply_markup=exit_kb(to_client=True))
 
         sent, err = await track_send(uuid_val, tg_id, _send)
         await context.bot.send_message(
