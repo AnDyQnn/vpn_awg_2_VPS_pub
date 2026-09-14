@@ -250,7 +250,7 @@ async def xray_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     st = await xray.status()
     xr = st.get("xray", {})
     cfg = await xray.settings()
-    base = await db.get_setting("xray_sub_base") or ""
+    base = await xray.subscription_base()
 
     lines = ["🔶 **Xray**", "",
              "Вход, неотличимый от обычного HTTPS. Подписка обновляется сама — "
