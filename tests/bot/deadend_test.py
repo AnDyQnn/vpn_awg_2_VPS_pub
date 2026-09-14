@@ -31,6 +31,9 @@ ALLOWED = {
     # Одна только ссылка: её выделяют и копируют, кнопка мешает попасть по
     # тексту. Выход даёт следующее сообщение, идущее сразу за ним.
     ("handlers_xray.py", "text=link"),
+    # Ссылка подписки — её тоже выделяют и копируют. Идёт сразу за
+    # объяснением, у которого кнопки есть.
+    ("handlers_client.py", "text=sub"),
 }
 
 SCREEN = re.compile(r"(_screen|_menu|show_screen|return_to_main|handout|_picker)\s*\(")

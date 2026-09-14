@@ -644,6 +644,24 @@ async def send_xray_profile(context, chat_id, uuid_val):
     await context.bot.send_message(chat_id=chat_id, text=link,
                                    reply_markup=xray.link_keyboard(
                                        link, ("🏠 Личный кабинет", "client_menu")))
+    # Подписка — то, ради чего всё делалось: изменения доезжают сами, и
+    # перевыпускать ничего не нужно. Отдаём её вместе с разовой ссылкой и
+    # объясняем разницу, иначе человек добавит первое попавшееся.
+    rec = await db.get_xray_user(uuid_val)
+    sub = await xray.subscription_url(rec["sub_token"]) if rec else ""
+    if sub:
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=("🔄 **Постоянная подписка**\n\n"
+                  "Добавьте её в приложение вместо ссылки выше — тогда "
+                  "настройки будут обновляться сами, и перевыпускать ничего "
+                  "не придётся.\n\n"
+                  "_Обновляется, пока VPN включён._"),
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=exit_kb(to_client=True))
+        await context.bot.send_message(chat_id=chat_id, text=sub,
+                                       disable_web_page_preview=True)
+
     await context.bot.send_message(
         chat_id=chat_id,
         text="⚠️ Ссылка личная — не передавайте её никому.",
