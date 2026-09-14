@@ -104,6 +104,12 @@ ExecStart=/usr/sbin/logrotate -f /etc/logrotate.conf
 # Проверка самого хоста: место, inode, журналы, зависшие процессы, нужна ли
 # перезагрузка после обновлений. Отчёт кладётся в volumes/flags для бота.
 ExecStart=/bin/bash ${SELF_DIR}/host_health.sh
+# Сверка базы с тем, что реально стоит на узле: все ли пиры на месте и нет ли
+# лишних, разложены ли имена, стоят ли правила ролей, считается ли трафик, не
+# отстала ли вторая нода. Ту же сверку показывает аудит по кнопке, но кнопку
+# нажимают редко, а расходится состояние само. Расхождения уходят в журнал —
+# видно через `journalctl -u vpn-cleanup`. Ничего не меняет, только читает.
+ExecStart=/bin/bash ${SELF_DIR}/contract_check.sh ${NODE_DIR_FOR_WATCHDOG}
 EOF
 cat > /etc/systemd/system/vpn-cleanup.timer <<'EOF'
 [Unit]

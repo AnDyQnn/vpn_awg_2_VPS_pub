@@ -1,0 +1,51 @@
+# -*- coding: utf-8 -*-
+"""Ченджлог должен читаться ботом: разбор версий и то, что увидит человек.
+
+Проверка не косметическая: ченджлог показывается в боте, и ошибка разметки
+или превышение предела Telegram означают пустой экран у владельца.
+"""
+import io
+
+import changelog
+
+rel = changelog.parse_releases(limit=5)
+print("=== разобрано записей:", len(rel), "===")
+assert rel, "ченджлог не разобрался вовсе"
+print("  версии:", [r[0] for r in rel])
+
+# Верхняя запись обязана описывать собираемую версию, иначе бот покажет
+# людям изменения не от той сборки.
+version = io.open("/app/VERSION_FILE", encoding="utf-8").read().strip()
+assert rel[0][0] == version, (rel[0][0], version)
+assert rel[1][0] != version, "две записи об одной версии"
+print("верхняя — бета, следом последняя рабочая: ок")
+
+print("\n=== что видит владелец ===")
+text = changelog.admin_text()
+print(" ", text[:220].replace("\n", " "), "…")
+assert len(text) <= 4096, f"не влезет в сообщение: {len(text)}"
+assert "Xray" in text
+print("  длина", len(text), "— предел Telegram выдержан: ок")
+
+print("\n=== что видит человек ===")
+user = changelog.user_text()
+print(" ", user[:220].replace("\n", " "), "…")
+assert len(user) <= 4096, len(user)
+print("  длина", len(user), ": ок")
+
+print("\n=== разметка не рвётся ===")
+for name, body in (("владельцу", text), ("человеку", user)):
+    assert body.count("**") % 2 == 0, f"{name}: непарные звёздочки"
+    assert body.count("`") % 2 == 0, f"{name}: непарные кавычки"
+print("звёздочки и кавычки парные: ок")
+
+print("\n=== человеку есть что показать ===")
+# Кнопка «Что нового» у человека появляется, только если в записи есть
+# раздел «Для пользователей». Без него она молча исчезает — так и вышло.
+fresh = changelog.user_text(since_version="7.1.0-alpha.8")
+assert fresh, "человеку нечего показать — раздел «Для пользователей» потерялся"
+print(" ", fresh[:170].replace(chr(10), " "), "…")
+assert "ссылк" in fresh.lower(), fresh
+print("  раздел на месте: ок")
+
+print("\nВСЁ ПРОШЛО")
