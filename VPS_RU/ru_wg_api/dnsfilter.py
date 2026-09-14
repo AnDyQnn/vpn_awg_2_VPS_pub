@@ -235,6 +235,7 @@ class Names:
 
     def __init__(self):
         self.map = {}
+        self.upstreams = {}
         self.mtime = 0
 
     def maybe_reload(self):
@@ -255,10 +256,21 @@ class Names:
             return
         self.map = {str(k).lower().rstrip("."): v
                     for k, v in (raw.get("names") or {}).items() if v}
-        print(f"Имена: загружено {len(self.map)}", flush=True)
+        # Чей запрос куда пересылать наверх. Пусто — значит всем общий.
+        self.upstreams = {str(k): str(v)
+                          for k, v in (raw.get("upstreams") or {}).items() if v}
+        print(f"Имена: загружено {len(self.map)}, "
+              f"своих DNS у {len(self.upstreams)} адресов", flush=True)
 
     def lookup(self, name):
         return self.map.get((name or "").lower().rstrip("."))
+
+    def upstream_for(self, client_ip):
+        """Куда пересылать запрос этого человека.
+
+        Он выбрал свой DNS при выдаче ключа — заворот на узел не повод этот
+        выбор отменять."""
+        return self.upstreams.get(client_ip) or UPSTREAM
 
 
 NAMES = Names()
@@ -287,18 +299,23 @@ class DnsProtocol(asyncio.DatagramProtocol):
                 self.transport.sendto(build_block_response(data, qend, qtype), addr)
                 return
         try:
-            answer = await forward(data)
+            answer = await forward(data, upstream=NAMES.upstream_for(addr[0]))
         except Exception:
             answer = build_servfail(data)
         self.transport.sendto(answer, addr)
 
 
-async def forward(data, timeout=3.0):
+async def forward(data, timeout=3.0, upstream=None):
+    """Пересылает запрос наверх. По умолчанию — общий DNS, но у человека может
+    быть свой: он выбрал его при выдаче ключа, и заворот на узел не повод
+    этот выбор отменять."""
+    target = upstream or UPSTREAM
+    host, _, port = str(target).partition(":")
     loop = asyncio.get_event_loop()
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setblocking(False)
     try:
-        await loop.sock_connect(sock, (UPSTREAM, 53))
+        await loop.sock_connect(sock, (host, int(port) if port.isdigit() else 53))
         await loop.sock_sendall(sock, data)
         return await asyncio.wait_for(loop.sock_recv(sock, 4096), timeout)
     finally:
@@ -326,7 +343,7 @@ async def handle_tcp(reader, writer):
                 answer = build_block_response(data, qend, qtype)
         if answer is None:
             try:
-                answer = await forward(data)
+                answer = await forward(data, upstream=NAMES.upstream_for(ip))
             except Exception:
                 answer = build_servfail(data)
         writer.write(struct.pack("!H", len(answer)) + answer)

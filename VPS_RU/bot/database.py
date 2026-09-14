@@ -365,6 +365,10 @@ class Database:
                     id SERIAL PRIMARY KEY,
                     role_id INTEGER REFERENCES roles(id) ON DELETE CASCADE,
                     kind TEXT DEFAULT 'net',
+                    -- Либо адрес, либо имя. Имя предпочтительнее: оно
+                    -- разрешается в адрес при каждой раскладке и переживает
+                    -- смену адреса, а записанные цифры — нет.
+                    name TEXT,
                     cidr TEXT,
                     proto TEXT DEFAULT 'any',
                     port INTEGER,
@@ -372,6 +376,10 @@ class Database:
                     created_at TIMESTAMP DEFAULT NOW()
                 );
             """)
+            # Таблица могла быть создана до появления имён — дополняем.
+            await self.execute(
+                "ALTER TABLE role_grants ADD COLUMN IF NOT EXISTS name TEXT;")
+
             await self.execute("""
                 CREATE TABLE IF NOT EXISTS user_roles (
                     uuid TEXT REFERENCES users(uuid) ON DELETE CASCADE,
@@ -686,14 +694,16 @@ class Database:
 
     async def get_role_grants(self, role_id):
         rows = await self.fetch_all(
-            "SELECT id, kind, cidr, proto, port, note FROM role_grants "
+            "SELECT id, kind, name, cidr, proto, port, note FROM role_grants "
             "WHERE role_id=$1 ORDER BY id", role_id)
         return [dict(r) for r in rows]
 
-    async def add_role_grant(self, role_id, cidr, proto="any", port=None, note=None):
+    async def add_role_grant(self, role_id, cidr=None, proto="any", port=None,
+                             note=None, name=None):
+        """Разрешение в роли. Либо адрес, либо имя — имя лучше: оно не устаревает."""
         await self.execute(
-            "INSERT INTO role_grants (role_id, kind, cidr, proto, port, note) "
-            "VALUES ($1,'net',$2,$3,$4,$5)", role_id, cidr, proto, port, note)
+            "INSERT INTO role_grants (role_id, kind, name, cidr, proto, port, note) "
+            "VALUES ($1,'net',$2,$3,$4,$5,$6)", role_id, name, cidr, proto, port, note)
 
     async def delete_role_grant(self, grant_id):
         await self.execute("DELETE FROM role_grants WHERE id=$1", grant_id)
@@ -727,7 +737,7 @@ class Database:
         рядом с правилом, чтобы в карточке было видно, откуда взялся доступ."""
         rows = await self.fetch_all("""
             SELECT ur.uuid, u.name AS user_name, r.name AS role_name,
-                   g.cidr, g.proto, g.port
+                   g.name AS grant_name, g.cidr, g.proto, g.port
             FROM user_roles ur
             JOIN users u ON u.uuid = ur.uuid
             JOIN roles r ON r.id = ur.role_id
@@ -737,9 +747,10 @@ class Database:
         matrix = {}
         for r in rows:
             rec = matrix.setdefault(r["uuid"], {"name": r["user_name"], "allow": []})
-            if r["cidr"]:
-                rec["allow"].append({"cidr": r["cidr"], "proto": r["proto"],
-                                     "port": r["port"], "role": r["role_name"]})
+            if r["cidr"] or r["grant_name"]:
+                rec["allow"].append({"cidr": r["cidr"], "name": r["grant_name"],
+                                     "proto": r["proto"], "port": r["port"],
+                                     "role": r["role_name"]})
         return matrix
 
     async def get_peer_limits(self):

@@ -195,6 +195,9 @@ class DnsFilters(BaseModel):
 class DnsNames(BaseModel):
     # имя → адрес в туннеле. Разрешать имена в адреса — дело бота: у него база.
     names: dict = {}
+    # адрес человека → верхний DNS, который он выбрал при выдаче ключа.
+    # Без этого заворот на узел отнял бы у людей их выбор (например AdGuard).
+    upstreams: dict = {}
 
 
 class MigrationStart(BaseModel):
@@ -730,7 +733,7 @@ def apply_dns_filters(clients):
 DNS_NAMES_FILE = f"{CONF_DIR}/dns_names.json"
 
 
-def apply_dns_names(names):
+def apply_dns_names(names, upstreams=None):
     """Записывает таблицу имён и пересобирает заворот DNS.
 
     Заворот общий, а не по адресам: имя должно работать у всех, иначе «зайди на
@@ -738,7 +741,8 @@ def apply_dns_names(names):
     ничего не заворачиваем — поведение остаётся прежним, как было до этой
     возможности."""
     with open(DNS_NAMES_FILE, "w") as f:
-        json.dump({"names": names or {}, "saved_at": int(time.time())}, f)
+        json.dump({"names": names or {}, "upstreams": upstreams or {},
+                   "saved_at": int(time.time())}, f)
     rebuild_dns_chain(names=names)
     return len(names or {})
 
@@ -1522,7 +1526,8 @@ def set_dns_names(req: DnsNames):
     try:
         names = {str(k).lower().rstrip("."): str(v)
                  for k, v in (req.names or {}).items() if v}
-        count = apply_dns_names(names)
+        ups = {str(k): str(v) for k, v in (req.upstreams or {}).items() if v}
+        count = apply_dns_names(names, ups)
         return {"status": "ok", "names": count}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

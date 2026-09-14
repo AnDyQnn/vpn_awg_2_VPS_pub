@@ -68,7 +68,8 @@ from handlers_roles import (
     roles_menu, role_screen, role_new, grant_add_screen, grant_manual, grant_peer,
     grant_del, members_screen, member_add, member_del, role_delete_confirm,
     role_delete, role_apply, handle_role_text, user_roles_screen,
-    user_role_toggle
+    user_role_toggle,
+    grant_name
 )
 from handlers_keylife import (
     pending_screen, decision_screen, extend_menu, do_extend, set_policy,
@@ -897,6 +898,9 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await grant_add_screen(update, context, int(data.split("_")[-1])); return
     if data.startswith("role_gman_"):
         await grant_manual(update, context, int(data.split("_")[-1])); return
+    if data.startswith("role_gname_"):
+        parts = data.split("_", 3)          # role | gname | id | имя
+        await grant_name(update, context, int(parts[2]), parts[3]); return
     if data.startswith("role_gpeer_"):
         parts = data.split("_", 3)          # role | gpeer | id | uuid (в uuid дефисы)
         await grant_peer(update, context, int(parts[2]), parts[3]); return
@@ -1185,7 +1189,10 @@ async def post_init(application):
     # Имена: адреса людей могли смениться, пока бот лежал, — раскладку стоит
     # пересобрать при старте, как это делается с ролями и фильтрами.
     try:
-        from dnsnames import apply_names
+        from dnsnames import apply_names, ensure_node_name
+        # Служебное имя заводим при старте: с ним у владельца сразу есть
+        # рабочий пример, а страница отказа перестаёт быть адресом с цифрами.
+        await ensure_node_name()
         if await db.count_dns_names():
             ok, msg = await apply_names("старт бота")
             print(f"Имена: {msg}")
