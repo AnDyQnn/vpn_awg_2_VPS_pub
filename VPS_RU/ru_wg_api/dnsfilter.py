@@ -28,6 +28,8 @@ import time
 
 CACHE_DIR = "/etc/amnezia/amneziawg/cache/dns"
 STATE_FILE = "/etc/amnezia/amneziawg/dns_filter.json"
+# Свои имена внутри туннеля: имя → адрес. Файл пишет бот.
+NAMES_FILE = "/etc/amnezia/amneziawg/dns_names.json"
 UPSTREAM = os.getenv("DNS_UPSTREAM", "1.1.1.1")
 BLOCK_IP = os.getenv("DNS_BLOCK_IP", "10.13.13.1")   # адрес страницы отказа
 LISTEN_PORT = int(os.getenv("DNS_PORT", "53"))
@@ -98,20 +100,26 @@ def parse_question(data):
     return ".".join(labels).lower(), qtype, pos + 4
 
 
-def build_block_response(query, qend, qtype):
-    """Ответ «заблокировано»: на запрос адреса отдаём адрес страницы отказа,
-    на всё остальное — NXDOMAIN. Так человек видит объяснение, а не пустоту."""
+def build_a_response(query, qend, qtype, ip, ttl=BLOCK_TTL):
+    """Ответ с адресом. На запрос не-адреса отдаём NXDOMAIN: пустой ответ
+    клиент трактует как «такого имени нет, но переспроси», и он переспрашивает."""
     tid = query[0:2]
     question = query[12:qend]
     if qtype == 1:                              # A
         flags = struct.pack("!H", 0x8180)
         counts = struct.pack("!HHHH", 1, 1, 0, 0)
-        answer = (b"\xc0\x0c" + struct.pack("!HHIH", 1, 1, BLOCK_TTL, 4)
-                  + socket.inet_aton(BLOCK_IP))
+        answer = (b"\xc0\x0c" + struct.pack("!HHIH", 1, 1, ttl, 4)
+                  + socket.inet_aton(ip))
         return tid + flags + counts + question + answer
     flags = struct.pack("!H", 0x8183)           # NXDOMAIN
     counts = struct.pack("!HHHH", 1, 0, 0, 0)
     return tid + flags + counts + question
+
+
+def build_block_response(query, qend, qtype):
+    """Ответ «заблокировано»: на запрос адреса отдаём адрес страницы отказа,
+    на всё остальное — NXDOMAIN. Так человек видит объяснение, а не пустоту."""
+    return build_a_response(query, qend, qtype, BLOCK_IP)
 
 
 def build_servfail(query):
@@ -216,6 +224,46 @@ class Filters:
 FILTERS = Filters()
 
 
+class Names:
+    """Свои имена внутри туннеля: имя → адрес.
+
+    Список приходит от бота файлом и перечитывается по времени изменения — тем
+    же способом, что и фильтры, чтобы не держать два разных механизма.
+
+    Имя хранится и сравнивается в punycode: клиент присылает его именно так,
+    даже если человек набрал русскими буквами."""
+
+    def __init__(self):
+        self.map = {}
+        self.mtime = 0
+
+    def maybe_reload(self):
+        try:
+            m = os.path.getmtime(NAMES_FILE)
+        except OSError:
+            if self.map:
+                self.map = {}
+            return
+        if m == self.mtime:
+            return
+        self.mtime = m
+        try:
+            with open(NAMES_FILE) as f:
+                raw = json.load(f) or {}
+        except Exception as e:
+            print(f"Имена: не прочитался файл: {e}", flush=True)
+            return
+        self.map = {str(k).lower().rstrip("."): v
+                    for k, v in (raw.get("names") or {}).items() if v}
+        print(f"Имена: загружено {len(self.map)}", flush=True)
+
+    def lookup(self, name):
+        return self.map.get((name or "").lower().rstrip("."))
+
+
+NAMES = Names()
+
+
 class DnsProtocol(asyncio.DatagramProtocol):
     def connection_made(self, transport):
         self.transport = transport
@@ -225,9 +273,15 @@ class DnsProtocol(asyncio.DatagramProtocol):
 
     async def handle(self, data, addr):
         FILTERS.maybe_reload()
+        NAMES.maybe_reload()
         parsed = parse_question(data)
         if parsed:
             name, qtype, qend = parsed
+            # Свои имена — первым делом: они наши, наверх за ними ходить незачем.
+            own = NAMES.lookup(name)
+            if own:
+                self.transport.sendto(build_a_response(data, qend, qtype, own), addr)
+                return
             cat = FILTERS.blocked(addr[0], name)
             if cat:
                 self.transport.sendto(build_block_response(data, qend, qtype), addr)
@@ -259,12 +313,16 @@ async def handle_tcp(reader, writer):
         length = struct.unpack("!H", header)[0]
         data = await asyncio.wait_for(reader.readexactly(length), 5)
         FILTERS.maybe_reload()
+        NAMES.maybe_reload()
         ip = writer.get_extra_info("peername")[0]
         parsed = parse_question(data)
         answer = None
         if parsed:
             name, qtype, qend = parsed
-            if FILTERS.blocked(ip, name):
+            own = NAMES.lookup(name)
+            if own:
+                answer = build_a_response(data, qend, qtype, own)
+            elif FILTERS.blocked(ip, name):
                 answer = build_block_response(data, qend, qtype)
         if answer is None:
             try:

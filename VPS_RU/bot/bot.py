@@ -81,6 +81,14 @@ from handlers_xray import (
     apply_now as xray_apply_now, apps_screen, move_screen,
     connections_screen, issue_xray, send_link, drop_awg, why_locked,
 )
+from handlers_dnsnames import (
+    names_menu, add_request as dnm_add, name_entered as dnm_name_entered,
+    target_page as dnm_page, target_person as dnm_person,
+    manual_request as dnm_manual, manual_entered as dnm_ip_entered,
+    name_screen as dnm_open, rename_request as dnm_rename,
+    rename_entered as dnm_rename_entered, retarget_request as dnm_retarget,
+    delete_name as dnm_delete, apply_now as dnm_apply,
+)
 from handlers_migration import (
     migration_menu, migration_start, migration_issue, migration_send,
     migration_finish_confirm, migration_finish, migration_abort_confirm,
@@ -621,6 +629,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["state"] = None
         return
 
+    if state == "awaiting_dns_name":
+        await dnm_name_entered(update, context, update.message.text)
+        return
+
+    if state == "awaiting_dns_ip":
+        await dnm_ip_entered(update, context, update.message.text)
+        return
+
+    if state == "awaiting_dns_rename":
+        await dnm_rename_entered(update, context, update.message.text)
+        return
+
     if state == "awaiting_name":
         # Транслит рус->лат + обрезка эмодзи, чтобы имя приняло приложение AmneziaWG
         name = sanitize_name(update.message.text)
@@ -813,6 +833,25 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await drop_awg(update, context, data.split("_", 2)[2]); return
     if data.startswith("xr_why_"):
         await why_locked(update, context, data.split("_", 2)[2]); return
+    # --- Имена внутри туннеля ---
+    # Порядок важен: длинные префиксы проверяются раньше коротких, иначе
+    # короткий перехватит чужое нажатие.
+    if data == "dnm_menu": await names_menu(update, context); return
+    if data == "dnm_add": await dnm_add(update, context); return
+    if data == "dnm_apply": await dnm_apply(update, context); return
+    if data == "dnm_manual": await dnm_manual(update, context); return
+    if data.startswith("dnm_pg_"):
+        await dnm_page(update, context, int(data.split("_")[-1])); return
+    if data.startswith("dnm_to_"):
+        await dnm_person(update, context, data.split("_", 2)[2]); return
+    if data.startswith("dnm_open_"):
+        await dnm_open(update, context, data.split("_", 2)[2]); return
+    if data.startswith("dnm_ren_"):
+        await dnm_rename(update, context, data.split("_", 2)[2]); return
+    if data.startswith("dnm_re_"):
+        await dnm_retarget(update, context, data.split("_", 2)[2]); return
+    if data.startswith("dnm_del_"):
+        await dnm_delete(update, context, data.split("_", 2)[2]); return
 
     # --- Фильтрация сайтов ---
     if data == "flt_menu": await filters_menu(update, context); return
@@ -1139,6 +1178,15 @@ async def post_init(application):
             print(f"Xray: {msg}" if ok else f"Xray: {msg}")
     except Exception as e:
         print(f"Xray: не удалось применить конфиг при старте: {e}")
+    # Имена: адреса людей могли смениться, пока бот лежал, — раскладку стоит
+    # пересобрать при старте, как это делается с ролями и фильтрами.
+    try:
+        from dnsnames import apply_names
+        if await db.count_dns_names():
+            ok, msg = await apply_names("старт бота")
+            print(f"Имена: {msg}")
+    except Exception as e:
+        print(f"Имена: не удалось применить при старте: {e}")
 
     tasks =[
         asyncio.create_task(alert_loop(application)),
