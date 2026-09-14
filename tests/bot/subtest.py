@@ -123,8 +123,13 @@ async def main():
         print("старая мертва, новая жива: ок")
 
         print("\n=== адрес подписки ===")
-        assert await xray.subscription_url(new_token) == "", \
-            "без настроенного адреса ссылку показывать нельзя"
+        # Раньше без настройки адреса ссылку не показывали вовсе — подписка
+        # раздавалась наружу, и без сертификата это было нельзя. Теперь она
+        # раздаётся внутри туннеля: адрес есть всегда, наружу ничего не торчит.
+        inside = await xray.subscription_url(new_token)
+        assert inside.startswith("http://10.13.13."), \
+            f"по умолчанию подписка обязана быть внутри туннеля, а не {inside}"
+        assert new_token in inside, "личный токен обязан быть в ссылке"
         await db.set_setting("xray_sub_base", "https://vpn.example.com/")
         url = await xray.subscription_url(new_token)
         print(url)

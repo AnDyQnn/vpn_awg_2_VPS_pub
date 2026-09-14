@@ -20,6 +20,7 @@ import secrets
 import uuid as uuid_lib
 
 from database import db
+import hashlib
 import os
 from utils import CONFIGS_DIR, WG_API_URL, api_session
 
@@ -38,6 +39,41 @@ DEFAULT_PORT = 443
 #
 # Меняется из бота, экран «Маска входа», там же замеры по остальным.
 DEFAULT_DEST = "avito.ru"
+
+
+# Пул имён для маскировки. Все они обслуживаются одним и тем же `dest`, поэтому
+# сертификат подходит каждому — проверено на живом узле для всех пяти.
+#
+# Зачем пул: снаружи трафик тридцати человек не выглядит обращением к одному и
+# тому же имени. Это не защита сама по себе, но однообразие — примета.
+MASK_POOL = {
+    "avito.ru": ["avito.ru", "www.avito.ru", "m.avito.ru",
+                 "static.avito.ru", "api.avito.ru"],
+    "wildberries.ru": ["wildberries.ru", "www.wildberries.ru"],
+    "ozon.ru": ["ozon.ru", "www.ozon.ru"],
+    "sberbank.ru": ["sberbank.ru"],
+    "vk.com": ["vk.com", "www.vk.com", "m.vk.com"],
+    "kinopoisk.ru": ["kinopoisk.ru", "www.kinopoisk.ru"],
+}
+
+
+def mask_names(dest: str):
+    """Имена, которыми прикрывается вход. Как минимум сам домен."""
+    return MASK_POOL.get(dest, [dest])
+
+
+def mask_for(dest: str, user_uuid: str) -> str:
+    """Какое имя достанется этому человеку.
+
+    Выбирается по нему самому, а не случайно: в уже выданной ссылке имя зашито,
+    и если оно будет меняться при каждой пересборке конфига, старые ссылки
+    перестанут подключаться.
+    """
+    names = mask_names(dest)
+    if len(names) == 1:
+        return names[0]
+    digest = hashlib.sha256((user_uuid or "").encode()).digest()
+    return names[digest[0] % len(names)]
 
 
 async def settings():
@@ -189,7 +225,9 @@ async def build_config():
                 "security": "reality",
                 "realitySettings": {
                     "dest": f"{cfg['dest']}:443",
-                    "serverNames": [cfg["dest"]],
+                    # Весь пул: вход обязан принять любое из имён, потому
+                    # что у разных людей в ссылке зашиты разные.
+                    "serverNames": mask_names(cfg["dest"]),
                     "privateKey": cfg["private_key"],
                     "shortIds": [cfg["short_id"]],
                 },
@@ -349,7 +387,7 @@ async def profile_link(user_uuid) -> str:
         return ""
     name = (user or {}).get("name", "vpn")
     return (f"vless://{rec['xray_uuid']}@{host}:{cfg['port']}"
-            f"?type=tcp&security=reality&sni={cfg['dest']}"
+            f"?type=tcp&security=reality&sni={mask_for(cfg['dest'], user_uuid)}"
             f"&fp=chrome&pbk={cfg['public_key']}&sid={cfg['short_id']}"
             f"&flow=xtls-rprx-vision#{name}")
 
