@@ -688,6 +688,26 @@ async def send_xray_profile(context, chat_id, uuid_val):
         await context.bot.send_message(chat_id=chat_id, text=sub,
                                        disable_web_page_preview=True)
 
+        # Профиль с исключениями. Нужен не всем: обычная подписка проще и
+        # понимается любым приложением. Но у кого не открываются Госуслуги или
+        # банк — это ровно их случай, и упомянуть надо, иначе они будут искать
+        # поломку там, где её нет.
+        try:
+            has_bypass = bool(await db.get_all_bypass_cidrs())
+        except Exception:
+            has_bypass = False
+        if has_bypass:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=("🏦 **Если не открываются Госуслуги или банк**\n\n"
+                      "Такие сайты не любят, когда к ним приходят через VPN. "
+                      "Добавьте вместо обычной подписки вот эту — она пускает "
+                      "их мимо VPN, напрямую:"),
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=exit_kb(to_client=True))
+            await context.bot.send_message(chat_id=chat_id, text=sub + "/full",
+                                           disable_web_page_preview=True)
+
     await context.bot.send_message(
         chat_id=chat_id,
         text="⚠️ Ссылка личная — не передавайте её никому.",
