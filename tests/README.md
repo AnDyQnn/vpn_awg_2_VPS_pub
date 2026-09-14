@@ -16,7 +16,7 @@
 ## Как гонять
 
     sh tests/run.sh              # всё сразу
-    sh tests/run.sh bot          # бот: 23 теста на одноразовой базе
+    sh tests/run.sh bot          # бот: 27 тестов на одноразовой базе
     sh tests/run.sh node         # узел: 7 тестов с настоящим iptables
     sh tests/run.sh de           # агент Германии: 3 теста
     sh tests/run.sh contract     # сверка, на стенде из двух контейнеров

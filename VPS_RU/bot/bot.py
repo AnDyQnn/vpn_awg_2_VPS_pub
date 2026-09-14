@@ -29,7 +29,7 @@ from monitor import (
     expiration_loop, inactivity_loop, weekly_report_loop, log_cleanup_loop,
     auto_reboot_loop, scheduled_update_loop, auto_update_check_loop, resource_monitor_loop,
     routing_upgrade_loop, bypass_reresolve_loop, run_bypass_check_handler, bypass_notify_now_handler,
-    load_collector_loop, retire_watch_loop, notify_admin, migration_watch_loop,
+    load_collector_loop, retire_watch_loop, notify_admin, migration_watch_loop, weekly_health_loop,
     bypass_list_handler, bypass_del_handler, bypass_add_manual_handler, bypass_add_request_handler,
     reconcile_routing_versions
 )
@@ -249,8 +249,10 @@ async def check_update_completion(app):
                     note += chr(10) + chr(10) + link
                 if ADMIN_ID:
                     from changelog import fit
-                    await app.bot.send_message(chat_id=ADMIN_ID, text=fit(note),
-                                               parse_mode=ParseMode.MARKDOWN)
+                    # Через notify_admin: иначе номер сообщения нигде не
+                    # записан и полуночная уборка чата его не найдёт.
+                    await notify_admin(app, text=fit(note),
+                                       parse_mode=ParseMode.MARKDOWN)
             except Exception as e:
                 print(f'Список изменений после обновления: {e}')
             text = f"✅ **Обновление завершено!**\n\nСервер снова онлайн.\nТекущая версия: `{get_current_version()}`\nВсе системы в норме."
@@ -1242,6 +1244,10 @@ async def post_init(application):
         asyncio.create_task(load_collector_loop(application)),
         asyncio.create_task(retire_watch_loop(application)),
         asyncio.create_task(migration_watch_loop(application)),
+        # Недельный разбор обслуживания: что убралось, что разошлось с базой,
+        # и чем это отличается от прошлой недели. Воскресенье 07:00 МСК —
+        # после планового ребута и уборки на обеих нодах.
+        asyncio.create_task(weekly_health_loop(application)),
         # Раздача подписок Xray: клиенты сами перечитывают профиль, поэтому
         # сервер должен подняться до того, как кто-то попытается обновиться.
         asyncio.create_task(start_subscriptions()),

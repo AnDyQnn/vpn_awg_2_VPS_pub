@@ -18,7 +18,7 @@ from utils import (
 )
 from ui import main_menu
 from database import db
-from monitor import get_dashboard
+from monitor import get_dashboard, notify_admin
 from graphs import generate_vpn_graph
 from backup_manager import create_backup, restore_backup
 
@@ -389,14 +389,14 @@ async def _watch_de_update(app, pre_ts):
                             h = data.get("hash", "") or "?"
                             await db.log_event("System", f"DE update confirmed (commit {h}).")
                             if ADMIN_ID:
-                                try: await app.bot.send_message(chat_id=ADMIN_ID, text=f"✅ **Германия обновилась.**\nВерсия (commit): `{h}`\nАгент снова онлайн.", parse_mode=ParseMode.MARKDOWN)
+                                try: await notify_admin(app, text=f"✅ **Германия обновилась.**\nВерсия (commit): `{h}`\nАгент снова онлайн.", parse_mode=ParseMode.MARKDOWN)
                                 except Exception: pass
                             return
         except Exception:
             pass  # агент пересоздаётся — ждём дальше
     await db.log_event("Error", "DE update: подтверждение не пришло за таймаут.")
     if ADMIN_ID:
-        try: await app.bot.send_message(chat_id=ADMIN_ID, text="⚠️ **Германия: подтверждение обновления не пришло за ~5 мин.**\nВозможно, сборка/`git pull` не удались, либо на DE ещё старая версия агента без обратной связи (тогда подтверждение появится со следующего обновления). Проверь вручную.", parse_mode=ParseMode.MARKDOWN)
+        try: await notify_admin(app, text="⚠️ **Германия: подтверждение обновления не пришло за ~5 мин.**\nВозможно, сборка/`git pull` не удались, либо на DE ещё старая версия агента без обратной связи (тогда подтверждение появится со следующего обновления). Проверь вручную.", parse_mode=ParseMode.MARKDOWN)
         except Exception: pass
 
 async def de_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -563,7 +563,7 @@ async def send_vpn_graph(update: Update, context: ContextTypes.DEFAULT_TYPE):
         state_data["graph_task"] = asyncio.create_task(graph_loop(context, query.message.chat_id, msg.message_id))
     except Exception as e:
         await return_to_main_menu(update, context)
-        await context.bot.send_message(chat_id=ADMIN_ID, text=f"❌ Ошибка графика: {e}")
+        await notify_admin(context.application, text=f"❌ Ошибка графика: {e}")
 
 async def online_users_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await stop_bg_tasks()
@@ -848,7 +848,7 @@ async def download_logs(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # никто не открывал. Теперь одна сводная страница с аналитикой.
         path = await db.export_summary_to_excel("/volumes/backups/vpn_summary.xlsx")
         await context.bot.send_document(chat_id=ADMIN_ID, document=open(path, "rb"), caption="📑 Сводка по пользователям (Excel)")
-    except Exception as e: await context.bot.send_message(chat_id=ADMIN_ID, text=f"❌ Ошибка генерации: {e}")
+    except Exception as e: await notify_admin(context.application, text=f"❌ Ошибка генерации: {e}")
 
 async def restore_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await stop_bg_tasks()
@@ -902,7 +902,7 @@ async def export_excel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         path = await db.export_to_excel("/volumes/backups/users_db.xlsx")
         await context.bot.send_document(chat_id=ADMIN_ID, document=open(path, "rb"), caption="📊 База данных и Логи")
-    except Exception as e: await context.bot.send_message(chat_id=ADMIN_ID, text=f"❌ Ошибка: {e}")
+    except Exception as e: await notify_admin(context.application, text=f"❌ Ошибка: {e}")
 
 async def run_audit_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await stop_bg_tasks()

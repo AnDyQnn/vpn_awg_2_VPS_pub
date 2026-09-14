@@ -1,3 +1,4 @@
+import json
 import os
 import subprocess
 import psutil
@@ -316,6 +317,27 @@ def get_audit_result():
         with open(status_file, "r") as f: return {"status": "running", "step": f.read().strip()}
     else:
         return {"status": "not_started"}
+
+@app.get("/api/host/maintenance")
+def maintenance_reports():
+    """Отчёты недельного обслуживания: проверка хоста и сборщик мусора.
+
+    Сами отчёты пишут скрипты из уборки, раз в неделю. Здесь только чтение:
+    агент их не считает и не обновляет, а отдаёт как есть. Разбирать и
+    показывать будет мастер — он один умеет писать человеку.
+
+    Отсутствие файла не ошибка: на свежей ноде уборка ещё не отрабатывала.
+    """
+    out = {}
+    for key, name in (("health", "host_health.json"), ("gc", "gc.json")):
+        path = f"{FLAGS_DIR}/{name}"
+        try:
+            with open(path) as f:
+                out[key] = json.load(f)
+        except (OSError, ValueError):
+            out[key] = None
+    return out
+
 
 @app.get("/api/backup")
 def download_backup():
