@@ -402,8 +402,14 @@ async def grant_peer(update, context, role_id: int, uuid_val: str):
         await update.callback_query.answer("У этого пира нет адреса", show_alert=True)
         return
     user = await db.get_user_by_uuid(uuid_val)
-    await db.add_role_grant(role_id, f"{ip}/32", "any", None,
-                            user["name"] if user else None)
+    # Записываем человека, а не его сегодняшний адрес: адрес меняется при
+    # перевыпуске ключа, и правило начинало означать чужую машину. Адрес
+    # подставится при раскладке, каждый раз свежий.
+    # Имя человека — в подпись, а не в поле имени: там имена туннеля, по
+    # которым правило ищется в нашем DNS. Человека ищем по uuid.
+    await db.add_role_grant(role_id, None, "any", None,
+                            note=user["name"] if user else None,
+                            target_uuid=uuid_val)
     await _apply_and_answer(update, context, role_id, "открыт доступ к пиру")
 
 

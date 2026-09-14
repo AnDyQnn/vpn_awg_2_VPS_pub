@@ -166,6 +166,10 @@ class PeerCreate(BaseModel):
     name: str
     dns_type: str = "classic"
     bypass_cidrs: Optional[List[str]] = None
+    # Мастер может задать uuid сам. Нужно для перевыпуска: человек остаётся
+    # прежним, меняется только пара ключей, и всё, что к нему привязано —
+    # роли, фильтры, история — остаётся на месте.
+    uid: Optional[str] = None
 
 class BackupData(BaseModel):
     conf: str
@@ -1914,7 +1918,8 @@ def create_peer(req: PeerCreate):
         
         is_de_agent = (req.name == "DE_AGENT")
         client_ip = "10.13.13.254" if is_de_agent else get_next_ip()
-        uid = str(uuid.uuid4())
+        # Свой uuid выдумываем, только если мастер не дал своего.
+        uid = (req.uid or "").strip() or str(uuid.uuid4())
 
         target_dns = "94.140.14.14, 94.140.15.15" if req.dns_type == "adblock" else "1.1.1.1, 1.0.0.1"
 
@@ -2017,6 +2022,37 @@ def resume_peer(uid: str):
         return {"status": "resumed"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/peers/{uid}/retire")
+def retire_peer(uid: str):
+    """Помечает пира отработавшим, НЕ снимая его.
+
+    При перевыпуске старый ключ обязан работать, пока человек не подключился
+    новым: иначе перевыпуск рвёт связь. Но uuid у них теперь общий — человек
+    ведь тот же, — и различать их надо. Помеченный возит трафик как прежде, а
+    в списке выглядит как `retired-<uuid>`.
+
+    Снимает его потом обычное удаление, по этому же помеченному имени.
+    """
+    try:
+        blocks = read_config_blocks()
+        marked = False
+        out = []
+        for b in blocks:
+            if f"# UUID = {uid}" in b and "retired-" not in b:
+                b = b.replace(f"# UUID = {uid}", f"# UUID = retired-{uid}", 1)
+                marked = True
+            out.append(b)
+        if not marked:
+            raise HTTPException(status_code=404, detail="Peer not found")
+        with open(CONF_FILE, "w") as f:
+            f.write("".join(out))
+        return {"status": "retired", "uid": f"retired-{uid}"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.delete("/api/peers/{uid}")
 def delete_peer(uid: str):

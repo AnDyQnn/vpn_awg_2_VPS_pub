@@ -20,10 +20,15 @@ async def backup_wg_config():
     except Exception as e:
         print(f"Error backing up wg config: {e}")
 
-async def create_peer(name: str, dns_type: str = "classic", bypass_cidrs=None):
+async def create_peer(name: str, dns_type: str = "classic", bypass_cidrs=None,
+                      uid: str = None):
     payload = {"name": name, "dns_type": dns_type}
     if bypass_cidrs:
         payload["bypass_cidrs"] = list(bypass_cidrs)
+    # uuid задаётся при перевыпуске: человек остаётся прежним, меняется только
+    # пара ключей — и всё, что привязано к нему, остаётся на месте.
+    if uid:
+        payload["uid"] = uid
     async with api_session() as session:
         async with session.post(f"{WG_API_URL}/peers", json=payload) as resp:
             if resp.status != 200:
@@ -59,6 +64,21 @@ async def resume_peer(uuid: str):
         async with session.post(f"{WG_API_URL}/peers/{uuid}/resume") as resp:
             if resp.status != 200: raise Exception("Ошибка API возобновления")
     await backup_wg_config()
+
+async def retire_peer(uuid: str):
+    """Помечает старого пира отработавшим, не снимая его.
+
+    Он обязан ещё поработать: пока человек не подключился новым ключом, старый
+    держит связь. Но uuid у них теперь общий, поэтому старого помечаем — узел
+    станет звать его `retired-<uuid>`.
+    """
+    async with api_session() as session:
+        async with session.post(f"{WG_API_URL}/peers/{uuid}/retire",
+                                timeout=15) as resp:
+            if resp.status != 200:
+                raise RuntimeError(await resp.text())
+            return (await resp.json()).get("uid") or f"retired-{uuid}"
+
 
 async def delete_peer(uuid: str, name: str, purge_files: bool = True):
     """Удаляет пир из ядра/конфига WireGuard. При purge_files=False файлы конфига

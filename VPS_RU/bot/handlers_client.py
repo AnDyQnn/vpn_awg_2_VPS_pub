@@ -27,22 +27,37 @@ async def _issue_new_config(context, chat_id, user, deliver: bool = True):
     split-tunnel исключений, прописывает текущую routing_version и СНАЧАЛА выдаёт
     клиенту новый конфиг + QR. Старый пир пока остаётся живым (его снимет _retire_old_peer
     после grace-периода). Возвращает (old_uuid, name)."""
-    old_uuid = user['uuid']
+    uuid_val = user['uuid']
     name = user['name']
-    tg_ids = user.get('tg_ids', [])
     exp_at = user.get('expires_at')
 
     bypass_cidrs = await db.get_all_bypass_cidrs()
     rv = await db.get_routing_version()
 
-    new_uid, c_path, q_path = await create_peer(name, dns_type="classic", bypass_cidrs=bypass_cidrs)
+    # Старого помечаем отработавшим, но НЕ снимаем: он держит связь, пока
+    # человек не подключится новым ключом. Дальше его заберёт та же очередь,
+    # что и раньше, — уже по помеченному имени.
+    from wireguard_manager import retire_peer
+    retired_uid = await retire_peer(uuid_val)
+
+    # Новый пир заводится под ТЕМ ЖЕ человеком. Раньше здесь создавался новый
+    # человек с новым uuid, а старый списывался — и вместе с ним уходили роли,
+    # фильтры, персональный лимит, Xray, имя в туннеле и история трафика.
+    # С ролями это было особенно скверно: без ролей человек в нашей схеме
+    # ходит куда угодно, то есть перевыпуск молча открывал ему всю сеть.
+    new_uid, c_path, q_path = await create_peer(
+        name, dns_type="classic", bypass_cidrs=bypass_cidrs, uid=uuid_val)
+
+    # Строка человека обновляется, а не пересоздаётся: всё, что к нему
+    # привязано, остаётся при нём само собой.
     await db.execute(
-        "INSERT INTO users (name, uuid, created_at, expires_at, routing_version) VALUES ($1, $2, NOW(), $3, $4)",
-        name, new_uid, exp_at, rv
-    )
-    for tid in tg_ids:
-        await db.link_user_telegram(new_uid, tid)
-    await db.log_event("Client Regen", f"New config issued for {name} (routing v{rv}); old {old_uuid} pending retire.")
+        "UPDATE users SET routing_version=$1, expires_at=$2 WHERE uuid=$3",
+        rv, exp_at, uuid_val)
+    await db.log_event(
+        "Client Regen",
+        f"Ключ перевыпущен для {name}: новая пара ключей, человек прежний "
+        f"(маршрутизация v{rv}); старый пир {retired_uid} ждёт снятия.")
+    old_uuid = retired_uid
 
     if deliver:
         await context.bot.send_message(
@@ -69,15 +84,26 @@ async def _issue_new_config(context, chat_id, user, deliver: bool = True):
 
 
 async def _retire_old_peer(old_uuid, name):
-    """Перевыпуск ключа, ШАГ 2: снимает СТАРЫЙ пир из ядра/конфига (файлы не трогаем —
-    на диске уже новый конфиг) и удаляет старую запись из БД. Запускается после
-    grace-периода."""
+    """Перевыпуск, шаг 2: снимает помеченного пира. Человека не трогает.
+
+    Файлы на диске не трогаем — там уже новый конфиг. Строку человека тоже: он
+    никуда не делся, у него просто сменилась пара ключей. Раньше здесь стоял
+    DELETE из таблицы людей, потому что старый пир и человек были одним и тем
+    же; теперь снимается только `retired-<uuid>`.
+
+    На всякий случай проверяем явно: удалять человека здесь нельзя ни при
+    каких обстоятельствах, и молчаливая опечатка тут стоила бы ключа.
+    """
     try:
         await delete_peer(old_uuid, name, purge_files=False)
     except Exception as e:
-        print(f"Retire old peer error ({name}/{old_uuid}): {e}")
-    await db.execute("DELETE FROM users WHERE uuid=$1", old_uuid)
-    await db.log_event("Client Regen", f"Old peer retired after grace: {name} ({old_uuid}).")
+        print(f"Не удалось снять отработавшего ({name}/{old_uuid}): {e}")
+    if not str(old_uuid).startswith("retired-"):
+        # Ключи, перевыпущенные до этой правки, снимаются по-старому: там
+        # старый uuid — это отдельный человек, и его запись пора убрать.
+        await db.execute("DELETE FROM users WHERE uuid=$1", old_uuid)
+    await db.log_event("Client Regen",
+                       f"Отработавший пир снят: {name} ({old_uuid}).")
 
 
 async def _queue_retire(retire_list):
