@@ -130,10 +130,14 @@ async def main_menu_view(context=None, chat_id=None):
     # Сутки трафика: полезно само по себе и заодно держит ширину сообщения,
     # от которой Telegram считает ширину кнопок.
     try:
+        # Без клиент-сервера: он несёт трафик всех остальных, и с ним сводка
+        # показывала примерно вдвое больше, а «пик» был не человеком, а
+        # суммарным потоком узла.
         row = await db.fetch_all(
             "SELECT COALESCE(SUM(bytes_in+bytes_out),0) AS b, "
             "COALESCE(MAX(peak_pps),0) AS p FROM traffic_hourly "
-            "WHERE hour > NOW() - INTERVAL '24 HOURS'")
+            "WHERE hour > NOW() - INTERVAL '24 HOURS' "
+            f"AND {db.NOT_AGENT}")
         gb = float(row[0]["b"]) / 1024 ** 3 if row else 0
         peak = int(row[0]["p"]) if row else 0
     except Exception:
