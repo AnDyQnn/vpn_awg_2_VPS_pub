@@ -330,6 +330,20 @@ async def action_resend_config(update: Update, context: ContextTypes.DEFAULT_TYP
     except Exception as e:
         await update.callback_query.answer(f"Ошибка отправки: {e}", show_alert=True)
 
+async def default_proto():
+    """Какой протокол предлагать при создании ключа.
+
+    Xray — только если он включён на узле. Иначе человек получил бы ссылку на
+    протокол, которого там нет: она выглядит рабочей и молча не работает.
+    Узел молчит — тоже AmneziaWG: он работал всегда и точно поднят."""
+    try:
+        import xray
+        state = await xray.status()
+        return "xray" if state.get("xray", {}).get("enabled") else "awg"
+    except Exception:
+        return "awg"
+
+
 def new_key_screen(context, name):
     """Экран срока. Протокол здесь же строкой: по умолчанию Xray, AmneziaWG —
     для тех, кому нужен туннель на уровне IP (роутеры, шлюзы, домашний сервер)."""
