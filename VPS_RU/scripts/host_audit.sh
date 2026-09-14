@@ -365,6 +365,37 @@ check_logs "vpn_db"
 UPDATES=$(apt-get -s upgrade 2>/dev/null | grep -Po "^Inst \K[^ ]+" | wc -l)
 [ "${UPDATES:-0}" -eq 0 ] && add_check CAT_LOGS "Системные обновления ОС" "ok" "Все установлено" || add_check CAT_LOGS "Системные обновления ОС" "warning" "Доступно $UPDATES пакетов"
 
+# --- Сверка базы с тем, что реально стоит ---------------------------------
+# Проверки выше отвечают на «живо ли». Эта — на «то ли живо, что мы думаем»:
+# есть ли на узле все пиры из базы и нет ли лишних, разложены ли имена, стоят
+# ли правила ролей, считается ли трафик, не отстала ли Германия по версии.
+#
+# Живёт в контейнере бота: только там есть и база, и связь с узлом, и знание
+# про вторую ноду. Отдаёт строки вида «состояние|название|подробности».
+CONTRACT="/app/tests/contract/node_contract.py"
+if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx vpn_bot; then
+    CONTRACT_OUT=$(docker exec vpn_bot python3 "$CONTRACT" 2>/dev/null) || true
+    if [ -n "$CONTRACT_OUT" ]; then
+        # Без конвейера: через «|» цикл ушёл бы в подоболочку, и собранные
+        # в нём проверки не дожили бы до сборки отчёта.
+        OLD_IFS="$IFS"
+        IFS='
+'
+        for line in $CONTRACT_OUT; do
+            case "$line" in ok\|*|warning\|*|error\|*) ;; *) continue ;; esac
+            c_status=$(printf '%s' "$line" | cut -d'|' -f1)
+            c_name=$(printf '%s' "$line" | cut -d'|' -f2)
+            c_msg=$(printf '%s' "$line" | cut -d'|' -f3-)
+            add_check CAT_VPN "$c_name" "$c_status" "$c_msg"
+        done
+        IFS="$OLD_IFS"
+    else
+        add_check CAT_VPN "Сверка базы с узлом" "warning" "не дала ответа"
+    fi
+else
+    add_check CAT_VPN "Сверка базы с узлом" "warning" "контейнер бота не запущен"
+fi
+
 # --- Отчёты недельного обслуживания ---------------------------------------
 # Сборщик мусора и проверка хоста пишут свои отчёты сюда же, в volumes/flags,
 # раз в неделю. Аудит их читает, а не перемеряет: так видно не только текущее
