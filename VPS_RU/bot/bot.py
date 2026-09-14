@@ -78,7 +78,7 @@ from delivery import delivery_screen
 from xray import sync_person as xray_sync
 from handlers_xray import (
     protocols_menu, awg_screen, xray_screen, switch_confirm, switch_do,
-    apply_now as xray_apply_now, apps_screen, apps_toggle, move_screen,
+    apply_now as xray_apply_now, apps_screen, move_screen,
     connections_screen, issue_xray, send_link, drop_awg, why_locked,
 )
 from handlers_migration import (
@@ -802,7 +802,6 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "xr_apply": await xray_apply_now(update, context); return
     if data == "xr_apps": await apps_screen(update, context); return
-    if data == "xr_apps_ok": await apps_toggle(update, context); return
     if data == "xr_move": await move_screen(update, context); return
     if data.startswith("xr_conn_"):
         await connections_screen(update, context, data.split("_", 2)[2]); return
