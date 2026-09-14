@@ -178,7 +178,11 @@ async def main():
 
     print("\n=== экран Xray ===")
     await hx.xray_screen(upd, None)
-    assert "адрес не задан" in shown["text"], shown["text"]
+    # Раньше здесь ждали «адрес не задан»: без настройки подписка не работала.
+    # Теперь она раздаётся внутри туннеля, адрес есть всегда — и на экране
+    # должен быть виден именно он, а не отговорка.
+    assert "Подписки:" in shown["text"], shown["text"]
+    assert "10.13.13." in shown["text"], "адрес подписок обязан быть внутренним"
     assert "xr_apply" in shown["buttons"] and "proto_off_xray" in shown["buttons"]
     print("предупреждает, что автообновление выключено: ок")
 

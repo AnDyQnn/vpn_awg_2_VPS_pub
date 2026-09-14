@@ -113,8 +113,12 @@ async def main():
     # Не вписанная строка, а то, что реально настроено: маску меняют, и тест
     # не должен падать из-за этого, иначе его однажды просто выключат.
     dest = (await xray.settings())["dest"]
-    assert rs["privateKey"] == "PRIV-TEST" and rs["serverNames"] == [dest], rs
+    assert rs["privateKey"] == "PRIV-TEST", rs
     assert dest, "маска не задана вовсе"
+    # Имён может быть несколько: вход обязан принять любое из пула, потому что
+    # у разных людей в ссылке зашиты разные.
+    assert rs["serverNames"] == xray.mask_names(dest), rs["serverNames"]
+    assert dest in rs["serverNames"], "сам домен обязан быть в пуле"
     assert cfg["inbounds"][0]["port"] == 443
     print("Reality настроен, порт 443, ключ от узла: ок")
 

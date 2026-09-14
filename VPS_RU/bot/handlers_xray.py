@@ -282,14 +282,12 @@ async def xray_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Маски, проверенные с узла: TLS 1.3, X25519, HTTP/2 — всё, что требует Reality.
 # Время отклика измерено оттуда же. Порядок — от меньшего риска к большему.
 MASKS = [
-    ("avito.ru", "86 мс", "объявления: поток огромный и круглосуточный"),
-    ("wildberries.ru", "93 мс", "маркетплейс, картинки — крупные передачи свои"),
-    ("sberbank.ru", "94 мс", "банк: такое не блокируют никогда"),
-    ("ozon.ru", "124 мс", "маркетплейс, то же самое"),
-    ("rutube.ru", "131 мс", "видео: длинные передачи выглядят естественно"),
-    ("vk.com", "137 мс", "у всех и всегда"),
-    ("www.samsung.com", "153 мс", "зарубежная запаска, из России не уходили"),
-    ("www.microsoft.com", "261 мс", "было по умолчанию; медленно и рискованно"),
+    ("avito.ru", "75 мс", "быстрее всех, пул из 5 имён"),
+    ("wildberries.ru", "93 мс", "маркетплейс, крупные передачи выглядят своими"),
+    ("sberbank.ru", "101 мс", "банк: такое не блокируют никогда"),
+    ("vk.com", "116 мс", "у всех и всегда, пул из 3 имён"),
+    ("ozon.ru", "125 мс", "маркетплейс, то же самое"),
+    ("kinopoisk.ru", "156 мс", "видео, длинные передачи естественны"),
 ]
 
 
@@ -309,7 +307,11 @@ async def mask_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
              "Узел стоит в России, поэтому российские домены правдоподобнее: "
              "домашний хостинг, отдающий зарубежный сайт, выглядит страннее. "
              "И отвечают они втрое быстрее — а отклик видит именно "
-             "проверяющий.", ""]
+             "проверяющий.", "",
+             "_Где есть пул — каждому человеку достаётся своё имя из него, и "
+             "снаружи трафик не выглядит обращением всех к одному адресу. "
+             "Имена в пуле — поддомены одного домена: ляжет он — ляжет пул._",
+             ""]
 
     issued = await db.count_xray_users()
     if issued:
@@ -321,9 +323,11 @@ async def mask_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kb = []
     for host, ping, note in MASKS:
         mark = "✅ " if host == cur else ""
+        pool = len(xray.mask_names(host))
         kb.append([InlineKeyboardButton(f"{mark}{host} · {ping}",
                                         callback_data=f"xr_mask_{host}")])
-        lines.append(f"• `{escape_md(host)}` — {note}")
+        tail = f" · имён в пуле: {pool}" if pool > 1 else ""
+        lines.append(f"• `{escape_md(host)}` — {note}{tail}")
     kb.append([InlineKeyboardButton("🔙 Xray", callback_data="proto_xray")])
 
     await show_screen(query, context, chr(10).join(lines),
@@ -418,7 +422,9 @@ async def move_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Перевод по одному, по образцу переезда на новый ключ: выдали → ждём
     живого подключения → только потом убираем старое."""
     query = update.callback_query
-    users = await db.get_all_users()
+    # Только живые: приостановленному переезжать незачем, а в цифре, по
+    # которой решают «кого ещё перевести», он только мешает.
+    users = [u for u in await db.get_all_users() if u.get("is_active")]
     issued = {r["user_uuid"]: r for r in await db.list_xray_users()}
 
     moved, waiting, untouched = [], [], []
