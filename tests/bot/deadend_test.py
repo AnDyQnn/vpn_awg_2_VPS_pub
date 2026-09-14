@@ -74,5 +74,40 @@ if dead:
     print("Если выход действительно не нужен — впишите место в ALLOWED с причиной.")
     sys.exit(1)
 
+
+# --- переходы, которых нет ------------------------------------------------
+# Кнопка с несуществующим переходом молча ничего не делает. Это тот же тупик,
+# только хуже: он выглядит как рабочая кнопка. Сверяем каждый переход в
+# экранах с разбором нажатий в bot.py.
+print()
+print("=== кнопки ведут туда, где кто-то есть ===")
+router = io.open(os.path.join(BOT, "bot.py"), encoding="utf-8").read()
+STATIC = re.compile(r'callback_data="([a-z_]+)"')
+# Часть нажатий разбирается не по точному совпадению, а по началу строки:
+# startswith("proto_off_") ловит и proto_off_awg, и proto_off_xray. Без этого
+# сторож ругался бы на исправные кнопки — а проверка, которая ругается зря,
+# приучает себя не читать.
+PREFIXES = tuple(re.findall(r'startswith\("([a-z_]+)"\)', router))
+unknown = []
+for name in files:
+    text = io.open(os.path.join(BOT, name), encoding="utf-8").read()
+    for m in STATIC.finditer(text):
+        target = m.group(1)
+        if f'"{target}"' in router or f"'{target}'" in router:
+            continue
+        if target.startswith(PREFIXES):
+            continue
+        # Переходы, собираемые из кусков, проверить статически нельзя —
+        # их ловит разбор с префиксами в самом боте.
+        unknown.append((name, text[:m.start()].count(chr(10)) + 1, target))
+
+if unknown:
+    print("  НАЙДЕНЫ КНОПКИ В НИКУДА:")
+    for name, line, target in unknown:
+        print("    %s:%d -> %s" % (name, line, target))
+    print("  Такая кнопка выглядит рабочей и молча ничего не делает.")
+    sys.exit(1)
+print("  все переходы разбираются: ок")
+
 print()
 print("ВСЁ ПРОШЛО")

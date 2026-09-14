@@ -61,10 +61,11 @@ from handlers_admin import (
 )
 from handlers_users import (
     users_list_menu, user_detail_menu, confirm_delete_menu, action_delete_user, action_resend_config,
-    new_key_screen, default_proto,
+    new_key_screen, default_proto, new_key_role_screen, new_key_role_set,
     generate_key_request, finish_key_creation, render_user_detail, clear_user_ips
 )
 from handlers_roles import (
+    default_role_screen, default_role_set,
     roles_menu, role_screen, role_new, grant_add_screen, grant_manual, grant_peer,
     grant_del, members_screen, member_add, member_del, role_delete_confirm,
     role_delete, role_apply, handle_role_text, user_roles_screen,
@@ -661,7 +662,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if "proto" not in context.user_data:
             context.user_data["proto"] = await default_proto()
         if menu_id:
-            text, keyboard = new_key_screen(context, name)
+            text, keyboard = await new_key_screen(context, name)
             await context.bot.edit_message_text(chat_id=chat_id, message_id=menu_id,
                                                 text=text, reply_markup=keyboard,
                                                 parse_mode=ParseMode.MARKDOWN)
@@ -913,6 +914,17 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data.startswith("role_u_"):
         await user_roles_screen(update, context, data.split("_", 2)[2]); return
     if data == "role_new": await role_new(update, context); return
+    if data == "new_key_role": await new_key_role_screen(update, context); return
+    if data == "new_key_back":
+        text, kb = await new_key_screen(context, context.user_data.get("name", ""))
+        await query.edit_message_text(text, reply_markup=kb,
+                                      parse_mode=ParseMode.MARKDOWN)
+        return
+    if data.startswith("nkrole_"):
+        await new_key_role_set(update, context, int(data.rsplit("_", 1)[1])); return
+    if data == "role_default": await default_role_screen(update, context); return
+    if data.startswith("role_defset_"):
+        await default_role_set(update, context, int(data.rsplit("_", 1)[1])); return
     if data == "role_apply": await role_apply(update, context); return
     if data.startswith("role_open_"):
         await role_screen(update, context, int(data.split("_")[-1])); return
@@ -1009,7 +1021,7 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # лишнего вопроса, и по умолчанию всё равно Xray.
         now = context.user_data.get("proto", "xray")
         context.user_data["proto"] = "awg" if now == "xray" else "xray"
-        text, keyboard = new_key_screen(context, context.user_data.get("name", ""))
+        text, keyboard = await new_key_screen(context, context.user_data.get("name", ""))
         await query.edit_message_text(text, reply_markup=keyboard,
                                       parse_mode=ParseMode.MARKDOWN)
         return

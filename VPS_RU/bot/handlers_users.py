@@ -355,9 +355,29 @@ async def default_proto():
         return "awg"
 
 
-def new_key_screen(context, name):
+async def key_role_name(context):
+    """Какой доступ достанется этому ключу и как это назвать словами."""
+    rid = context.user_data.get("new_key_role_id")
+    if rid is None:
+        stored = await db.get_setting("default_role_id") or ""
+        rid = int(stored) if str(stored).isdigit() else 0
+        context.user_data["new_key_role_id"] = rid
+    if not rid:
+        return 0, None
+    role = await db.get_role(int(rid))
+    if not role:                      # роль удалили, пока заводили ключ
+        context.user_data["new_key_role_id"] = 0
+        return 0, None
+    return int(rid), role["name"]
+
+
+async def new_key_screen(context, name):
     """Экран срока. Протокол здесь же строкой: по умолчанию Xray, AmneziaWG —
-    для тех, кому нужен туннель на уровне IP (роутеры, шлюзы, домашний сервер)."""
+    для тех, кому нужен туннель на уровне IP (роутеры, шлюзы, домашний сервер).
+
+    И доступ. Роли только сужают: у кого ролей нет — тот ходит по туннелю куда
+    угодно. Значит, спрашивать надо здесь, когда человека заводят, а не
+    надеяться, что владелец вспомнит потом."""
     proto = context.user_data.get("proto", "xray")
     if proto == "xray":
         note = ("🔶 Будет выдан **Xray** — ссылкой. Профиль обновляется сам, "
@@ -368,16 +388,60 @@ def new_key_screen(context, name):
                 "подключается роутер, шлюз или домашний сервер.")
         switch = "🔶 Вернуть Xray (обычный случай)"
 
-    text = (f"Имя: **{escape_md(name)}**\n\n{note}\n\nВыберите срок действия ключа:")
+    _rid, role_name = await key_role_name(context)
+    access = (f"🛡 Доступ: **{escape_md(role_name)}**" if role_name
+              else "🛡 Доступ: **без роли** — будет видеть всех в туннеле")
+
+    text = (f"Имя: **{escape_md(name)}**" + '\\n\\n' + note + '\\n\\n' + access + '\\n\\n'
+            + "Выберите срок действия ключа:")
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("1 День", callback_data="set_exp_1"),
          InlineKeyboardButton("1 Неделя", callback_data="set_exp_7")],
         [InlineKeyboardButton("1 Месяц", callback_data="set_exp_30"),
          InlineKeyboardButton("Навсегда", callback_data="set_exp_0")],
         [InlineKeyboardButton(switch, callback_data="new_proto")],
+        [InlineKeyboardButton("🛡 Сменить доступ", callback_data="new_key_role")],
         [InlineKeyboardButton("🔙 Отмена", callback_data="back_to_main")],
     ])
     return text, keyboard
+
+
+async def new_key_role_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Выбор доступа для этого ключа. Общую настройку не трогает."""
+    query = update.callback_query
+    roles = await db.list_roles()
+    cur, _name = await key_role_name(context)
+
+    lines = ["🛡 **Доступ для нового ключа**", "",
+             "Роль сужает доступ внутри туннеля. Без роли человек видит всех "
+             "остальных — поэтому «без роли» здесь не то же самое, что «я "
+             "ничего не выбрал».", "",
+             "_Интернет, выход через Германию и страница блокировки работают "
+             "при любом выборе._", ""]
+
+    kb = []
+    for r in roles:
+        mark = "✅ " if r["id"] == cur else ""
+        hint = "" if r["grants"] else " · ничего не открывает"
+        kb.append([InlineKeyboardButton(f"{mark}{r['name']}{hint}",
+                                        callback_data=f"nkrole_{r['id']}")])
+    kb.append([InlineKeyboardButton(("✅ " if not cur else "") + "Без роли · видит всех",
+                                    callback_data="nkrole_0")])
+    kb.append([InlineKeyboardButton("🔙 Назад", callback_data="new_key_back")])
+
+    await query.edit_message_text(chr(10).join(lines),
+                                  reply_markup=InlineKeyboardMarkup(kb),
+                                  parse_mode=ParseMode.MARKDOWN)
+
+
+async def new_key_role_set(update: Update, context: ContextTypes.DEFAULT_TYPE,
+                           role_id: int):
+    context.user_data["new_key_role_id"] = int(role_id)
+    await update.callback_query.answer()
+    text, kb = await new_key_screen(context, context.user_data.get("name", ""))
+    await update.callback_query.edit_message_text(text, reply_markup=kb,
+                                                  parse_mode=ParseMode.MARKDOWN)
+
 
 
 async def generate_key_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -411,6 +475,20 @@ async def finish_key_creation(update: Update, context: ContextTypes.DEFAULT_TYPE
         await db.log_event("Create Key", f"Created key {name}. Expiry: {exp_days} days. DNS: {dns_type}")
         
         if tg_id: await db.link_user_telegram(new_uid, tg_id)
+
+        # Роль по умолчанию. Без неё новый человек оказался бы вообще без
+        # ролей, а это в нашей схеме значит «ходит куда угодно» — то есть
+        # полный доступ, молча и мимо замысла.
+        try:
+            role_id, _ = await key_role_name(context)
+            if role_id:
+                await db.add_user_role(new_uid, role_id)
+                from acl import apply_access_rules
+                await apply_access_rules("новый ключ: выданный доступ")
+        except Exception as e:
+            # Ключ важнее роли: человек должен получить связь даже если с
+            # ролями что-то не так. Роль довыдадут руками.
+            print(f"Роль новому ключу не выдалась: {e}")
 
         # Xray по умолчанию. Пир при этом создаётся всегда — он держит за
         # человеком адрес в туннеле, на котором стоит весь учёт, — но конфиг

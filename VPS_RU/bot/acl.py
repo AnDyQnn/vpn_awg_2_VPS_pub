@@ -19,6 +19,10 @@ from database import db
 from utils import WG_API_URL, api_session
 
 
+# Подсеть туннеля: всё, что вне её, адресом пира не является.
+TUNNEL_PREFIX = "10.13.13."
+
+
 async def peer_ip_map():
     """uuid → адрес пира в туннеле. Адрес живёт в конфиге WireGuard, не в базе,
     поэтому спрашиваем узел. Пир без адреса (ещё не создан) просто пропускается."""
@@ -30,7 +34,11 @@ async def peer_ip_map():
                     return mapping
                 for p in await resp.json():
                     ip = (p.get("allowed_ips") or "").split("/")[0].strip()
-                    if p.get("uuid") and ip:
+                    # Адрес пира — только то, что внутри туннеля. У выходного
+                    # узла здесь маршрут по умолчанию, и «0.0.0.0/0» давало
+                    # адрес «0.0.0.0»: он попадал в списки и превращался в
+                    # правило, которое не открывает ничего.
+                    if p.get("uuid") and ip.startswith(TUNNEL_PREFIX):
                         mapping[p["uuid"]] = ip
     except Exception as e:
         print(f"ACL: не удалось получить адреса пиров: {e}")

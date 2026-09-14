@@ -22,6 +22,7 @@ cloudflare-dns.com, и на уровне DNS его не видно. Фильт�
 import asyncio
 import json
 import os
+import re
 import socket
 import struct
 import time
@@ -435,6 +436,8 @@ def _render_block_page(host, category):
     safe_host = (host or "этот адрес").replace("<", "&lt;").replace(">", "&gt;")[:120]
     # Ссылка на бота: человеку должно быть куда пойти с вопросом, а не просто
     # «закрыто». Адрес бота приходит от него же вместе с раскладкой фильтров.
+    # Адрес владельца приходит от бота вместе с раскладкой фильтров: вписывать
+    # его в страницу нельзя — однажды разойдётся с настоящим.
     link = FILTERS.bot_link
     contact = (f'<a href="{link}" style="color:#58a6ff">написать владельцу в Telegram</a>'
                if link else "напишите владельцу сети")
@@ -448,7 +451,15 @@ def _render_block_page(host, category):
         why = "Он не входит в то, что открыто вашему ключу"
         note = ("Сервис работает и сеть исправна — просто он не открыт для вас. "
                 "Это настройка доступов, а не поломка.")
-    return (_page_cache
+    page = _page_cache
+    # Кнопка «обратиться» — только когда есть куда. Без адреса убираем её
+    # целиком: мёртвая кнопка хуже отсутствующей, по ней жмут впустую.
+    if link:
+        page = page.replace("__CONTACT_HREF__", link)
+    else:
+        page = re.sub(r'<a class="cta".*?</a>', "", page, flags=re.S)
+
+    return (page
             .replace("__DOMAIN__", safe_host)
             .replace("__HEAD__", head)
             .replace("__WHY__", why)

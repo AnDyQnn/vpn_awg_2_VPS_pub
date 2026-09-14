@@ -35,23 +35,50 @@ async def _settings():
     return limit, burst, mode
 
 
-async def admin_counter() -> int:
-    """Число на кнопке «Админка»: сколько всего ждёт внимания.
-    Считаем только то, что требует действия, — уведомления сюда не лезут."""
-    total = 0
+async def admin_waiting():
+    """Что ждёт внимания — разбором, а не одним числом.
+
+    Раньше здесь считалась только сумма, а экран администрирования собирал те
+    же данные заново и своими запросами. Две копии одной величины расходятся
+    молча: на кнопке одно число, на экране другое, и объяснить его нечем.
+
+    Отдаём список (подпись, сколько, куда вести). Число на кнопке — сумма.
+    """
+    items = []
+
+    async def add(title, query, target, *args):
+        try:
+            n = await db.fetch_val(query, *args) or 0
+        except Exception:
+            n = 0
+        if n:
+            items.append((title, n, target))
+
+    await add("обращений в поддержку",
+              "SELECT COUNT(*) FROM support_tickets WHERE status='open'",
+              "support_admin_menu")
+    await add("нагружали сервер за сутки",
+              "SELECT COUNT(DISTINCT user_uuid) FROM pps_events "
+              "WHERE started_at > NOW() - INTERVAL '24 HOURS'",
+              "svc_load")
+    await add("в очереди на перевыпуск",
+              "SELECT COUNT(*) FROM pending_retire", "kd_list")
+    await add("решений по ключам",
+              "SELECT COUNT(*) FROM pending_decisions WHERE resolved_at IS NULL",
+              "kd_list")
     try:
-        total += await db.fetch_val(
-            "SELECT COUNT(*) FROM support_tickets WHERE status='open'") or 0
-        total += await db.fetch_val(
-            "SELECT COUNT(DISTINCT user_uuid) FROM pps_events "
-            "WHERE started_at > NOW() - INTERVAL '24 HOURS'") or 0
-        total += await db.fetch_val("SELECT COUNT(*) FROM pending_retire") or 0
-        total += await db.fetch_val(
-            "SELECT COUNT(*) FROM pending_decisions WHERE resolved_at IS NULL") or 0
-        total += len(await db.get_stuck_deliveries())
+        stuck = len(await db.get_stuck_deliveries())
     except Exception:
-        pass
-    return total
+        stuck = 0
+    if stuck:
+        items.append(("не вышли на связь", stuck, "deliv_list"))
+    return items
+
+
+async def admin_counter() -> int:
+    """Число на кнопке «Администрирование»: сколько всего ждёт внимания.
+    Считаем только то, что требует действия, — уведомления сюда не лезут."""
+    return sum(n for _title, n, _target in await admin_waiting())
 
 
 async def service_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -84,9 +111,17 @@ async def service_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         personal = {}
 
     mode_line = ("только наблюдение" if mode == "observe" else "ограничение включено")
-    lines = [
-        "🛡 **Администрирование**",
-        "",
+    # Разбор числа с кнопки — первым делом. Иначе человек видит «3» на главной,
+    # заходит сюда и читает три раздела прозой, не понимая, какие именно три.
+    waiting = await admin_waiting()
+    lines = ["🛡 **Администрирование**", ""]
+    if waiting:
+        lines.append(f"⏳ **Ждёт внимания: {sum(n for _t, n, _g in waiting)}**")
+        for title, n, _target in waiting:
+            lines.append(f"     • {n} — {title}")
+        lines.append("_Кнопки на каждое — ниже._")
+        lines.append("")
+    lines += [
         f"🚦 *Ограничение нагрузки:* {mode_line}",
         f"     лимит `{limit}` пакетов в секунду, запас `{burst}`",
     ]
@@ -187,9 +222,17 @@ async def service_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     main_label = ("🚦 Включить ограничение" if mode == "observe"
                   else "👁 Вернуть наблюдение")
     keyboard = []
-    if tickets:
-        keyboard.append([InlineKeyboardButton(f"🆘 Поддержка · {tickets}",
-                                              callback_data="support_admin_menu")])
+    # Кнопка на каждое, что ждёт: человек пришёл сюда именно за этим, и
+    # число на главной должно приводить его к делу, а не к прозе.
+    # Одинаковые переходы схлопываем — решения и очередь перевыпуска живут
+    # на одном экране, две кнопки в одно место только путают.
+    seen_targets = set()
+    for _title, _n, _target in waiting:
+        if _target in seen_targets:
+            continue
+        seen_targets.add(_target)
+        keyboard.append([InlineKeyboardButton(f"➡️ {_title} · {_n}",
+                                              callback_data=_target)])
     keyboard += [
         [InlineKeyboardButton(main_label, callback_data="svc_mode_toggle")],
         [InlineKeyboardButton("📊 Нагрузка", callback_data="svc_load"),
