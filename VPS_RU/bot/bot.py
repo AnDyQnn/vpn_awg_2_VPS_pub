@@ -928,6 +928,8 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if data == "de_confirm_reboot": await de_confirm_reboot(update, context); return
     if data == "do_de_reboot_server": await do_de_reboot_server(update, context); return
+    if data == "de_read_logs_full":
+        await de_read_logs(update, context, full=True); return
     if data == "de_read_logs": await de_read_logs(update, context); return
     if data == "de_update": await de_update(update, context); return
     if data == "update_all": await update_all(update, context); return

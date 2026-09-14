@@ -305,10 +305,16 @@ async def client_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await context.bot.send_message(chat_id=user_id, text=text, reply_markup=InlineKeyboardMarkup(kb))
             return
         else:
+            text = ("❌ У вас нет привязанных ключей VPN.\n\n"
+                    "Попросите того, кто выдаёт доступ, привязать ваш ключ "
+                    "к этому аккаунту.")
+            kb = InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🆘 Сообщить о проблеме",
+                                       callback_data="support_start")]])
             if update.callback_query:
-                await update.callback_query.edit_message_text(text="❌ У вас нет привязанных ключей VPN.")
+                await update.callback_query.edit_message_text(text=text, reply_markup=kb)
             else:
-                await context.bot.send_message(chat_id=user_id, text="❌ У вас нет привязанных ключей VPN.")
+                await context.bot.send_message(chat_id=user_id, text=text, reply_markup=kb)
             return
 
     online = sum(1 for k in keys if live.get(k["uuid"]))
@@ -510,7 +516,10 @@ async def client_regen_all_action_handler(update: Update, context: ContextTypes.
     keys = await db.get_users_by_tg_id(user_id)
     
     if not keys:
-        await query.edit_message_text("❌ У вас нет ключей.")
+        await query.edit_message_text(
+            "❌ У вас нет ключей.",
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🏠 Меню", callback_data="client_menu")]]))
         return
         
     await query.edit_message_text(

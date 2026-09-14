@@ -252,11 +252,20 @@ async def get_dashboard():
         bypass_count = outdated_count = 0
 
     # Одна статус-точка на ноду: 🔴 недоступна/перегруз, 🟡 средне, 🟢 ок.
-    def node_dot(ok, *pcts):
+    def node_dot(ok, cpu, ram, disk):
+        """Цвет узла. У диска пороги свои и выше остальных: на узле с десятью
+        гигабайтами система занимает больше половины, и 73% — обычное рабочее
+        состояние. С общим порогом в 70% кружок горел бы жёлтым всегда, то есть
+        не значил бы ничего."""
         if not ok:
             return "🔴"
-        m = max([float(p) for p in pcts] + [0.0])
-        return "🔴" if m >= 90 else "🟡" if m >= 70 else "🟢"
+        load = max(float(cpu or 0), float(ram or 0))
+        disk = float(disk or 0)
+        if load >= 90 or disk >= 93:
+            return "🔴"
+        if load >= 70 or disk >= 85:
+            return "🟡"
+        return "🟢"
 
     ru_dot = node_dot(ru_ok, cpu_ru, ram_ru, disk_ru)
     de_dot = node_dot(de_ok, cpu_de, ram_de, disk_de)
@@ -265,7 +274,7 @@ async def get_dashboard():
     sep = "━━━━━━━━━━━━━━"
 
     return (
-        f"📊 **Дашборд** · RU + DE\n"
+        f"📊 **Состояние серверов** · Россия и Германия\n"
         f"{sep}\n"
         f"{ru_dot} 🇷🇺 **RU** · мастер\n"
         f"{ru_block}\n\n"

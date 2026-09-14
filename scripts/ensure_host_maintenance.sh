@@ -88,12 +88,18 @@ SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NODE_DIR_FOR_WATCHDOG="${1:-$(dirname "$SELF_DIR")}"
 cat > /etc/systemd/system/vpn-cleanup.service <<EOF
 [Unit]
-Description=VPN node weekly cleanup (docker + journald)
+Description=VPN node weekly cleanup (docker, journald, apt)
 
 [Service]
 Type=oneshot
 ExecStart=/usr/bin/docker system prune -af
 ExecStart=/usr/bin/journalctl --vacuum-time=7d
+# Кэш пакетов: после установки он не нужен никому и восстанавливается
+# скачиванием. На немецком узле он однажды дорос до 879 МБ при диске в 10 ГБ.
+ExecStart=/usr/bin/apt-get clean
+# Старые ядра и осиротевшие пакеты. autoremove сносит только то, от чего
+# ничего не зависит, поэтому запускать его безопасно без присмотра.
+ExecStart=/usr/bin/apt-get -y autoremove --purge
 # Ротация текстовых журналов: journald чистится вакуумом выше, а вот /var/log
 # с файлами сервисов раньше никто не трогал.
 ExecStart=/usr/sbin/logrotate -f /etc/logrotate.conf
@@ -142,4 +148,4 @@ systemctl restart apt-daily.timer apt-daily-upgrade.timer 2>/dev/null || true
 systemctl restart systemd-journald 2>/dev/null || true
 systemctl enable --now vpn-cleanup.timer 2>/dev/null || true
 
-echo "[maintenance] Настроено: обновления вс ~03:00 перед плановым ребутом, потолок journald 200M, недельная уборка с проверкой хоста (вс ~05:00), сторож узла запущен."
+echo "[maintenance] Настроено: обновления вс ~03:00 перед плановым ребутом, потолок journald 200M, недельная уборка (докер, журналы, кэш пакетов, старые ядра) с проверкой хоста (вс ~05:00), сторож узла запущен."

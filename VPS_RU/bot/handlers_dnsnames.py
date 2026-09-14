@@ -17,8 +17,8 @@ from utils import escape_md, show_screen
 PER_PAGE = 8
 
 
-def _target_line(row):
-    if row["name"] == dn.NODE_NAME:
+def _target_line(row, service_name=None):
+    if row["name"] == (service_name or dn.NODE_NAME):
         return "→ страница отказа на узле (служебное)"
     if row["target_uuid"]:
         who = escape_md(row["person"] or "человек удалён")
@@ -29,6 +29,7 @@ def _target_line(row):
 async def names_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     rows = await db.list_dns_names()
+    service = await dn.node_name()
 
     lines = ["🏷 **Имена внутри туннеля**", ""]
     if not rows:
@@ -41,7 +42,7 @@ async def names_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
     else:
         for row in rows[:PER_PAGE]:
-            lines.append(f"  `{row['name']}` {_target_line(row)}")
+            lines.append(f"  `{row['name']}` {_target_line(row, service)}")
         if len(rows) > PER_PAGE:
             lines.append(f"  …и ещё {len(rows) - PER_PAGE}")
         lines += ["", "_Имя, привязанное к человеку, переживает перевыпуск "
@@ -184,7 +185,7 @@ async def name_screen(update: Update, context: ContextTypes.DEFAULT_TYPE, name):
     now = table.get(name)
 
     lines = [f"🏷 **{escape_md(name)}**", "",
-             _target_line(row),
+             _target_line(row, await dn.node_name()),
              f"Сейчас отвечает: `{now}`" if now
              else "_Сейчас не отвечает: у цели нет адреса в туннеле._"]
 
@@ -226,6 +227,10 @@ async def rename_entered(update: Update, context: ContextTypes.DEFAULT_TYPE, raw
     context.user_data["state"] = None
     context.user_data["dns_old_name"] = None
     await db.rename_dns_name(old, new)
+    # Если переименовали служебное — запоминаем новое название, иначе оно
+    # завелось бы заново под прежним именем.
+    if old == await dn.node_name():
+        await dn.remember_node_name(new)
     ok, msg = await dn.apply_names("переименование")
     await context.bot.send_message(
         chat_id=chat_id,
