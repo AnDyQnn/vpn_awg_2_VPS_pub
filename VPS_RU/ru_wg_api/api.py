@@ -375,7 +375,13 @@ def setup_network():
     # опубликованы, но закрываем явно: заглушка — вещь внутренняя, в интернете
     # ей делать нечего.
     run_cmd("iptables -A INPUT -i eth0 -p tcp --dport 80 -j DROP")
-    run_cmd("iptables -A INPUT -i eth0 -p tcp --dport 443 -j DROP")
+    # А вот 443 закрывать нельзя, когда включён Xray: это его вход, и люди
+    # обязаны достучаться до него из интернета. Правило осталось с тех пор,
+    # когда на 443 стояла страница отказа; после переезда страницы на 8443 оно
+    # молча рубило подключения — на боевом узле 2881 пакет. Изнутри контейнера
+    # при этом всё работало, поэтому выглядело как «конфиг не тот».
+    if not proto_state().get("xray"):
+        run_cmd("iptables -A INPUT -i eth0 -p tcp --dport 443 -j DROP")
     # Раньше закрывался только eth0, а клиенты приходят по wg0 — и любой пир мог забрать
     # приватный ключ сервера через /api/backup_config. Это и есть та самая дыра.
     run_cmd("iptables -A INPUT -i wg0 -p tcp --dport 8000 -j DROP")
@@ -1171,6 +1177,23 @@ XRAY_LOG_LIMIT = 10 * 1024 * 1024
 XRAY_LOG_KEEP = 3
 
 
+def xray_port_gate(open_it: bool):
+    """Дверь для Xray: порт 443 снаружи.
+
+    Открыт ровно пока Xray включён. Правило одно и то же, поэтому перед
+    добавлением всегда сначала снимаем — иначе при повторных переключениях
+    накопится десяток одинаковых строк.
+    """
+    rule = "INPUT -i eth0 -p tcp --dport 443 -j DROP"
+    while subprocess.run(f"iptables -C {rule}", shell=True,
+                         stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL).returncode == 0:
+        subprocess.run(f"iptables -D {rule}", shell=True,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if not open_it:
+        run_cmd(f"iptables -A {rule}")
+
+
 def proto_state():
     """Какие протоколы включены. Нет файла — значит как было раньше:
     AmneziaWG работает, Xray ещё не поднимали."""
@@ -1782,6 +1805,9 @@ def api_protocols(req: ProtocolSwitch):
         save_proto_state(state)
 
         if req.name == "xray":
+            # Дверь снаружи открывается вместе с протоколом: правило ставится
+            # при старте контейнера, а переключают его кнопкой, на ходу.
+            xray_port_gate(bool(req.enabled))
             if req.enabled:
                 ok, note = xray_start()
             else:

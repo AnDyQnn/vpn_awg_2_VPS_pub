@@ -639,8 +639,11 @@ async def send_xray_profile(context, chat_id, uuid_val):
     if qr:
         await context.bot.send_photo(chat_id=chat_id, photo=open(qr, "rb"),
                                      caption="📱 Отсканируйте в приложении")
+    # Кнопка открывает ссылку в приложении; сама ссылка остаётся текстом,
+    # чтобы её можно было скопировать, если приложение ещё не стоит.
     await context.bot.send_message(chat_id=chat_id, text=link,
-        reply_markup=exit_kb(to_client=True))
+                                   reply_markup=xray.link_keyboard(
+                                       link, ("🏠 Личный кабинет", "client_menu")))
     await context.bot.send_message(
         chat_id=chat_id,
         text="⚠️ Ссылка личная — не передавайте её никому.",

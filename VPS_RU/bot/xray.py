@@ -322,6 +322,21 @@ async def server_host() -> str:
     return ""
 
 
+def link_keyboard(link, back=None):
+    """Кнопка, открывающая ссылку в приложении, и выход рядом.
+
+    Схему `vless://` Telegram в кнопке принимает — проверено его же API.
+    Откроется ли приложение, зависит от того, зарегистрировало ли оно схему
+    в системе; поэтому сама ссылка остаётся текстом и её можно скопировать,
+    даже если нажатие ни к чему не приведёт.
+    """
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    rows = [[InlineKeyboardButton("📲 Добавить в приложение", url=link)]]
+    if back:
+        rows.append([InlineKeyboardButton(back[0], callback_data=back[1])])
+    return InlineKeyboardMarkup(rows)
+
+
 async def profile_link(user_uuid) -> str:
     """Сама строка подключения — то, что человек вставляет в приложение."""
     rec = await db.get_xray_user(user_uuid)
