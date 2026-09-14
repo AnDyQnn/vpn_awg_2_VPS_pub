@@ -477,7 +477,7 @@ async def client_key_manage_handler(update: Update, context: ContextTypes.DEFAUL
                       "не заработает — без обрыва._"]
 
     keyboard = [
-        [InlineKeyboardButton("📥 Скачать ссылку" if on_xray else "📥 Скачать конфиг",
+        [InlineKeyboardButton("📥 Получить ссылку" if on_xray else "📥 Скачать конфиг",
                               callback_data=f"client_download_{uuid_val}"),
          InlineKeyboardButton("⚡️ Проверить связь", callback_data=f"check_conn_{uuid_val}")],
         [InlineKeyboardButton("🔄 Перевыпустить", callback_data=f"client_regen_{uuid_val}")],
@@ -493,7 +493,7 @@ async def client_key_manage_handler(update: Update, context: ContextTypes.DEFAUL
 
 async def client_regen_all_confirm_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    keyboard = [[InlineKeyboardButton("✅ ДА, перевыпустить все", callback_data="do_client_regen_all")],[InlineKeyboardButton("🔙 Отмена", callback_data="client_my_keys")]
+    keyboard = [[InlineKeyboardButton("✅ Да, перевыпустить все", callback_data="do_client_regen_all")],[InlineKeyboardButton("🔙 Отмена", callback_data="client_my_keys")]
     ]
     await query.edit_message_text(
         "⚠️ **Массовый перевыпуск ключей**\n\nДля каждого устройства будет выдан новый конфиг. Старые продолжат работать и снимутся сами, когда заработают новые.\n\nВы уверены?", 
@@ -729,7 +729,7 @@ async def client_stats_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
 async def client_regen_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE, uuid_val: str):
     query = update.callback_query
-    keyboard = [[InlineKeyboardButton("✅ ДА, перевыпустить", callback_data=f"do_client_regen_{uuid_val}")],[InlineKeyboardButton("🔙 Отмена", callback_data=f"client_key_manage_{uuid_val}")]
+    keyboard = [[InlineKeyboardButton("✅ Да, перевыпустить", callback_data=f"do_client_regen_{uuid_val}")],[InlineKeyboardButton("🔙 Отмена", callback_data=f"client_key_manage_{uuid_val}")]
     ]
     if await db.get_xray_user(uuid_val):
         text = ("⚠️ **Смена доступа**\n\nВам выдадут новую ссылку, а прежняя "
@@ -874,7 +874,7 @@ async def support_run_audit_handler(update: Update, context: ContextTypes.DEFAUL
             "3️⃣ Зайдите в 'Мои ключи' и нажмите **🔄 Перевыпустить**, чтобы обновить конфигурацию."
         )
 
-    keyboard = [[InlineKeyboardButton("✅ Проблема решена (В меню)", callback_data="client_menu")],[InlineKeyboardButton("❌ Не помогло, написать Админу", callback_data=f"support_ask_{uuid_val}")]]
+    keyboard = [[InlineKeyboardButton("✅ Проблема решена", callback_data="client_menu")],[InlineKeyboardButton("❌ Не помогло, написать владельцу", callback_data=f"support_ask_{uuid_val}")]]
     
     await msg.edit_text(status_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
 

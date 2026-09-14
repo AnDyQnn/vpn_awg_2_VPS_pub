@@ -598,7 +598,7 @@ async def pick_peer_screen(update: Update, context: ContextTypes.DEFAULT_TYPE, p
         kb.append(nav)
     kb.append([InlineKeyboardButton("🔙 Графики", callback_data="vpn_graph")])
 
-    await show_screen(query, context, "👤 **Чей график построить?**",
+    await show_screen(query, context, "👤 **График по человеку**",
                                   reply_markup=InlineKeyboardMarkup(kb),
                                   parse_mode=ParseMode.MARKDOWN)
 

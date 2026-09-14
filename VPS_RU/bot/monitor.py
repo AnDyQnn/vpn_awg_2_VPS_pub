@@ -479,7 +479,7 @@ async def self_healing_loop(app):
             fail_count = 0
             await db.log_event("Self-Healing", "Interface hang detected. Triggering hard restart of wg0 container.")
             if ADMIN_ID:
-                try: await notify_admin(app, text="⚙️ **Self-Healing:** Зависание VPN. Жесткий перезапуск.")
+                try: await notify_admin(app, text="⚙️ **Самовосстановление:** туннель завис, перезапускаю.")
                 except Exception: pass
             
             os.makedirs("/volumes/flags", exist_ok=True)
@@ -556,9 +556,9 @@ async def de_self_healing_loop(app):
                 if route_fallback:
                     await db.log_event("Self-Healing", "DE down — traffic switched to DIRECT via RU (fallback).")
             if ADMIN_ID:
-                msg = ("⚙️ **Self-Healing DE:** туннель лежал — отправил команду пересоздать wg0."
+                msg = ("⚙️ **Самовосстановление · Германия:** туннель лежал, отправил команду пересобрать его."
                        if reloaded else
-                       "⚠️ **Self-Healing DE:** туннель недоступен, и агент не отвечает — нужен ручной взгляд.")
+                       "⚠️ **Самовосстановление · Германия:** туннель недоступен, и агент не отвечает — нужен ручной взгляд.")
                 if route_fallback:
                     msg += ("\n🔻 Мир/РКН-трафик временно идёт **напрямую через RU** — обычные сайты работают, "
                             "РКН-заблокированные недоступны, пока DE не вернётся (вернётся автоматически).")
@@ -1059,7 +1059,7 @@ async def auto_update_check_loop(app):
                         pass
                     # оповещаем пользователей и запускаем RU (deploy.sh сам сделает бэкап+откат)
                     try:
-                        await broadcast_message(app, "⚠️ **Техработы**\n\nАвтообновление серверов. Связь может прерваться на 1–2 минуты.", db)
+                        await broadcast_message(app, "⚠️ **Технические работы**\n\nАвтообновление серверов. Связь может прерваться на 1–2 минуты.", db)
                     except Exception:
                         pass
                     if ADMIN_ID:

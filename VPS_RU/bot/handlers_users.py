@@ -153,7 +153,7 @@ async def render_user_detail(context, chat_id, message_id, uuid):
     
     ips_text = ""
     if trusted_list or pending_list:
-        ips_text += "\n🌐 **Сети IP (Anti-Sharing):**\n"
+        ips_text += "\n🌐 **Сети, с которых подключались:**\n"
         for ip in trusted_list[:4]: ips_text += f"  ✅ `{ip}` (Доверенная)\n"
         for ip in pending_list[:4]: ips_text += f"  ⏳ `{ip}` (Проверка)\n"
         if len(trusted_list) + len(pending_list) > 8: ips_text += "  ...\n"
@@ -278,7 +278,7 @@ async def confirm_delete_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
     user = await db.get_user_by_uuid(uuid)
     if not user: return
     text = f"⚠️ **Вы уверены, что хотите удалить {escape_md(user['name'])}?**\n\nКлюч перестанет работать, файлы будут удалены навсегда."
-    keyboard = [[InlineKeyboardButton("✅ ДА, Удалить", callback_data=f"do_delete_{uuid}")],[InlineKeyboardButton("🔙 Нет, Отмена", callback_data=f"user_detail_{uuid}")]]
+    keyboard = [[InlineKeyboardButton("✅ ДА, Удалить", callback_data=f"do_delete_{uuid}")],[InlineKeyboardButton("🔙 Нет, отмена", callback_data=f"user_detail_{uuid}")]]
     await update.callback_query.edit_message_text(text=text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
 
 async def action_delete_user(update: Update, context: ContextTypes.DEFAULT_TYPE, uuid):
@@ -323,7 +323,7 @@ async def action_resend_config(update: Update, context: ContextTypes.DEFAULT_TYP
             await context.bot.send_document(chat_id=chat_id, document=open(cf, "rb"), caption=f"📄 Ваш конфиг: {name}")
             if qf.exists(): await context.bot.send_photo(chat_id=chat_id, photo=open(qf, "rb"))
         elif cf_old.exists():
-            await context.bot.send_document(chat_id=chat_id, document=open(cf_old, "rb"), caption=f"📄 Ваш конфиг: {name} (Legacy)")
+            await context.bot.send_document(chat_id=chat_id, document=open(cf_old, "rb"), caption=f"📄 Ваш конфиг: {name} (старый формат)")
             if qf_old.exists(): await context.bot.send_photo(chat_id=chat_id, photo=open(qf_old, "rb"))
         else:
             await update.callback_query.answer("❌ Файлы конфигурации не найдены на диске!", show_alert=True)

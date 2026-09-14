@@ -148,24 +148,23 @@ async def grant_add_screen(update: Update, context: ContextTypes.DEFAULT_TYPE, r
     # требует помнить, что такое .5.
     for row in names[:8]:
         kb.append([InlineKeyboardButton(
-            f"\U0001f3f7 {row['name']}",
+            f"🏷 {row['name']}",
             callback_data=f"role_gname_{role_id}_{row['name']}")])
     for u in users:
         ip = ips.get(u["uuid"])
         if not ip:
             continue
-        kb.append([InlineKeyboardButton(f"{u['name']} \u00b7 {ip}",
+        kb.append([InlineKeyboardButton(f"{u['name']} · {ip}",
                                         callback_data=f"role_gpeer_{role_id}_{u['uuid']}")])
-    kb.append([InlineKeyboardButton("\u270d\ufe0f Ввести имя или адрес",
+    kb.append([InlineKeyboardButton("✍️ Ввести имя или адрес",
                                     callback_data=f"role_gman_{role_id}")])
     kb.append(_back(role_id))
 
-    head = "\u2795 **Что открыть**" + chr(10) * 2 + "Выбери, к чему роль даёт доступ."
+    head = "🛡 **Доступы роли**\n\nВыберите, к чему роль даёт доступ."
     if names:
-        head += (chr(10) * 2 + "\U0001f3f7 Имена сверху — их лучше и выбирать: "
-                 "имя разрешается в адрес каждый раз заново и переживает "
-                 "перевыпуск ключа.")
-    head += chr(10) * 2 + "Нужен только один порт или целая подсеть — введи вручную."
+        head += ("\n\n🏷 Имена сверху — их лучше и выбирать: имя разрешается "
+                 "в адрес каждый раз заново и переживает перевыпуск ключа.")
+    head += "\n\nНужен только один порт или целая подсеть — введите вручную."
 
     await show_screen(query, context, head,
                       reply_markup=InlineKeyboardMarkup(kb),
@@ -189,7 +188,7 @@ async def grant_manual(update: Update, context: ContextTypes.DEFAULT_TYPE, role_
     context.user_data["state"] = "awaiting_role_grant"
     context.user_data["role_id"] = role_id
     await show_screen(update.callback_query, context, 
-        "✍️ **Что открыть**\n\nПришли имя или адрес внутри туннеля. Примеры:\n"
+        "🛡 **Новый доступ**\n\nПришли имя или адрес внутри туннеля. Примеры:\n"
         "`дом.vpn` — всё, что на этой машине\n"
         "`дом.vpn tcp 8096` — только один порт\n"
         "`10.13.13.7` — то же самое, но адресом\n"

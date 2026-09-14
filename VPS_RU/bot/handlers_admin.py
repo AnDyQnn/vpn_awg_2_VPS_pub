@@ -34,7 +34,7 @@ async def backup_password_gate(context, chat_id, message_id=None) -> bool:
 
     text = (
         "🔐 **Задайте пароль для резервных копий**\n\n"
-        "Архив бэкапа содержит приватный ключ сервера и конфигурации всех "
+        "Архив содержит приватный ключ сервера и конфигурации всех "
         "пользователей. Без пароля он лежит открытым.\n\n"
         "Пришлите пароль сообщением — он будет записан в `.env` на сервере "
         "и больше нигде не сохранится.\n\n"
@@ -111,7 +111,7 @@ async def main_menu_view(context=None, chat_id=None):
         mode = "observe"
     mode_word = "только наблюдение" if mode != "enforce" else "ограничение включено"
 
-    lines = ["🛡 **VPN Dashboard** · мастер-сервер и клиент-сервер", ""]
+    lines = ["🛡 **Панель управления** · мастер-сервер и клиент-сервер", ""]
     # Разбивка по протоколам: пока люди переезжают, «на связи 11 из 32» само по
     # себе ничего не говорит — важно, сколько из них уже на новом протоколе.
     split = ""
@@ -191,7 +191,7 @@ async def update_persistent_backup(context: ContextTypes.DEFAULT_TYPE, force_new
             return False, "Файл архива не создан."
 
         saved_msg_id = await db.get_setting("backup_message_id")
-        caption = f"💾 **Актуальный бэкап системы (RU Master)**\n📅 Дата (МСК): {get_moscow_now().strftime('%d.%m.%Y %H:%M:%S')}\nℹ️ Сообщение обновляется автоматически."
+        caption = f"💾 **Архив системы · мастер**\n📅 Дата (МСК): {get_moscow_now().strftime('%d.%m.%Y %H:%M:%S')}\nℹ️ Сообщение обновляется автоматически."
 
         if force_new:
             with open(archive_path, "rb") as f:
@@ -229,7 +229,7 @@ async def dashboard_loop(context, chat_id, message_id):
     while state_data["dashboard_running"]:
         try:
             text = await get_dashboard()
-            keyboard = [[InlineKeyboardButton("🔙 Главное меню (Стоп)", callback_data="back_to_main")]]
+            keyboard = [[InlineKeyboardButton("🔙 Главное меню · остановить", callback_data="back_to_main")]]
             await context.bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=text, reply_markup=InlineKeyboardMarkup(keyboard))
         except Exception as e:
             if "not found" in str(e):
@@ -253,8 +253,8 @@ async def start_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def confirm_reboot(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await stop_bg_tasks()
     deregister_menu(update.effective_chat.id)
-    keyboard = [[InlineKeyboardButton("🚨 ДА, Перезагрузить", callback_data="do_reboot_server")],[InlineKeyboardButton("🔙 Нет, Отмена", callback_data="back_to_main")]]
-    await update.callback_query.edit_message_text("⚠️ **Внимание!**\nВы собираетесь перезагрузить **ФИЗИЧЕСКИЙ СЕРВЕР В РФ (RU Master)**.\nВы уверены?", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
+    keyboard = [[InlineKeyboardButton("🚨 Да, перезагрузить", callback_data="do_reboot_server")],[InlineKeyboardButton("🔙 Нет, отмена", callback_data="back_to_main")]]
+    await update.callback_query.edit_message_text("⚠️ **Внимание!**\nВы собираетесь перезагрузить **физический сервер в России**.\nВы уверены?", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
 
 async def do_reboot_server(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await broadcast_message(context.application, "⚠️ **Внимание!**\n\nСервер уходит на перезагрузку. VPN будет недоступен 2-3 минуты.", db)
@@ -273,7 +273,7 @@ async def do_reboot_server(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def de_confirm_reboot(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await stop_bg_tasks()
     deregister_menu(update.effective_chat.id)
-    keyboard = [[InlineKeyboardButton("🚨 ДА, Перезагрузить", callback_data="do_de_reboot_server")],[InlineKeyboardButton("🔙 Нет, Отмена", callback_data="back_to_main")]]
+    keyboard = [[InlineKeyboardButton("🚨 Да, перезагрузить", callback_data="do_de_reboot_server")],[InlineKeyboardButton("🔙 Нет, отмена", callback_data="back_to_main")]]
     await update.callback_query.edit_message_text("⚠️ **Внимание!**\nВы собираетесь удаленно перезагрузить **ФИЗИЧЕСКИЙ СЕРВЕР В ГЕРМАНИИ (DE Agent)**.\nВы уверены?", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
 
 async def do_de_reboot_server(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -377,7 +377,7 @@ async def de_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def de_backup(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await stop_bg_tasks()
     deregister_menu(update.effective_chat.id)
-    await update.callback_query.edit_message_text("⏳ Запрашиваю бэкап у агента в Германии...")
+    await update.callback_query.edit_message_text("⏳ Запрашиваю архив у агента в Германии…")
     try:
         async with api_session() as session:
             async with session.get(f"{DE_AGENT_URL}/backup", timeout=15) as resp:
@@ -390,7 +390,7 @@ async def de_backup(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await context.bot.send_document(
                         chat_id=update.effective_chat.id,
                         document=open(backup_path, "rb"),
-                        caption="💾 **Бэкап конфигурации сервера DE (Агент)**",
+                        caption="💾 **Архив настроек немецкого узла**",
                         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Главное меню", callback_data="back_to_main")]]),
                         parse_mode=ParseMode.MARKDOWN
                     )
@@ -496,9 +496,9 @@ async def graph_loop(context, chat_id, message_id):
         if not state_data["graph_running"]: break
         try:
             path = await generate_vpn_graph()
-            keyboard = [[InlineKeyboardButton("🔙 Назад (Остановить)", callback_data="back_to_main")]]
+            keyboard = [[InlineKeyboardButton("🔙 Назад · остановить", callback_data="back_to_main")]]
             with open(path, "rb") as f:
-                media = InputMediaPhoto(media=f, caption=f"📡 **Live-мониторинг трафика**\n⏳ Обновлено: `{get_moscow_now().strftime('%H:%M:%S')} МСК`", parse_mode=ParseMode.MARKDOWN)
+                media = InputMediaPhoto(media=f, caption=f"📡 **Трафик в реальном времени**\n⏳ Обновлено: `{get_moscow_now().strftime('%H:%M:%S')} МСК`", parse_mode=ParseMode.MARKDOWN)
                 await context.bot.edit_message_media(chat_id=chat_id, message_id=message_id, media=media, reply_markup=InlineKeyboardMarkup(keyboard))
         except BadRequest as e:
             if "not modified" not in str(e): pass
@@ -513,8 +513,8 @@ async def send_vpn_graph(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         path = await generate_vpn_graph()
-        keyboard = [[InlineKeyboardButton("🔙 Назад (Остановить)", callback_data="back_to_main")]]
-        msg = await context.bot.send_photo(chat_id=query.message.chat_id, photo=open(path, "rb"), caption=f"📡 **Live-мониторинг трафика**\n⏳ Обновлено: `{get_moscow_now().strftime('%H:%M:%S')} МСК`", parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(keyboard))
+        keyboard = [[InlineKeyboardButton("🔙 Назад · остановить", callback_data="back_to_main")]]
+        msg = await context.bot.send_photo(chat_id=query.message.chat_id, photo=open(path, "rb"), caption=f"📡 **Трафик в реальном времени**\n⏳ Обновлено: `{get_moscow_now().strftime('%H:%M:%S')} МСК`", parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(keyboard))
         
         state_data["graph_running"] = True
         state_data["graph_task"] = asyncio.create_task(graph_loop(context, query.message.chat_id, msg.message_id))
@@ -575,7 +575,7 @@ async def check_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if query.data == "toggle_auto_update":
         local_hash, local_version, remote_hash, remote_version = context.user_data.get("update_info", ("unknown", "unknown", "unknown", "unknown"))
     else:
-        await query.edit_message_text("⏳ Проверка обновлений RU Master (сверка хэшей)...")
+        await query.edit_message_text("⏳ Проверяю обновления мастера…")
         local_hash, local_version, remote_hash, remote_version = await asyncio.to_thread(get_update_info)
         context.user_data["update_info"] = (local_hash, local_version, remote_hash, remote_version)
         
@@ -651,15 +651,15 @@ async def do_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await broadcast_message(context.application, "⚠️ **Технические работы**\n\nСервер уходит на обновление. Связь может прерваться на 1-2 минуты.", db)
     await db.log_event("System", "Admin triggered system update via Git.")
     
-    status_msg = await update.callback_query.message.reply_text("⚙️ Шаг 1/3: Бэкап...")
+    status_msg = await update.callback_query.message.reply_text("⚙️ Шаг 1/3: архив…")
     try:
         res = await update_persistent_backup(context)
         if isinstance(res, tuple) and not res[0]:
-            await status_msg.edit_text(f"⚠️ Ошибка бэкапа: {res[1]}\nПродолжаю обновление...")
+            await status_msg.edit_text(f"⚠️ Не удалось собрать архив: {res[1]}\nПродолжаю обновление...")
         else:
-            await status_msg.edit_text("⚙️ Шаг 2/3: Бэкап OK.\n⚙️ Шаг 3/3: Сигнал обновления...")
+            await status_msg.edit_text("⚙️ Шаг 2/3: архив готов.\n⚙️ Шаг 3/3: Сигнал обновления...")
     except Exception as e:
-        await status_msg.edit_text(f"⚠️ Ошибка бэкапа: {e}\nПродолжаю обновление...")
+        await status_msg.edit_text(f"⚠️ Не удалось собрать архив: {e}\nПродолжаю обновление...")
 
     await status_msg.edit_text("🚀 **Обновление запущено.**\nКонтейнеры перезапускаются. Бот вернется через минуту.")
 
@@ -789,14 +789,14 @@ async def support_close_ticket(update: Update, context: ContextTypes.DEFAULT_TYP
 # --- BACKUPS AND SYSTEM EXPORTS ---
 async def backup_now(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.callback_query.answer()
-    msg = await context.bot.send_message(chat_id=ADMIN_ID, text="⏳ **Создание бэкапа RU Master...**\nСохраняю базу данных и ключи, пожалуйста, подождите.", parse_mode=ParseMode.MARKDOWN)
+    msg = await context.bot.send_message(chat_id=ADMIN_ID, text="⏳ **Создаю архив мастера…**\nСохраняю базу данных и ключи, пожалуйста, подождите.", parse_mode=ParseMode.MARKDOWN)
     success, err = await update_persistent_backup(context, force_new=True)
     if success:
-        await context.bot.edit_message_text(chat_id=ADMIN_ID, message_id=msg.message_id, text="✅ **Новый бэкап успешно создан и закреплен в шапке чата!**", parse_mode=ParseMode.MARKDOWN)
+        await context.bot.edit_message_text(chat_id=ADMIN_ID, message_id=msg.message_id, text="✅ **Новый архив создан и закреплён в шапке чата.**", parse_mode=ParseMode.MARKDOWN)
         await asyncio.sleep(4)
         await safe_delete(context, ADMIN_ID, msg.message_id)
     else:
-        await context.bot.edit_message_text(chat_id=ADMIN_ID, message_id=msg.message_id, text=f"❌ **Ошибка создания бэкапа:**\n`{err}`", parse_mode=ParseMode.MARKDOWN)
+        await context.bot.edit_message_text(chat_id=ADMIN_ID, message_id=msg.message_id, text=f"❌ **Не удалось создать архив:**\n`{err}`", parse_mode=ParseMode.MARKDOWN)
 
 async def download_logs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.callback_query.answer("Генерация логов...", show_alert=True)
@@ -896,7 +896,7 @@ async def run_audit_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             break
 
         dots = dots_arr[i % 3]
-        text = "🛠 **Глобальный аудит Сервера (RU Master)**\n\nВыполняется глубокая проверка системы:\n\n"
+        text = "🛠 **Проверка мастера**\n\nВыполняется глубокая проверка системы:\n\n"
         
         stage_keys = list(stages.keys())
         try:
