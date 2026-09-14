@@ -18,6 +18,7 @@ from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
 from database import db
+from insights import event_verdict, packet_size_note
 from utils import escape_md, dt_to_moscow, state_data, safe_delete, show_screen
 
 DEFAULT_PPS_LIMIT = 5000
@@ -281,12 +282,14 @@ async def load_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 continue
             seen.add(e["user_uuid"])
             when = dt_to_moscow(e["ended_at"] or e["started_at"])
-            size = e["avg_packet_size"] or 0
-            hint = " (мелкие пакеты — похоже на торрент)" if 0 < size < 500 else ""
+            verdict, worrying = event_verdict(dict(e))
+            mark = "⚠️" if worrying else "•"
             lines.append(
-                f"**{escape_md(e['name'] or 'без имени')}** — до `{e['peak_pps']}` "
-                f"пакетов в секунду\n"
-                f"     {when.strftime('%d.%m %H:%M')}, средний пакет {size} байт{hint}")
+                f"{mark} **{escape_md(e['name'] or 'без имени')}** — до "
+                f"`{e['peak_pps']}` пакетов в секунду")
+            lines.append(f"     {verdict}")
+            lines.append(f"     {when.strftime('%d.%m %H:%M')}, пакет "
+                         f"{packet_size_note(e['avg_packet_size'] or 0)}")
             if len(seen) >= 8:
                 break
         lines.append("")

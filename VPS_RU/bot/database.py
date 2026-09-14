@@ -215,9 +215,15 @@ class Database:
                     ended_at TIMESTAMP,
                     peak_pps INTEGER,
                     avg_packet_size INTEGER,
+                    -- Доля отдачи от всего объёма всплеска: раздачу от загрузки
+                    -- отличает именно она, а не количество пакетов.
+                    upload_share REAL,
                     throttled BOOLEAN DEFAULT FALSE
                 );
             """)
+            # Таблица могла быть создана до появления доли отдачи.
+            await self.execute(
+                "ALTER TABLE pps_events ADD COLUMN IF NOT EXISTS upload_share REAL;")
             await self.execute(
                 "CREATE INDEX IF NOT EXISTS idx_pps_events_user_time ON pps_events(user_uuid, started_at);")
 
@@ -799,16 +805,23 @@ class Database:
         return await self.execute(
             "DELETE FROM peer_limits WHERE expires_at IS NOT NULL AND expires_at < NOW()")
 
-    async def record_pps_event(self, uuid, peak_pps, avg_packet_size, throttled=False):
+    async def record_pps_event(self, uuid, peak_pps, avg_packet_size,
+                               throttled=False, started_at=None, upload_share=None):
+        """Записывает всплеск. `started_at` обязателен по смыслу: без него
+        начало подставлялось моментом записи, длительность всегда выходила
+        нулевой, и всплеск на пятнадцать секунд был неотличим от торрента,
+        работавшего два часа."""
         await self.execute(
-            """INSERT INTO pps_events (user_uuid, ended_at, peak_pps, avg_packet_size, throttled)
-               VALUES ($1, NOW(), $2, $3, $4)""",
-            uuid, int(peak_pps), int(avg_packet_size or 0), throttled)
+            """INSERT INTO pps_events (user_uuid, started_at, ended_at, peak_pps,
+                                       avg_packet_size, upload_share, throttled)
+               VALUES ($1, COALESCE($2, NOW()), NOW(), $3, $4, $5, $6)""",
+            uuid, started_at, int(peak_pps), int(avg_packet_size or 0),
+            float(upload_share) if upload_share is not None else None, throttled)
 
     async def get_pps_events(self, hours=24):
         return await self.fetch_all(
             """SELECT e.user_uuid, u.name, e.started_at, e.ended_at, e.peak_pps,
-                      e.avg_packet_size, e.throttled
+                      e.avg_packet_size, e.upload_share, e.throttled
                FROM pps_events e LEFT JOIN users u ON u.uuid = e.user_uuid
                WHERE e.started_at > NOW() - ($1 || ' hours')::interval
                ORDER BY e.peak_pps DESC""", str(hours))

@@ -964,17 +964,24 @@ async def load_collector_loop(app):
                             continue
                         limit = await _effective_limit(uuid_val, common, personal)
                         if limit and pps > limit:
-                            rec = hot.setdefault(uuid_val, {"peak": 0, "size": 0, "misses": 0})
+                            rec = hot.setdefault(uuid_val, {
+                                "peak": 0, "size": 0, "misses": 0,
+                                "started": datetime.utcnow(), "up": 0, "down": 0})
                             rec["peak"] = max(rec["peak"], pps)
                             rec["size"] = avg_size or rec["size"]
+                            rec["up"] += d_byt_in
+                            rec["down"] += d_byt_out
                             rec["misses"] = 0
                         elif uuid_val in hot:
                             hot[uuid_val]["misses"] += 1
                             if hot[uuid_val]["misses"] >= EVENT_CLOSE_MISSES:
                                 rec = hot.pop(uuid_val)
+                                total = rec["up"] + rec["down"]
                                 await db.record_pps_event(
                                     uuid_val, rec["peak"], rec["size"],
-                                    throttled=(mode == "enforce"))
+                                    throttled=(mode == "enforce"),
+                                    started_at=rec.get("started"),
+                                    upload_share=(rec["up"] / total) if total else None)
 
                 prev_snapshot, prev_ts = snapshot, ts
 

@@ -129,12 +129,21 @@ async def render_user_detail(context, chat_id, message_id, uuid):
     except Exception:
         pass
 
+    # Не просто «сколько раз», а что это было: последний случай словами.
+    # Иначе разовая загрузка с телефона и торрент выглядят одинаково.
+    exceeded, last_verdict, last_worrying = 0, "", False
     try:
-        exceeded = await db.fetch_val(
-            "SELECT COUNT(*) FROM pps_events WHERE user_uuid=$1 "
-            "AND started_at > NOW() - INTERVAL '24 HOURS'", uuid) or 0
+        rows = await db.fetch_all(
+            "SELECT started_at, ended_at, peak_pps, avg_packet_size, upload_share "
+            "FROM pps_events WHERE user_uuid=$1 "
+            "AND started_at > NOW() - INTERVAL '24 HOURS' "
+            "ORDER BY started_at DESC", uuid)
+        exceeded = len(rows)
+        if rows:
+            from insights import event_verdict
+            last_verdict, last_worrying = event_verdict(dict(rows[0]))
     except Exception:
-        exceeded = 0
+        pass
 
     if not user.get('is_active', True): status_str = "🔴 Отключен"
     elif is_online: status_str = "🟢 Онлайн"
@@ -213,7 +222,9 @@ async def render_user_detail(context, chat_id, message_id, uuid):
         f"🌐 Адрес в туннеле: `{peer_ip or 'не выдан'}`\n"
         f"🤝 Последнее соединение: {_ago(hs_ago)}\n"
         f"🚦 Лимит: {limit_line}"
-        + (f" · за сутки превышений: {exceeded}\n" if exceeded else "\n")
+        + (f" · за сутки на пределе: {exceeded}\n"
+           f"{'⚠️' if last_worrying else '💬'} {last_verdict}\n"
+           if exceeded else "\n")
         + f"⏳ Годен до: {exp_str} (МСК)\n"
         f"📱 TG ID: {tg_status}\n"
         f"📅 Создан: {created_str}\n"

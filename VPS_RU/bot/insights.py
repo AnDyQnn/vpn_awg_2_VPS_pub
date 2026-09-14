@@ -135,3 +135,59 @@ async def chart_candidates(online_uuids=None):
     # Сортируем по числу причин, потом по пику: сначала те, у кого совпало больше.
     result.sort(key=lambda r: (len(r["reasons"]), r["peak_pps"]), reverse=True)
     return result
+
+
+# --- ЧТО ЭТО БЫЛО ---------------------------------------------------------
+# Порог «мелкого» пакета намеренно ниже половины MTU: ядро склеивает подряд
+# идущие сегменты одного потока в один (так средний «пакет» у обычной загрузки
+# бывает и 3 КБ, и 29 КБ при MTU 1280). Склеить мелочь из разных соединений
+# оно не может, поэтому мелкий средний размер остаётся честным признаком
+# торрента, а крупный сам по себе ни о чём не говорит.
+TORRENT_PACKET = 500
+SEEDING_SHARE = 0.6          # отдачи больше, чем приёма — это раздача
+SHORT_BURST = 60             # секунд: короче — разовая загрузка, не нагрузка
+
+
+def event_verdict(event):
+    """Человеческое объяснение всплеска: (вердикт, тревожно ли).
+
+    Возвращает не «превышение», а то, чем оно было: разовой загрузкой, раздачей
+    или похожим на торрент. Тревожным считается только то, что и правда мешает
+    остальным, — длительное и с признаками раздачи."""
+    size = event.get("avg_packet_size") or 0
+    share = event.get("upload_share")
+    started, ended = event.get("started_at"), event.get("ended_at")
+    seconds = 0
+    if started and ended:
+        seconds = max(0, int((ended - started).total_seconds()))
+
+    if 0 < size < TORRENT_PACKET:
+        return ("мелкие пакеты из множества соединений — похоже на торрент",
+                True)
+    if share is not None and share >= SEEDING_SHARE:
+        return ("отдаёт больше, чем принимает — похоже на раздачу", True)
+    if seconds <= SHORT_BURST:
+        return ("разовая загрузка на полной скорости — обычное дело", False)
+    return (f"долгая загрузка, {_duration(seconds)} подряд", True)
+
+
+def _duration(seconds):
+    if seconds < 60:
+        return f"{seconds} сек"
+    if seconds < 3600:
+        return f"{seconds // 60} мин"
+    return f"{seconds // 3600} ч {(seconds % 3600) // 60} мин"
+
+
+def packet_size_note(size):
+    """Пояснение к среднему размеру пакета.
+
+    Без него цифра вводит в заблуждение: при MTU 1280 «средний пакет 3 КБ»
+    выглядит как ошибка, хотя это склейка сегментов ядром."""
+    if not size:
+        return ""
+    if size >= 1400:
+        return f"{size} Б (ядро склеивает сегменты — поток крупный, ровный)"
+    if size < TORRENT_PACKET:
+        return f"{size} Б — мелкие"
+    return f"{size} Б"
