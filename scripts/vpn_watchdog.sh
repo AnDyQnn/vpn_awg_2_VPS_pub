@@ -42,8 +42,10 @@ mkdir -p "$FLAGS_DIR"
 
 if [ -f "$NODE_DIR/docker-compose.yml" ] && grep -q "ru_wireguard" "$NODE_DIR/docker-compose.yml" 2>/dev/null; then
     CONTAINER="vpn_wireguard"; SERVICE="ru_wireguard"; PEER_IP="10.13.13.254"
+    IS_MASTER=1
 else
     CONTAINER="de_vpn_agent";  SERVICE="de_wireguard"; PEER_IP="10.13.13.1"
+    IS_MASTER=0
 fi
 
 log() { echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >> "$LOGF"; }
@@ -77,7 +79,12 @@ check_handshake() {
     [ "$age" -lt "$HANDSHAKE_MAX_AGE" ]
 }
 
+# Дальше проверки расходятся: узлы делают разную работу, и мерить их одной
+# меркой нельзя. Мастер заворачивает мир-трафик в Германию — у него метка,
+# таблица 200 и списки сетей. Немецкий узел сам и есть выход: ничего этого у
+# него нет и быть не должно, там своя пара признаков жизни.
 check_routing() {
+    [ "$IS_MASTER" = "1" ] || return 0
     docker exec "$CONTAINER" sh -c '
         ip rule show 2>/dev/null | grep -q "fwmark 0xc8\|fwmark 200" || exit 1
         ip route show table 200 2>/dev/null | grep -q "dev wg0" || exit 1
@@ -85,9 +92,21 @@ check_routing() {
 }
 
 check_ipsets() {
+    [ "$IS_MASTER" = "1" ] || return 0
     local n
     n=$(docker exec "$CONTAINER" sh -c 'ipset list ru_nets 2>/dev/null | grep -c "^[0-9]"' 2>/dev/null)
     [ "${n:-0}" -gt 100 ]
+}
+
+# Немецкий узел: адрес в туннеле на месте и есть подмена адреса на выходе.
+# Если пропало одно из двух, люди остаются без интернета, хотя туннель на вид
+# живой, — это и стоит ловить вместо чужих проверок.
+check_exit() {
+    [ "$IS_MASTER" = "0" ] || return 0
+    docker exec "$CONTAINER" sh -c '
+        ip -4 addr show wg0 2>/dev/null | grep -q "inet " || exit 1
+        iptables -t nat -S POSTROUTING 2>/dev/null | grep -q "MASQUERADE" || exit 1
+        exit 0' >/dev/null 2>&1
 }
 
 # --- лечение -------------------------------------------------------------
@@ -146,6 +165,7 @@ while true; do
     elif ! check_handshake; then problem="нет свежего рукопожатия с соседним узлом"
     elif ! check_routing; then problem="потеряны правила маршрутизации"
     elif ! check_ipsets;  then problem="списки маршрутизации пусты"
+    elif ! check_exit;    then problem="узел не выпускает трафик наружу"
     fi
 
     if [ -z "$problem" ]; then
