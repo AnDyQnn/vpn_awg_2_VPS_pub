@@ -217,12 +217,21 @@ async def awg_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     st = await xray.status()
     awg = st.get("awg", {})
 
+    obf = awg.get("obfuscation") or {}
+    # Обфускация — это и есть то, чем AmneziaWG отличается от обычного
+    # WireGuard, поэтому показываем её параметры, а не факт «включена».
+    obf_line = " · ".join(f"{k}={v}" for k, v in obf.items()) if obf else "не задана"
+    online = awg.get("online", -1)
+
     lines = ["🔷 **AmneziaWG**", "",
              "Туннель на уровне IP. Остаётся для шлюзов, роутеров и всех, кому "
              "нужен не только браузер.", "",
              f"Состояние: **{'включён' if awg.get('enabled') else 'выключен'}**",
-             f"Интерфейс: {'поднят' if awg.get('up') else 'опущен'}",
-             f"Пиров: {max(awg.get('peers', 0), 0)}"]
+             f"Интерфейс: {'поднят' if awg.get('up') else 'опущен'} · "
+             f"порт `{awg.get('port') or '—'}`",
+             f"Пиров: {max(awg.get('peers', 0), 0)}"
+             + (f" · на связи: {online}" if online >= 0 else ""),
+             f"Обфускация: `{escape_md(obf_line)}`"]
 
     kb = [[InlineKeyboardButton("🔑 Переезд на новый ключ", callback_data="mig_menu")]]
     if awg.get("enabled"):
@@ -370,14 +379,48 @@ async def move_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # --- ВЫДАЧА ССЫЛКИ --------------------------------------------------------
-async def instructions(uuid_val=None):
+# Короткие обозначения платформ для кнопок: в callback_data 64 байта, и
+# русские названия туда не влезут вместе с идентификатором человека.
+PLATFORM_KEYS = {
+    "ios": "iPhone / iPad",
+    "android": "Android",
+    "win": "Windows",
+    "mac": "macOS",
+    "linux": "Linux",
+}
+
+
+def platform_keyboard(uuid_val, back=None):
+    """Кнопки выбора системы. По две в ряд — так они остаются читаемыми
+    и на телефоне, и на десктопе."""
+    keys = list(PLATFORM_KEYS.items())
+    rows, pair = [], []
+    for key, title in keys:
+        pair.append(InlineKeyboardButton(title, callback_data=f"client_plat_{key}_{uuid_val}"))
+        if len(pair) == 2:
+            rows.append(pair)
+            pair = []
+    if pair:
+        rows.append(pair)
+    if back:
+        rows.append([InlineKeyboardButton("🔙 Назад", callback_data=back)])
+    return InlineKeyboardMarkup(rows)
+
+
+async def instructions(uuid_val=None, platform=None):
     """Три шага, которые человек делает один раз.
 
-    Список приложений появляется, только если владелец его утвердил: советовать
-    родственникам программы, которых никто не смотрел, нельзя."""
+    Без выбранной системы показываем все — это случай владельца, который
+    смотрит, что именно уходит людям. Человеку же приходит один набор: его."""
+    apps = await xray.apps_list()
     lines = ["🔑 **Ваш доступ к VPN**", ""]
-    lines.append("**1.** Поставьте приложение **Happ** — выберите свою систему:")
-    lines.append(xray.apps_markdown(await xray.apps_list()))
+    if platform and PLATFORM_KEYS.get(platform) in apps:
+        title = PLATFORM_KEYS[platform]
+        links = " · ".join(f"[{label}]({url})" for label, url in apps[title])
+        lines.append(f"**1.** Поставьте приложение **Happ** для {title}: {links}")
+    else:
+        lines.append("**1.** Поставьте приложение **Happ** — выберите свою систему:")
+        lines.append(xray.apps_markdown(apps))
     lines += [
         "**2.** Отсканируйте картинку ниже или нажмите на ссылку — "
         "профиль добавится сам",
@@ -419,9 +462,14 @@ async def handout(update, context, uuid_val, name, tg_id=None):
         from delivery import track_send
 
         async def _send():
-            await context.bot.send_message(chat_id=tg_id, text=text,
-                                           parse_mode=ParseMode.MARKDOWN,
-                                           disable_web_page_preview=True)
+            await context.bot.send_message(
+                chat_id=tg_id,
+                text=("🔑 **Вам выдан доступ к VPN**\n\n"
+                      "Ссылка ниже — ваша личная. По ней подключаются к "
+                      "вашему доступу, не передавайте её никому.\n\n"
+                      "Выберите свою систему — пришлю, что делать:"),
+                reply_markup=platform_keyboard(uuid_val),
+                parse_mode=ParseMode.MARKDOWN)
             if qr:
                 await context.bot.send_photo(chat_id=tg_id, photo=open(qr, "rb"))
             await context.bot.send_message(chat_id=tg_id, text=link)
