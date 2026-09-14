@@ -672,6 +672,12 @@ class Database:
         await self.set_setting("hourly_backfill_done", "1")
         return await self.fetch_val("SELECT COUNT(*) FROM traffic_hourly")
 
+    # Клиент-сервер — не человек: через него идёт мировой трафик всех
+    # остальных, поэтому в любой ОБЩЕЙ сумме он удваивает картину. Условие
+    # держим одной строкой, чтобы оно не разъехалось между запросами.
+    NOT_AGENT = ("user_uuid IN (SELECT uuid FROM users "
+                 "WHERE UPPER(TRIM(name)) <> 'DE_AGENT')")
+
     async def get_hourly(self, hours=24, uuid=None):
         """Часовые срезы для графиков. Без uuid — сумма по всем, с uuid — один человек."""
         if uuid:
@@ -681,7 +687,7 @@ class Database:
                    WHERE user_uuid=$1 AND hour > NOW() - ($2 || ' hours')::interval
                    ORDER BY hour""", uuid, str(hours))
         return await self.fetch_all(
-            """SELECT hour,
+            f"""SELECT hour,
                       SUM(bytes_in)   AS bytes_in,
                       SUM(bytes_out)  AS bytes_out,
                       SUM(packets_in) AS packets_in,
@@ -689,6 +695,7 @@ class Database:
                       MAX(peak_pps)   AS peak_pps
                FROM traffic_hourly
                WHERE hour > NOW() - ($1 || ' hours')::interval
+                 AND {self.NOT_AGENT}
                GROUP BY hour ORDER BY hour""", str(hours))
 
     async def get_user_profile(self, uuid, days=30):
