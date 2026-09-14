@@ -164,6 +164,8 @@ class Filters:
     def __init__(self):
         self.clients = {}          # ip -> [категории]
         self.domains = {}          # категория -> set(доменов)
+        self.common = []           # категории, включённые сразу всем
+        self.custom = set()        # свой список доменов владельца
         self.bot_link = ""         # куда идти с вопросом «почему закрыто»
         self._mtime = 0
         self._checked = 0
@@ -189,11 +191,16 @@ class Filters:
             print(f"DNS: не читается состояние фильтров: {e}", flush=True)
             return
         self.clients = {ip: list(cats) for ip, cats in (state.get("clients") or {}).items()}
+        # Общие категории и свой список — то же самое, но без разбора, кому
+        # именно: они действуют на всех, кто ходит через узел.
+        self.common = list(state.get("common") or [])
+        self.custom = {str(d).lower().strip(".") for d in (state.get("custom") or []) if d}
         self.bot_link = state.get("bot_link") or ""
         self._load_domains()
 
     def _load_domains(self):
         needed = {c for cats in self.clients.values() for c in cats}
+        needed |= set(self.common)
         for cat in list(self.domains):
             if cat not in needed:
                 del self.domains[cat]            # освобождаем память
@@ -211,11 +218,19 @@ class Filters:
 
     def blocked(self, ip, name):
         """Проверяем и сам домен, и все его родительские: список содержит
-        example.com, а спрашивают ads.example.com."""
-        cats = self.clients.get(ip)
+        example.com, а спрашивают ads.example.com.
+
+        Сначала свой список владельца — он короткий и важнее всего; потом
+        общие категории; потом персональные."""
+        parts = name.split(".")
+        if self.custom:
+            for i in range(len(parts) - 1):
+                if ".".join(parts[i:]) in self.custom:
+                    return "свой список"
+
+        cats = list(self.common) + list(self.clients.get(ip) or [])
         if not cats:
             return None
-        parts = name.split(".")
         for cat in cats:
             domains = self.domains.get(cat)
             if not domains:

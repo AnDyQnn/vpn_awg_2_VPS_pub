@@ -190,6 +190,8 @@ class AclApply(BaseModel):
 
 class DnsFilters(BaseModel):
     clients: dict = {}          # адрес пира -> список категорий
+    common: list = []           # категории, включённые сразу всем
+    custom: list = []           # свой список доменов владельца
     bot_link: str = ""          # куда человеку идти с вопросом «почему закрыто»
 
 class DnsNames(BaseModel):
@@ -678,6 +680,15 @@ def _dns_ensure_chain():
                        stderr=subprocess.DEVNULL)
 
 
+def read_dns_full_state():
+    """Всё сохранённое состояние фильтров целиком."""
+    try:
+        with open(DNS_STATE_FILE) as f:
+            return json.load(f) or {}
+    except Exception:
+        return {}
+
+
 def read_dns_clients():
     """Кому включена фильтрация — из сохранённого состояния."""
     try:
@@ -687,7 +698,7 @@ def read_dns_clients():
         return {}
 
 
-def rebuild_dns_chain(clients=None, names=None):
+def rebuild_dns_chain(clients=None, names=None, everyone=None):
     """Пересобирает цепочку заворота DNS ЦЕЛИКОМ.
 
     Источников два — фильтрация по людям и свои имена, — а цепочка одна.
@@ -701,6 +712,9 @@ def rebuild_dns_chain(clients=None, names=None):
         clients = read_dns_clients()
     if names is None:
         names = read_dns_names()
+    if everyone is None:
+        state = read_dns_full_state()
+        everyone = bool(state.get("common") or state.get("custom"))
 
     _dns_ensure_chain()
     redirected = 0
@@ -715,8 +729,9 @@ def rebuild_dns_chain(clients=None, names=None):
                 shell=True, stderr=subprocess.DEVNULL)
         redirected += 1
 
-    # Затем общий заворот ради имён — он нужен всем и только пока имена есть.
-    if names:
+    # Затем общий заворот: он нужен и ради имён, и ради общих правил
+    # фильтрации — и то и другое действует на всех.
+    if names or everyone:
         for proto in ("udp", "tcp"):
             subprocess.run(
                 f"iptables -t nat -A {DNS_CHAIN} -s {VPN_SUBNET}/24 -p {proto} "
@@ -725,9 +740,13 @@ def rebuild_dns_chain(clients=None, names=None):
     return redirected
 
 
-def apply_dns_filters(clients):
-    """clients: {адрес: [категории]}. Пустой список категорий = фильтров нет."""
-    return rebuild_dns_chain(clients=clients)
+def apply_dns_filters(clients, everyone=False):
+    """clients: {адрес: [категории]}. Пустой список категорий = фильтров нет.
+
+    `everyone` — когда есть общие правила: тогда через узел должен идти DNS
+    всей туннельной сети, иначе общий запрет не действовал бы ни на кого,
+    кроме тех, кому и так включили личные категории."""
+    return rebuild_dns_chain(clients=clients, everyone=everyone)
 
 
 DNS_NAMES_FILE = f"{CONF_DIR}/dns_names.json"
@@ -755,10 +774,11 @@ def read_dns_names():
         return {}
 
 
-def save_dns_state(clients, bot_link=""):
+def save_dns_state(clients, bot_link="", common=None, custom=None):
     try:
         with open(DNS_STATE_FILE, "w") as f:
             json.dump({"clients": clients, "bot_link": bot_link,
+                       "common": list(common or []), "custom": list(custom or []),
                        "saved_at": int(time.time())}, f)
     except Exception as e:
         print(f"DNS state save warning: {e}")
@@ -774,10 +794,13 @@ def read_dns_state():
     return {}
 
 
-def refresh_dns_lists(clients):
+def refresh_dns_lists(clients, common=None):
     """Тянет списки только включённых категорий, в фоне — загрузка не должна
-    задерживать ответ панели."""
-    cats = sorted({c for v in (clients or {}).values() for c in v})
+    задерживать ответ панели.
+
+    Общие категории сюда тоже входят: без их списков общий запрет не сработал
+    бы, а причина была бы не видна — фильтр просто не нашёл бы доменов."""
+    cats = sorted({c for v in (clients or {}).values() for c in v} | set(common or []))
     if not cats:
         return
     subprocess.Popen(f"bash /app/update_dns_lists.sh '{' '.join(cats)}'",
@@ -785,7 +808,9 @@ def refresh_dns_lists(clients):
 
 
 def rebuild_dns_filters():
-    apply_dns_filters(read_dns_state())
+    state = read_dns_full_state()
+    apply_dns_filters(read_dns_state(),
+                      everyone=bool(state.get("common") or state.get("custom")))
     # Файл состояния читает и сам процесс фильтра — ссылка на бота лежит там же
     # и переживает перезапуск вместе с раскладкой.
 
@@ -1508,9 +1533,13 @@ def set_dns_filters(req: DnsFilters):
         # Сохраняем ДО применения: состояние на диске — источник правды для
         # пересборки цепочки, и если применить раньше, пересборка ради имён
         # прочитает старое и сотрёт только что поставленные правила.
-        save_dns_state(clients, req.bot_link or "")
-        count = apply_dns_filters(clients)
-        refresh_dns_lists(clients)
+        common = [str(c) for c in (req.common or [])]
+        custom = [str(d).lower().strip().strip(".") for d in (req.custom or []) if d]
+        save_dns_state(clients, req.bot_link or "", common, custom)
+        # Общие правила и свой список действуют на всех, поэтому заворачивать
+        # DNS надо всем, а не только тем, у кого включены личные категории.
+        count = apply_dns_filters(clients, everyone=bool(common or custom))
+        refresh_dns_lists(clients, common)
         return {"status": "ok", "filtered": count}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

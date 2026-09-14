@@ -69,7 +69,7 @@ from handlers_roles import (
     grant_del, members_screen, member_add, member_del, role_delete_confirm,
     role_delete, role_apply, handle_role_text, user_roles_screen,
     user_role_toggle,
-    grant_name
+    grant_name, grant_whole_tunnel
 )
 from handlers_keylife import (
     pending_screen, decision_screen, extend_menu, do_extend, set_policy,
@@ -96,6 +96,9 @@ from handlers_migration import (
     migration_abort, migration_de
 )
 from filters import (
+    common_screen as flt_common, common_toggle as flt_ctoggle,
+    custom_add_request as flt_cadd, custom_add_entered as flt_centered,
+    custom_list as flt_clist, custom_remove as flt_cremove,
     filters_menu, pick_user as filters_pick_user, user_filters_screen,
     toggle_filter, apply_now as filters_apply_now, apply_filters
 )
@@ -630,6 +633,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["state"] = None
         return
 
+    if state == "awaiting_block_site":
+        await flt_centered(update, context, update.message.text)
+        return
+
     if state == "awaiting_dns_name":
         await dnm_name_entered(update, context, update.message.text)
         return
@@ -860,6 +867,15 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # --- Фильтрация сайтов ---
     if data == "flt_menu": await filters_menu(update, context); return
+    if data == "flt_common": await flt_common(update, context); return
+    if data == "flt_cadd": await flt_cadd(update, context); return
+    if data == "flt_clist": await flt_clist(update, context); return
+    if data.startswith("flt_ctog_"):
+        await flt_ctoggle(update, context, data.split("_", 2)[2]); return
+    if data.startswith("flt_cdel_"):
+        await flt_cremove(update, context, data.split("_", 2)[2]); return
+    if data.startswith("flt_cpg_"):
+        await flt_clist(update, context, int(data.split("_")[-1])); return
     if data == "flt_apply": await filters_apply_now(update, context); return
     if data.startswith("flt_pick_"):
         await filters_pick_user(update, context, int(data.split("_")[-1])); return
@@ -898,6 +914,8 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await grant_add_screen(update, context, int(data.split("_")[-1])); return
     if data.startswith("role_gman_"):
         await grant_manual(update, context, int(data.split("_")[-1])); return
+    if data.startswith("role_gall_"):
+        await grant_whole_tunnel(update, context, int(data.split("_")[-1])); return
     if data.startswith("role_gname_"):
         parts = data.split("_", 3)          # role | gname | id | имя
         await grant_name(update, context, int(parts[2]), parts[3]); return
