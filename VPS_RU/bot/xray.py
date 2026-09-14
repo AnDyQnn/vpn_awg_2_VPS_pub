@@ -76,6 +76,37 @@ def mask_for(dest: str, user_uuid: str) -> str:
     return names[digest[0] % len(names)]
 
 
+# Входы: порт и маска для каждого. Первый — основной, он на 443 и выглядит
+# обычным HTTPS. Остальные — запасные, на общеизвестных запасных портах HTTPS.
+#
+# Зачем несколько: маску могут заблокировать целиком, и тогда вход с ней
+# умирает. Человеку в подписку уходят все входы, и приложение само переходит на
+# живой. Одним входом так нельзя — Reality переадресует проверяющего на сайт
+# маски, и тот обязан отдать подходящий сертификат; у разных сайтов они разные.
+DEFAULT_ENTRIES = [
+    (443, "avito.ru"),
+    (2053, "wildberries.ru"),
+    (2083, "sberbank.ru"),
+]
+
+
+async def entries():
+    """Входы в порядке предпочтения: сначала основной, потом запасные.
+
+    Основной берётся из настроек — владелец мог сменить порт или маску на
+    экране. Запасные идут следом и маску с основным не делят: смысл в том,
+    чтобы они не падали вместе.
+    """
+    cfg_port = int(await db.get_setting("xray_port") or DEFAULT_PORT)
+    cfg_dest = await db.get_setting("xray_dest") or DEFAULT_DEST
+    out = [(cfg_port, cfg_dest)]
+    for port, dest in DEFAULT_ENTRIES:
+        if port == cfg_port or dest == cfg_dest:
+            continue
+        out.append((port, dest))
+    return out
+
+
 async def settings():
     """Настройки входа. Ключи Reality генерятся один раз и живут в базе:
     сменить их — значит отключить всех, кто уже подключён."""
@@ -212,27 +243,30 @@ async def build_config():
             "outboundTag": tag,
         })
 
+    ways = await entries()
     config = {
         "log": {"loglevel": "warning"},
+        # Один вход на маску. Люди и правила у всех общие: правило выбирает
+        # канал по человеку, а не по тому, через какой вход он пришёл.
         "inbounds": [{
-            "tag": "in-vless",
+            "tag": f"in-vless-{port}",
             "listen": "0.0.0.0",
-            "port": cfg["port"],
+            "port": port,
             "protocol": "vless",
             "settings": {"clients": clients, "decryption": "none"},
             "streamSettings": {
                 "network": "tcp",
                 "security": "reality",
                 "realitySettings": {
-                    "dest": f"{cfg['dest']}:443",
-                    # Весь пул: вход обязан принять любое из имён, потому
-                    # что у разных людей в ссылке зашиты разные.
-                    "serverNames": mask_names(cfg["dest"]),
+                    "dest": f"{dest}:443",
+                    # Весь пул имён этой маски: вход обязан принять любое,
+                    # потому что у разных людей в ссылке зашиты разные.
+                    "serverNames": mask_names(dest),
                     "privateKey": cfg["private_key"],
                     "shortIds": [cfg["short_id"]],
                 },
             },
-        }],
+        } for port, dest in ways],
         # Запасной канал нужен всегда: если человек почему-то не совпал ни с
         # одним правилом, он должен просто выйти в интернет, а не упереться в
         # тишину.
@@ -375,7 +409,22 @@ def link_keyboard(link, back=None):
     return InlineKeyboardMarkup(rows)
 
 
-async def profile_link(user_uuid) -> str:
+async def profile_links(user_uuid):
+    """Все входы этого человека, по одной ссылке на каждый.
+
+    Порядок важен: первым идёт основной. Приложение пробует по порядку и
+    переходит к следующему, когда предыдущий молчит, — ради этого несколько
+    входов и заводились.
+    """
+    out = []
+    for port, dest in await entries():
+        link = await profile_link(user_uuid, port=port, dest=dest)
+        if link:
+            out.append(link)
+    return out
+
+
+async def profile_link(user_uuid, port=None, dest=None) -> str:
     """Сама строка подключения — то, что человек вставляет в приложение."""
     rec = await db.get_xray_user(user_uuid)
     if not rec:
@@ -386,8 +435,13 @@ async def profile_link(user_uuid) -> str:
     if not host or not cfg["public_key"]:
         return ""
     name = (user or {}).get("name", "vpn")
-    return (f"vless://{rec['xray_uuid']}@{host}:{cfg['port']}"
-            f"?type=tcp&security=reality&sni={mask_for(cfg['dest'], user_uuid)}"
+    # Вход: по умолчанию основной, но подписка собирает ссылку на каждый.
+    port = port or cfg["port"]
+    dest = dest or cfg["dest"]
+    # Имя профиля с маской: в приложении видно, какой вход сейчас работает.
+    name = f"{name} · {dest}" if dest != cfg["dest"] else name
+    return (f"vless://{rec['xray_uuid']}@{host}:{port}"
+            f"?type=tcp&security=reality&sni={mask_for(dest, user_uuid)}"
             f"&fp=chrome&pbk={cfg['public_key']}&sid={cfg['short_id']}"
             f"&flow=xtls-rprx-vision#{name}")
 
@@ -435,11 +489,13 @@ async def subscription_body(token: str) -> str:
     rec = await db.get_xray_by_token(token)
     if not rec or not rec["is_active"]:
         return ""
-    link = await profile_link(rec["user_uuid"])
-    if not link:
+    # Все входы, а не один: приложение перебирает их и переходит на живой,
+    # когда маска отваливается. Перебирать оно может только присланное.
+    links = await profile_links(rec["user_uuid"])
+    if not links:
         return ""
     await db.mark_xray_seen(rec["user_uuid"])
-    return base64.b64encode(link.encode()).decode()
+    return base64.b64encode("\n".join(links).encode()).decode()
 
 
 # --- КТО НА СВЯЗИ ---------------------------------------------------------

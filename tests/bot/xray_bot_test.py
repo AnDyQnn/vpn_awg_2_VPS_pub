@@ -131,7 +131,11 @@ async def main():
     rec = await db.get_xray_user("xr-1")
     body = await xray.subscription_body(rec["sub_token"])
     decoded = base64.b64decode(body).decode()
-    assert decoded == link, "подписка должна отдавать тот же профиль"
+    # Подписка отдаёт ВСЕ входы, а не один: приложение перебирает их и
+    # переходит на живой, когда маска отваливается. Основной идёт первым.
+    profiles = decoded.split(chr(10))
+    assert profiles[0] == link, (profiles[0], link)
+    assert len(profiles) == len(await xray.entries()), profiles
     print("подписка отдаёт профиль в base64: ок")
 
     seen = await db.get_xray_user("xr-1")
