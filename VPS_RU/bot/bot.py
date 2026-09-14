@@ -61,7 +61,7 @@ from handlers_admin import (
 )
 from handlers_users import (
     users_list_menu, user_detail_menu, confirm_delete_menu, action_delete_user, action_resend_config,
-    new_key_screen,
+    new_key_screen, default_proto,
     generate_key_request, finish_key_creation, render_user_detail, clear_user_ips
 )
 from handlers_roles import (
@@ -647,7 +647,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["name"] = name
         menu_id = context.user_data.get("menu_msg_id")
         
-        context.user_data.setdefault("proto", "xray")
+        if "proto" not in context.user_data:
+            context.user_data["proto"] = await default_proto()
         if menu_id:
             text, keyboard = new_key_screen(context, name)
             await context.bot.edit_message_text(chat_id=chat_id, message_id=menu_id,
