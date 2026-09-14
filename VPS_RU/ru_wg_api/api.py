@@ -192,6 +192,11 @@ class DnsFilters(BaseModel):
     clients: dict = {}          # адрес пира -> список категорий
     bot_link: str = ""          # куда человеку идти с вопросом «почему закрыто»
 
+class DnsNames(BaseModel):
+    # имя → адрес в туннеле. Разрешать имена в адреса — дело бота: у него база.
+    names: dict = {}
+
+
 class MigrationStart(BaseModel):
     port: int = 51821
 
@@ -618,10 +623,33 @@ def _dns_ensure_chain():
                        stderr=subprocess.DEVNULL)
 
 
-def apply_dns_filters(clients):
-    """clients: {адрес: [категории]}. Пустой список категорий = фильтров нет."""
+def read_dns_clients():
+    """Кому включена фильтрация — из сохранённого состояния."""
+    try:
+        with open(DNS_STATE_FILE) as f:
+            return (json.load(f) or {}).get("clients", {})
+    except Exception:
+        return {}
+
+
+def rebuild_dns_chain(clients=None, names=None):
+    """Пересобирает цепочку заворота DNS ЦЕЛИКОМ.
+
+    Источников два — фильтрация по людям и свои имена, — а цепочка одна.
+    Раньше каждый пересобирал её сам и стирал чужие правила: включили фильтр —
+    перестали отвечать имена, завели имя — перестала работать фильтрация.
+    Поэтому единственная сборка, и она всегда учитывает оба источника.
+
+    Что не передали — берётся с диска: вызывающему не нужно знать про чужое
+    состояние, чтобы не затереть его."""
+    if clients is None:
+        clients = read_dns_clients()
+    if names is None:
+        names = read_dns_names()
+
     _dns_ensure_chain()
     redirected = 0
+    # Сначала адресные правила фильтрации: они уже, и должны стоять выше.
     for ip, cats in (clients or {}).items():
         if not cats:
             continue
@@ -631,7 +659,44 @@ def apply_dns_filters(clients):
                 f"-j DNAT --to-destination {DNS_LOCAL_IP}:53",
                 shell=True, stderr=subprocess.DEVNULL)
         redirected += 1
+
+    # Затем общий заворот ради имён — он нужен всем и только пока имена есть.
+    if names:
+        for proto in ("udp", "tcp"):
+            subprocess.run(
+                f"iptables -t nat -A {DNS_CHAIN} -s {VPN_SUBNET}/24 -p {proto} "
+                f"--dport 53 -j DNAT --to-destination {DNS_LOCAL_IP}:53",
+                shell=True, stderr=subprocess.DEVNULL)
     return redirected
+
+
+def apply_dns_filters(clients):
+    """clients: {адрес: [категории]}. Пустой список категорий = фильтров нет."""
+    return rebuild_dns_chain(clients=clients)
+
+
+DNS_NAMES_FILE = f"{CONF_DIR}/dns_names.json"
+
+
+def apply_dns_names(names):
+    """Записывает таблицу имён и пересобирает заворот DNS.
+
+    Заворот общий, а не по адресам: имя должно работать у всех, иначе «зайди на
+    дом.vpn» превращается в «зайди, если тебе включили». Пока имён нет ни одного,
+    ничего не заворачиваем — поведение остаётся прежним, как было до этой
+    возможности."""
+    with open(DNS_NAMES_FILE, "w") as f:
+        json.dump({"names": names or {}, "saved_at": int(time.time())}, f)
+    rebuild_dns_chain(names=names)
+    return len(names or {})
+
+
+def read_dns_names():
+    try:
+        with open(DNS_NAMES_FILE) as f:
+            return (json.load(f) or {}).get("names", {})
+    except Exception:
+        return {}
 
 
 def save_dns_state(clients, bot_link=""):
@@ -1169,10 +1234,37 @@ def set_dns_filters(req: DnsFilters):
     а сам разбор запросов делает отдельный процесс."""
     try:
         clients = {str(k): list(v) for k, v in (req.clients or {}).items()}
-        count = apply_dns_filters(clients)
+        # Сохраняем ДО применения: состояние на диске — источник правды для
+        # пересборки цепочки, и если применить раньше, пересборка ради имён
+        # прочитает старое и сотрёт только что поставленные правила.
         save_dns_state(clients, req.bot_link or "")
+        count = apply_dns_filters(clients)
         refresh_dns_lists(clients)
         return {"status": "ok", "filtered": count}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/dns/names")
+def set_dns_names(req: DnsNames):
+    """Принимает готовую таблицу «имя → адрес».
+
+    Узел не знает ни про людей, ни про то, чьё это имя: адрес подставляет бот,
+    у которого база. Поэтому перевыпуск ключа имя не ломает — просто приедет
+    новая пара."""
+    try:
+        names = {str(k).lower().rstrip("."): str(v)
+                 for k, v in (req.names or {}).items() if v}
+        count = apply_dns_names(names)
+        return {"status": "ok", "names": count}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/dns/names")
+def get_dns_names():
+    try:
+        return {"names": read_dns_names()}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
