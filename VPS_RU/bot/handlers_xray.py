@@ -12,7 +12,7 @@ from telegram.ext import ContextTypes
 
 import xray
 from database import db
-from utils import escape_md, show_screen
+from utils import exit_kb, escape_md, show_screen
 
 BACK_SERVICE = [InlineKeyboardButton("🔙 Администрирование", callback_data="svc_menu")]
 
@@ -266,7 +266,8 @@ async def xray_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lines.append("Приложение: Happ, ссылки на все системы")
 
     kb = [[InlineKeyboardButton("🔄 Применить конфиг заново", callback_data="xr_apply")],
-          [InlineKeyboardButton("📱 Приложения", callback_data="xr_apps")]]
+          [InlineKeyboardButton("🎭 Маска входа", callback_data="xr_mask"),
+           InlineKeyboardButton("📱 Приложения", callback_data="xr_apps")]]
     if xr.get("enabled"):
         kb.append([InlineKeyboardButton("⏹ Выключить протокол", callback_data="proto_off_xray")])
     else:
@@ -276,6 +277,79 @@ async def xray_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await show_screen(query, context, "\n".join(lines),
                       reply_markup=InlineKeyboardMarkup(kb),
                       parse_mode=ParseMode.MARKDOWN)
+
+
+# Маски, проверенные с узла: TLS 1.3, X25519, HTTP/2 — всё, что требует Reality.
+# Время отклика измерено оттуда же. Порядок — от меньшего риска к большему.
+MASKS = [
+    ("avito.ru", "86 мс", "объявления: поток огромный и круглосуточный"),
+    ("wildberries.ru", "93 мс", "маркетплейс, картинки — крупные передачи свои"),
+    ("sberbank.ru", "94 мс", "банк: такое не блокируют никогда"),
+    ("ozon.ru", "124 мс", "маркетплейс, то же самое"),
+    ("rutube.ru", "131 мс", "видео: длинные передачи выглядят естественно"),
+    ("vk.com", "137 мс", "у всех и всегда"),
+    ("www.samsung.com", "153 мс", "зарубежная запаска, из России не уходили"),
+    ("www.microsoft.com", "261 мс", "было по умолчанию; медленно и рискованно"),
+]
+
+
+async def mask_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Выбор домена, которым прикидывается вход."""
+    query = update.callback_query
+    cfg = await xray.settings()
+    cur = cfg["dest"]
+
+    lines = ["🎭 **Маска входа**", "",
+             "Домен, которым вход прикидывается для наблюдателя со стороны. "
+             "Его же видит проверяющий, если решит постучаться на порт.", "",
+             f"Сейчас: `{escape_md(cur)}`", "",
+             "Выбирать стоит то, что не отключат и не заблокируют: если домен "
+             "перестанет отвечать с узла, люди продолжат работать, а вот "
+             "защита от проверки отвалится — и молча.", "",
+             "Узел стоит в России, поэтому российские домены правдоподобнее: "
+             "домашний хостинг, отдающий зарубежный сайт, выглядит страннее. "
+             "И отвечают они втрое быстрее — а отклик видит именно "
+             "проверяющий.", ""]
+
+    issued = await db.count_xray_users()
+    if issued:
+        lines.append(f"⚠️ Ключей уже выдано: {issued}. Смена маски меняет "
+                     "ссылку. У тех, кто подключён по подписке, она обновится "
+                     "сама; у остальных придётся перевыдать.")
+        lines.append("")
+
+    kb = []
+    for host, ping, note in MASKS:
+        mark = "✅ " if host == cur else ""
+        kb.append([InlineKeyboardButton(f"{mark}{host} · {ping}",
+                                        callback_data=f"xr_mask_{host}")])
+        lines.append(f"• `{escape_md(host)}` — {note}")
+    kb.append([InlineKeyboardButton("🔙 Xray", callback_data="proto_xray")])
+
+    await show_screen(query, context, chr(10).join(lines),
+                      reply_markup=InlineKeyboardMarkup(kb),
+                      parse_mode=ParseMode.MARKDOWN)
+
+
+async def mask_set(update: Update, context: ContextTypes.DEFAULT_TYPE, host):
+    """Ставит выбранную маску и сразу применяет конфиг."""
+    query = update.callback_query
+    known = [h for h, _p, _n in MASKS]
+    if host not in known:
+        await query.answer("Неизвестная маска", show_alert=True)
+        return
+    cur = await xray.settings()
+    if cur["dest"] == host:
+        await query.answer("Эта маска уже стоит")
+        await mask_screen(update, context)
+        return
+
+    await db.set_setting("xray_dest", host)
+    await query.answer("Применяю…")
+    ok, msg = await xray.apply_config(f"смена маски на {host}")
+    await db.log_event("Xray", f"Mask changed to {host}: {msg}")
+    await query.answer(msg, show_alert=not ok)
+    await mask_screen(update, context)
 
 
 async def apply_now(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -441,7 +515,8 @@ async def handout(update, context, uuid_val, name, tg_id=None):
     ok, res = await xray.issue(uuid_val)
     if not ok:
         await context.bot.send_message(chat_id=chat_id,
-                                       text=f"⚠️ Ключ создан, но Xray не выдан: {res}")
+                                       text=f"⚠️ Ключ создан, но Xray не выдан: {res}",
+        reply_markup=exit_kb(("👥 Люди", "list_users")))
         return False
 
     link = await xray.profile_link(uuid_val)
@@ -451,7 +526,8 @@ async def handout(update, context, uuid_val, name, tg_id=None):
     await context.bot.send_message(
         chat_id=chat_id,
         text=f"✅ **Ключ создан: {escape_md(name)}**\n\nВыдан по Xray — ссылкой.",
-        parse_mode=ParseMode.MARKDOWN)
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=exit_kb(("👥 Люди", "list_users")))
     if qr:
         await context.bot.send_photo(chat_id=chat_id, photo=open(qr, "rb"))
     # Ссылка отдельным сообщением и без разметки: подчёркивания в ней Telegram
@@ -472,14 +548,16 @@ async def handout(update, context, uuid_val, name, tg_id=None):
                 parse_mode=ParseMode.MARKDOWN)
             if qr:
                 await context.bot.send_photo(chat_id=tg_id, photo=open(qr, "rb"))
-            await context.bot.send_message(chat_id=tg_id, text=link)
+            await context.bot.send_message(chat_id=tg_id, text=link,
+        reply_markup=exit_kb(("👥 Люди", "list_users")))
 
         sent, err = await track_send(uuid_val, tg_id, _send)
         await context.bot.send_message(
             chat_id=chat_id,
             text=(f"✅ Ссылка отправлена клиенту `{tg_id}`." if sent
                   else f"⚠️ Клиент `{tg_id}` ссылку не получил: `{err}`"),
-            parse_mode=ParseMode.MARKDOWN)
+            parse_mode=ParseMode.MARKDOWN,
+        reply_markup=exit_kb(("👥 Люди", "list_users")))
 
     await context.bot.send_message(
         chat_id=chat_id, text="Готово! Что делаем дальше?",

@@ -18,12 +18,13 @@ from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
 from database import db
-from insights import event_verdict, packet_size_note
+from insights import event_verdict, node_ceiling
 from utils import escape_md, dt_to_moscow, state_data, safe_delete, show_screen
 
 DEFAULT_PPS_LIMIT = 5000
 DEFAULT_BURST = 10000
-NODE_CEILING = 7500          # замеренный потолок узла, клиентских пакетов в секунду
+# Потолок узла теперь один на весь проект и считается по факту —
+# см. node_ceiling() в insights.py.
 STEP = 500
 
 
@@ -262,6 +263,9 @@ async def set_mode(update: Update, context: ContextTypes.DEFAULT_TYPE, enforce: 
 
 async def load_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Кто нагружал сервер за сутки. Не «пробития порога», а понятные цифры."""
+    # Потолок узла берём по факту, а не из вписанной цифры:
+    # человек однажды выдал больше замера, и узел устоял.
+    ceiling = await node_ceiling()
     query = update.callback_query
     limit, _, _ = await _settings()
     try:
@@ -273,7 +277,7 @@ async def load_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = ("📊 **Нагрузка за сутки**\n\n"
                 "За последние сутки за лимит никто не выходил.\n\n"
                 f"Разрешено `{limit}` пакетов в секунду на человека, "
-                f"сервер в сумме тянет около `{NODE_CEILING}`.")
+                f"сервер в сумме тянет около `{ceiling}`.")
     else:
         lines = ["📊 **Нагрузка за сутки**", ""]
         seen = set()
@@ -282,18 +286,17 @@ async def load_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 continue
             seen.add(e["user_uuid"])
             when = dt_to_moscow(e["ended_at"] or e["started_at"])
-            verdict, worrying = event_verdict(dict(e))
+            verdict, worrying = event_verdict(dict(e), short=True)
             mark = "⚠️" if worrying else "•"
+            # Одна строка на человека: кто, что это было, пик, когда.
+            # Подробности — в его карточке, здесь они только мешают смотреть.
             lines.append(
-                f"{mark} **{escape_md(e['name'] or 'без имени')}** — до "
-                f"`{e['peak_pps']}` пакетов в секунду")
-            lines.append(f"     {verdict}")
-            lines.append(f"     {when.strftime('%d.%m %H:%M')}, пакет "
-                         f"{packet_size_note(e['avg_packet_size'] or 0)}")
+                f"{mark} **{escape_md(e['name'] or 'без имени')}** — {verdict} · "
+                f"`{e['peak_pps']}` пак/с · {when.strftime('%d.%m %H:%M')}")
             if len(seen) >= 8:
                 break
         lines.append("")
-        lines.append(f"Разрешено `{limit}` в секунду, сервер тянет около `{NODE_CEILING}`.")
+        lines.append(f"Лимит `{limit}` пак/с на человека, узел тянет `{ceiling}`.")
         text = "\n".join(lines)
 
     kb = [[InlineKeyboardButton("📈 График нагрузки", callback_data="svc_chart")],
@@ -306,6 +309,9 @@ async def load_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def limits_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Общий порог и персональные правила. В списке только те, у кого правило
     отличается от общего — иначе экран разрастётся на всех пиров сразу."""
+    # Потолок узла берём по факту, а не из вписанной цифры:
+    # человек однажды выдал больше замера, и узел устоял.
+    ceiling = await node_ceiling()
     query = update.callback_query
     limit, burst, _ = await _settings()
     try:
@@ -318,7 +324,7 @@ async def limits_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "⚖️ **Лимиты**", "",
         f"Общий лимит: `{limit}` пакетов в секунду",
         f"Кратковременный запас: `{burst}`", "",
-        f"Сервер в сумме тянет около `{NODE_CEILING}` пакетов в секунду.",
+        f"Сервер в сумме тянет около `{ceiling}` пакетов в секунду.",
         "Видео в 4К берёт примерно 2500, обычный браузинг — сотни.", "",
     ]
     if personal:
@@ -354,6 +360,9 @@ async def limits_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def change_limit(update: Update, context: ContextTypes.DEFAULT_TYPE, value: str):
     """Порог меняется шагом или готовым значением. Ниже тысячи и выше потолка узла
     не пускаем: первое душит всех, второе не имеет смысла."""
+    # Потолок узла берём по факту, а не из вписанной цифры:
+    # человек однажды выдал больше замера, и узел устоял.
+    ceiling = await node_ceiling()
     limit, _, _ = await _settings()
     if value == "up":
         new = limit + STEP
@@ -361,7 +370,7 @@ async def change_limit(update: Update, context: ContextTypes.DEFAULT_TYPE, value
         new = limit - STEP
     else:
         new = int(value)
-    new = max(1000, min(NODE_CEILING + 2000, new))
+    new = max(1000, min(ceiling + 2000, new))
     await db.set_setting("pps_limit", str(new))
     await update.callback_query.answer(f"Лимит: {new} пакетов в секунду")
     await limits_screen(update, context)
@@ -471,6 +480,9 @@ async def load_chart(update: Update, context: ContextTypes.DEFAULT_TYPE, uuid_va
     На персональном графике опорная линия — лимит этого человека. Потолок узла
     там был бы бессмысленным: один пир до него не дотянется.
     """
+    # Потолок узла берём по факту, а не из вписанной цифры:
+    # человек однажды выдал больше замера, и узел устоял.
+    ceiling = await node_ceiling()
     query = update.callback_query
     await query.answer("Рисую…")
     from graphs import generate_load_graph
@@ -506,7 +518,7 @@ async def load_chart(update: Update, context: ContextTypes.DEFAULT_TYPE, uuid_va
     else:
         caption = ("🚦 **Нагрузка узла за сутки**\n"
                    f"Сверху скорость, снизу пакеты. Линия — потолок узла, "
-                   f"около {NODE_CEILING} пакетов в секунду.")
+                   f"около {ceiling} пакетов в секунду.")
 
     # График про человека умеет вернуть к этому человеку: чаще всего сюда и
     # заходят из его карточки, а не из списка графиков.

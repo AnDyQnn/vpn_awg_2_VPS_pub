@@ -20,7 +20,7 @@ from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
 from database import db
-from utils import escape_md, WG_API_URL, api_session, show_screen
+from utils import exit_kb, escape_md, WG_API_URL, api_session, show_screen
 
 # Адрес бота узел сам не знает: он живёт в сети, а не в Telegram. Бот сообщает
 # его вместе с раскладкой фильтров, чтобы на странице отказа было куда написать.
@@ -333,7 +333,8 @@ async def custom_add_entered(update: Update, context: ContextTypes.DEFAULT_TYPE,
     domain, err = parse_site(raw)
     if err:
         await context.bot.send_message(chat_id=chat_id, text=f"⚠️ {err}",
-                                       parse_mode=ParseMode.MARKDOWN)
+                                       parse_mode=ParseMode.MARKDOWN,
+        reply_markup=exit_kb(("🚫 Свои блокировки", "flt_custom")))
         return
     context.user_data["state"] = None
     await db.add_custom_block(domain)

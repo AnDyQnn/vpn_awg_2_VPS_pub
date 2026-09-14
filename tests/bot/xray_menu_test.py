@@ -48,6 +48,12 @@ async def main():
     await db.connect()
     await db.execute("DELETE FROM users WHERE uuid LIKE 'mn-%'")
 
+    # Тест утверждает «на Xray никого» — значит, это условие надо создать, а не
+    # надеяться на порядок запуска: соседние тесты Xray оставляют своих людей,
+    # и до сих пор просто везло. Забираем состояние и возвращаем в конце.
+    saved_xray = await db.fetch_all("SELECT * FROM xray_users")
+    await db.execute("DELETE FROM xray_users")
+
     ha.api_session = lambda: FakeSession()
     xray.api_session = lambda: FakeSession()
 
@@ -80,6 +86,14 @@ async def main():
     print("сводка складывает оба протокола: ок")
 
     await db.execute("DELETE FROM users WHERE uuid LIKE 'mn-%'")
+    # Возвращаем чужих людей на Xray, чтобы следующий тест застал базу
+    # такой, какой она была до нас.
+    for row in saved_xray or []:
+        cols = list(row.keys())
+        marks = ", ".join("$%d" % (n + 1) for n in range(len(cols)))
+        await db.execute("INSERT INTO xray_users (%s) VALUES (%s)"
+                         % (", ".join(cols), marks), *[row[c] for c in cols])
+
     print("\nВСЁ ПРОШЛО")
 
 

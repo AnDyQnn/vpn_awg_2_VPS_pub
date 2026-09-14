@@ -7,6 +7,7 @@ from telegram.ext import ContextTypes
 from telegram.constants import ParseMode
 
 from utils import (
+    exit_kb,
     api_session,
     escape_md, WG_API_URL, state_data, check_admin, CONFIGS_DIR, dt_to_moscow,
     ts_to_moscow, safe_delete, GOSUSLUGI_APP_WARNING
@@ -534,7 +535,8 @@ async def client_regen_all_action_handler(update: Update, context: ContextTypes.
         try:
             retire_list.append(await _issue_new_config(context, chat_id, user))
         except Exception as e:
-            await context.bot.send_message(chat_id=chat_id, text=f"❌ Ошибка перевыпуска ключа {escape_md(user['name'])}: {e}")
+            await context.bot.send_message(chat_id=chat_id, text=f"❌ Ошибка перевыпуска ключа {escape_md(user['name'])}: {e}",
+        reply_markup=exit_kb(to_client=True))
 
     await context.bot.send_message(
         chat_id=chat_id,
@@ -542,8 +544,8 @@ async def client_regen_all_action_handler(update: Update, context: ContextTypes.
             f"✅ Новые конфиги выданы. Старые ключи продолжают работать — "
             f"каждый снимется сам, когда заработает новый. Импортируйте, когда удобно."
         ),
-        parse_mode=ParseMode.MARKDOWN
-    )
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=exit_kb(to_client=True))
     await safe_delete(context, chat_id, query.message.message_id)
 
     # снятие старых пиров — в фоне, после grace-периода
@@ -637,10 +639,12 @@ async def send_xray_profile(context, chat_id, uuid_val):
     if qr:
         await context.bot.send_photo(chat_id=chat_id, photo=open(qr, "rb"),
                                      caption="📱 Отсканируйте в приложении")
-    await context.bot.send_message(chat_id=chat_id, text=link)
+    await context.bot.send_message(chat_id=chat_id, text=link,
+        reply_markup=exit_kb(to_client=True))
     await context.bot.send_message(
         chat_id=chat_id,
-        text="⚠️ Ссылка личная — не передавайте её никому.")
+        text="⚠️ Ссылка личная — не передавайте её никому.",
+        reply_markup=exit_kb(to_client=True))
     try:
         await db.delivery_downloaded(uuid_val)
     except Exception:
@@ -677,7 +681,8 @@ async def client_download_handler(update: Update, context: ContextTypes.DEFAULT_
         else:
             await query.message.reply_text("❌ Файл конфигурации не найден. Попробуйте нажать 'Перевыпустить' для перевыпуска.")
     except Exception as e:
-        await context.bot.send_message(chat_id=chat_id, text=f"❌ Ошибка отправки: {e}")
+        await context.bot.send_message(chat_id=chat_id, text=f"❌ Ошибка отправки: {e}",
+        reply_markup=exit_kb(to_client=True))
 
 async def check_connection_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, uuid_val=None):
     query = update.callback_query
@@ -769,7 +774,8 @@ async def client_regen_action(update: Update, context: ContextTypes.DEFAULT_TYPE
         import xray
         ok, res = await xray.issue(uuid_val)
         if not ok:
-            await context.bot.send_message(chat_id=chat_id, text=f"❌ Не вышло: {res}")
+            await context.bot.send_message(chat_id=chat_id, text=f"❌ Не вышло: {res}",
+        reply_markup=exit_kb(to_client=True))
             return
         await query.edit_message_text("✅ Готово. Новая ссылка ниже, прежняя "
                                       "больше не работает.")
@@ -792,7 +798,8 @@ async def client_regen_action(update: Update, context: ContextTypes.DEFAULT_TYPE
     try:
         retire = await _issue_new_config(context, chat_id, user)
     except Exception as e:
-        await context.bot.send_message(chat_id=chat_id, text=f"❌ Ошибка перевыпуска: {e}")
+        await context.bot.send_message(chat_id=chat_id, text=f"❌ Ошибка перевыпуска: {e}",
+        reply_markup=exit_kb(to_client=True))
         return
 
     await safe_delete(context, chat_id, query.message.message_id)

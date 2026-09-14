@@ -148,8 +148,35 @@ SEEDING_SHARE = 0.6          # отдачи больше, чем приёма �
 SHORT_BURST = 60             # секунд: короче — разовая загрузка, не нагрузка
 
 
-def event_verdict(event):
+# Потолок узла — сколько клиентских пакетов в секунду он вытягивает.
+#
+# 7500 — замер на этом железе: userspace wireguard-go тратит ~130 мкс на пакет
+# при одном ядре. Но замер не приговор: на бою человек выдал 8057, и узел
+# устоял. Поэтому берём большее из замера и того, что видели своими глазами.
+#
+# Считать потолок от назначенного лимита нельзя: лимит назначают ИЗ потолка, и
+# получилась бы петля — поднял лимит, «вырос» потолок, можно поднять ещё.
+DEFAULT_NODE_CEILING = 7500
+
+
+async def node_ceiling():
+    """Сколько узел тянет на самом деле: замер или виденный пик, что больше."""
+    try:
+        base = int(await db.get_setting("node_ceiling") or DEFAULT_NODE_CEILING)
+    except (TypeError, ValueError):
+        base = DEFAULT_NODE_CEILING
+    try:
+        seen = await db.fetch_val("SELECT MAX(peak_pps) FROM pps_events") or 0
+    except Exception:
+        seen = 0
+    return max(base, int(seen))
+
+
+def event_verdict(event, short=False):
     """Человеческое объяснение всплеска: (вердикт, тревожно ли).
+
+    `short` — для списка, где на человека отведена одна строка: там нужно
+    название, а не объяснение. Объяснение целиком живёт в карточке человека.
 
     Возвращает не «превышение», а то, чем оно было: разовой загрузкой, раздачей
     или похожим на торрент. Тревожным считается только то, что и правда мешает
@@ -162,13 +189,17 @@ def event_verdict(event):
         seconds = max(0, int((ended - started).total_seconds()))
 
     if 0 < size < TORRENT_PACKET:
-        return ("мелкие пакеты из множества соединений — похоже на торрент",
+        return ("торрент" if short else
+                "мелкие пакеты из множества соединений — похоже на торрент",
                 True)
     if share is not None and share >= SEEDING_SHARE:
-        return ("отдаёт больше, чем принимает — похоже на раздачу", True)
+        return ("раздача" if short else
+                "отдаёт больше, чем принимает — похоже на раздачу", True)
     if seconds <= SHORT_BURST:
-        return ("разовая загрузка на полной скорости — обычное дело", False)
-    return (f"долгая загрузка, {_duration(seconds)} подряд", True)
+        return ("разовая загрузка" if short else
+                "разовая загрузка на полной скорости — обычное дело", False)
+    return (f"загрузка {_duration(seconds)}" if short else
+            f"долгая загрузка, {_duration(seconds)} подряд", True)
 
 
 def _duration(seconds):

@@ -28,6 +28,17 @@ PROTECTED='^(linux-image-|linux-modules-[0-9]|grub|systemd|docker-ce|containerd|
 
 say() { echo "[GC] $*"; }
 
+# Что apt собрался снести — именами пакетов, по одному в строке.
+#
+# Печатает он это по-разному: «Remv» при обычном удалении и «Purg», когда
+# просят вычистить и настройки. Я читал только первое — план выходил
+# пустым, шаги молча пропускались, а проверка безопасности не видела в
+# плане ядро и считала удаление безобидным. Одна функция на оба случая,
+# чтобы третьего такого места не завелось.
+plan_of() {   # plan_of <аргументы для apt-get -s>
+    apt-get -s "$@" 2>/dev/null | awk '/^(Remv|Purg) /{print $2}'
+}
+
 free_mb() { df -m / | awk 'NR==2 {print $4}'; }
 
 BEFORE=$(free_mb)
@@ -42,14 +53,14 @@ if [ "${CACHE:-0}" -gt 50 ]; then
 fi
 
 # --- 2. осиротевшее и старые ядра ----------------------------------------
-ORPHANS=$(apt-get -s autoremove --purge 2>/dev/null | grep -c '^Remv' || true)
+ORPHAN_PLAN=$(plan_of autoremove --purge)
+ORPHANS=$(printf '%s' "$ORPHAN_PLAN" | grep -c . || true)
 if [ "${ORPHANS:-0}" -gt 0 ]; then
     # Проверяем, что под удаление не попало ничего защищённого.
-    if apt-get -s autoremove --purge 2>/dev/null | grep '^Remv' \
-         | awk '{print $2}' | grep -qE "$PROTECTED"; then
+    if echo "$ORPHAN_PLAN" | grep -qE "$PROTECTED"; then
         say "осиротевших пакетов: ${ORPHANS}, но среди них есть важные — пропускаю"
-        apt-get -s autoremove --purge 2>/dev/null | grep '^Remv' \
-            | awk '{print "      " $2}' | head -5
+        echo "$ORPHAN_PLAN" | grep -E "$PROTECTED" | head -5 \
+            | sed 's/^/      /'
     else
         say "осиротевшие пакеты и старые ядра: ${ORPHANS} шт."
         [ "$DRY" = "0" ] && apt-get -y autoremove --purge >/dev/null 2>&1
@@ -80,8 +91,12 @@ fi
 for pkg in linux-firmware snapd; do
     dpkg -l "$pkg" 2>/dev/null | grep -q "^ii" || continue
 
-    PLAN=$(apt-get -s remove --purge "$pkg" 2>/dev/null | grep '^Remv' | awk '{print $2}')
+    PLAN=$(plan_of remove --purge "$pkg")
     if [ -z "$PLAN" ]; then
+        # Пакет установлен, а плана нет — это не «нечего делать», это сбой
+        # разбора. Молчать нельзя: именно на таком молчании я однажды решил,
+        # что узел чист, хотя на нём лежало полгигабайта прошивок.
+        say "$pkg установлен, но apt не показал план — пропускаю"
         continue
     fi
     if echo "$PLAN" | grep -qE "$PROTECTED"; then

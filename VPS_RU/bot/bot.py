@@ -81,6 +81,7 @@ from handlers_xray import (
     protocols_menu, awg_screen, xray_screen, switch_confirm, switch_do,
     apply_now as xray_apply_now, apps_screen, move_screen,
     connections_screen, issue_xray, send_link, drop_awg, why_locked,
+    mask_screen, mask_set,
 )
 from handlers_dnsnames import (
     names_menu, add_request as dnm_add, name_entered as dnm_name_entered,
@@ -836,6 +837,9 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "xr_apply": await xray_apply_now(update, context); return
     if data == "xr_apps": await apps_screen(update, context); return
+    if data == "xr_mask": await mask_screen(update, context); return
+    if data.startswith("xr_mask_"):
+        await mask_set(update, context, data[len("xr_mask_"):]); return
     if data == "xr_move": await move_screen(update, context); return
     if data.startswith("xr_conn_"):
         await connections_screen(update, context, data.split("_", 2)[2]); return

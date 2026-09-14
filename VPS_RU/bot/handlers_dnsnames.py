@@ -77,13 +77,15 @@ async def name_entered(update: Update, context: ContextTypes.DEFAULT_TYPE, raw):
     name, err = dn.normalize(raw)
     chat_id = update.effective_chat.id
     if err:
-        await context.bot.send_message(chat_id=chat_id, text=f"⚠️ {err}")
+        await context.bot.send_message(chat_id=chat_id, text=f"⚠️ {err}",
+                                       reply_markup=_back_kb())
         return
     if await db.get_dns_name(name):
         await context.bot.send_message(
             chat_id=chat_id,
             text=f"⚠️ Имя `{name}` уже занято. Откройте его в списке, чтобы "
-                 f"переназначить или удалить.", parse_mode=ParseMode.MARKDOWN)
+                 f"переназначить или удалить.", parse_mode=ParseMode.MARKDOWN,
+        reply_markup=_back_kb())
         return
 
     context.user_data["state"] = None
@@ -146,7 +148,8 @@ async def manual_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
         text=f"🏷 `{name}`\n\nНапишите адрес в туннеле — например, `10.13.13.5`.",
-        parse_mode=ParseMode.MARKDOWN)
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Отмена", callback_data="dnm_menu")]]))
 
 
 async def manual_entered(update: Update, context: ContextTypes.DEFAULT_TYPE, raw):
@@ -160,7 +163,8 @@ async def manual_entered(update: Update, context: ContextTypes.DEFAULT_TYPE, raw
     except Exception:
         await context.bot.send_message(chat_id=chat_id,
                                        text="⚠️ Это не похоже на адрес. Пример: `10.13.13.5`",
-                                       parse_mode=ParseMode.MARKDOWN)
+                                       parse_mode=ParseMode.MARKDOWN,
+        reply_markup=_back_kb())
         return
 
     context.user_data["state"] = None
@@ -170,7 +174,8 @@ async def manual_entered(update: Update, context: ContextTypes.DEFAULT_TYPE, raw
     await context.bot.send_message(chat_id=chat_id,
                                    text=(f"✅ `{name}` → `{ip}`\n\n{msg}" if ok
                                          else f"⚠️ {msg}"),
-                                   parse_mode=ParseMode.MARKDOWN)
+                                   parse_mode=ParseMode.MARKDOWN,
+        reply_markup=_back_kb(name))
 
 
 async def name_screen(update: Update, context: ContextTypes.DEFAULT_TYPE, name):
@@ -219,6 +224,19 @@ async def rename_request(update: Update, context: ContextTypes.DEFAULT_TYPE, nam
                       parse_mode=ParseMode.MARKDOWN)
 
 
+def _back_kb(name=None):
+    """Выход из сообщения, которым разговор закончился.
+
+    Знаем, о каком имени речь — ведём прямо к нему: человек чаще всего хочет
+    посмотреть, что получилось. Не знаем — просто к списку."""
+    rows = []
+    if name:
+        rows.append([InlineKeyboardButton(f"🏷 {name}",
+                                          callback_data=f"dnm_open_{name}")])
+    rows.append([InlineKeyboardButton("🔙 Имена", callback_data="dnm_menu")])
+    return InlineKeyboardMarkup(rows)
+
+
 async def rename_entered(update: Update, context: ContextTypes.DEFAULT_TYPE, raw):
     old = context.user_data.get("dns_old_name")
     chat_id = update.effective_chat.id
@@ -226,12 +244,14 @@ async def rename_entered(update: Update, context: ContextTypes.DEFAULT_TYPE, raw
         return
     new, err = dn.normalize(raw)
     if err:
-        await context.bot.send_message(chat_id=chat_id, text=f"⚠️ {err}")
+        await context.bot.send_message(chat_id=chat_id, text=f"⚠️ {err}",
+                                       reply_markup=_back_kb())
         return
     if await db.get_dns_name(new):
         await context.bot.send_message(chat_id=chat_id,
                                        text=f"⚠️ Имя `{new}` уже занято.",
-                                       parse_mode=ParseMode.MARKDOWN)
+                                       parse_mode=ParseMode.MARKDOWN,
+        reply_markup=_back_kb(old))
         return
     context.user_data["state"] = None
     context.user_data["dns_old_name"] = None
@@ -244,7 +264,8 @@ async def rename_entered(update: Update, context: ContextTypes.DEFAULT_TYPE, raw
     await context.bot.send_message(
         chat_id=chat_id,
         text=(f"✅ `{old}` теперь `{new}`\n\n{msg}" if ok else f"⚠️ {msg}"),
-        parse_mode=ParseMode.MARKDOWN)
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=_back_kb(new if ok else None))
 
 
 async def retarget_request(update: Update, context: ContextTypes.DEFAULT_TYPE, name):
