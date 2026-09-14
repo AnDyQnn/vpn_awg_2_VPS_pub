@@ -83,7 +83,7 @@ async def main():
     ctx = FakeContext()
 
     print("=== экран нового ключа ===")
-    text, kb = new_key_screen(ctx, "Ника")
+    text, kb = await new_key_screen(ctx, "Ника")
     buttons = [b.callback_data for row in kb.inline_keyboard for b in row]
     print([b.text for row in kb.inline_keyboard for b in row])
     assert "Xray" in text and "new_proto" in buttons
@@ -91,7 +91,7 @@ async def main():
     print("по умолчанию Xray, срок на месте: ок")
 
     ctx.user_data["proto"] = "awg"
-    text, kb = new_key_screen(ctx, "Ника")
+    text, kb = await new_key_screen(ctx, "Ника")
     assert "AmneziaWG" in text and "роутер" in text
     print("переключение на AmneziaWG объясняет, кому он нужен: ок")
 

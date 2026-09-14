@@ -57,12 +57,27 @@ async def roles_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             lines.append(f"• **{escape_md(r['name'])}** — правил {r['grants']}, "
                          f"людей {r['members']}{warn}")
 
+    # Кого выдают новому ключу. Без этого схема «закрыто всем» держится на
+    # памяти владельца: забыл записать человека — и тот ходит куда угодно.
+    default_id = await db.get_setting("default_role_id")
+    default_name = next((r["name"] for r in roles
+                         if str(r["id"]) == str(default_id)), None)
+    lines += ["", "*Новым ключам*"]
+    if default_name:
+        lines.append(f"Сразу выдаётся роль **{escape_md(default_name)}**.")
+    elif roles:
+        lines.append("_Роль не выдаётся._ Значит, новый человек окажется без "
+                     "ролей вовсе — а это полный доступ ко всему туннелю.")
     lines += ["", "_Интернет и скорость роли не трогают — только доступ к своим._"]
 
     kb = [[InlineKeyboardButton(f"{r['name']} · {r['members']} чел.",
                                 callback_data=f"role_open_{r['id']}")]
           for r in roles]
     kb.append([InlineKeyboardButton("➕ Создать роль", callback_data="role_new")])
+    if roles:
+        kb.append([InlineKeyboardButton(
+            "🆕 Роль для новых ключей" + (f" · {default_name}" if default_name else ""),
+            callback_data="role_default")])
     if roles:
         kb.append([InlineKeyboardButton("🔄 Применить на узле", callback_data="role_apply")])
     kb.append([InlineKeyboardButton("🔙 Администрирование", callback_data="svc_menu")])
@@ -125,6 +140,56 @@ async def role_screen(update: Update, context: ContextTypes.DEFAULT_TYPE, role_i
     await show_screen(query, context, "\n".join(lines),
                                   reply_markup=InlineKeyboardMarkup(kb),
                                   parse_mode=ParseMode.MARKDOWN)
+
+
+async def default_role_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Какая роль достаётся новому ключу сама."""
+    query = update.callback_query
+    roles = await db.list_roles()
+    cur = await db.get_setting("default_role_id")
+
+    lines = ["🆕 **Роль для новых ключей**", "",
+             "Роли только сужают: у кого ролей нет — тот ходит по туннелю куда "
+             "угодно. Значит, новый человек без роли получает полный доступ, и "
+             "заметить это можно только сверив списки вручную.", ""]
+    cur_name = next((r["name"] for r in roles if str(r["id"]) == str(cur)), None)
+    lines.append(f"Сейчас: **{escape_md(cur_name)}**" if cur_name
+                 else "Сейчас: _не выдаётся_")
+
+    kb = []
+    for r in roles:
+        mark = "✅ " if str(r["id"]) == str(cur) else ""
+        warn = "" if r["grants"] else " · ничего не открывает"
+        kb.append([InlineKeyboardButton(f"{mark}{r['name']}{warn}",
+                                        callback_data=f"role_defset_{r['id']}")])
+    if cur:
+        kb.append([InlineKeyboardButton("✖️ Не выдавать роль",
+                                        callback_data="role_defset_0")])
+    kb.append(_back())
+
+    await show_screen(query, context, chr(10).join(lines),
+                      reply_markup=InlineKeyboardMarkup(kb),
+                      parse_mode=ParseMode.MARKDOWN)
+
+
+async def default_role_set(update: Update, context: ContextTypes.DEFAULT_TYPE,
+                           role_id: int):
+    """Ставит роль по умолчанию. Задним числом никого не трогает: уже выданные
+    ключи остаются как есть — менять права людям без спроса нельзя."""
+    query = update.callback_query
+    if role_id:
+        role = await db.get_role(role_id)
+        if not role:
+            await query.answer("Роль удалена", show_alert=True)
+            return await default_role_screen(update, context)
+        await db.set_setting("default_role_id", str(role_id))
+        await db.log_event("Roles", f"Default role for new keys: {role['name']}")
+        await query.answer(f"Новым ключам — {role['name']}")
+    else:
+        await db.set_setting("default_role_id", "")
+        await db.log_event("Roles", "Default role for new keys cleared")
+        await query.answer("Роль новым ключам больше не выдаётся")
+    await default_role_screen(update, context)
 
 
 async def role_new(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -393,6 +458,11 @@ async def role_delete_confirm(update, context, role_id: int):
 async def role_delete(update, context, role_id: int):
     role = await db.get_role(role_id)
     await db.delete_role(role_id)
+    # Если её выдавали новым ключам — настройка осталась бы указывать в пустоту,
+    # и каждый следующий ключ молча получал бы полный доступ.
+    if str(await db.get_setting("default_role_id") or "") == str(role_id):
+        await db.set_setting("default_role_id", "")
+        await db.log_event("Roles", "Роль для новых ключей снята вместе с ролью")
     await db.log_event("Roles", f"Удалена роль {role['name'] if role else role_id}")
     await _apply_and_answer(update, context, None, "роль удалена")
 

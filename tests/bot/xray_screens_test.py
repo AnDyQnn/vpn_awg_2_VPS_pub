@@ -79,6 +79,15 @@ class FakeUpdate:
 async def main():
     await db.connect()
     await db.execute("DELETE FROM users WHERE uuid LIKE 'sc-%'")
+
+    # Экран перевода считает людей по всей базе, а база общая: соседние тесты
+    # оставляют своих, и «Не выдавали: 1» превращается в 2. Значит, условие
+    # надо создать, а не надеяться на порядок запуска. Забираем и возвращаем.
+    saved_users = await db.fetch_all(
+        "SELECT * FROM users WHERE is_active AND uuid NOT LIKE 'sc-%'")
+    saved_xray = await db.fetch_all("SELECT * FROM xray_users")
+    await db.execute("DELETE FROM xray_users")
+    await db.execute("UPDATE users SET is_active=FALSE WHERE uuid NOT LIKE 'sc-%'")
     for uid, name in (("sc-1", "Ника"), ("sc-2", "Папа")):
         await db.execute("INSERT INTO users (name, uuid, is_active) VALUES ($1,$2,TRUE)",
                          name, uid)
@@ -174,6 +183,15 @@ async def main():
     print("предупреждает, что автообновление выключено: ок")
 
     await db.execute("DELETE FROM users WHERE uuid LIKE 'sc-%'")
+
+    # Возвращаем чужих: следующий тест должен застать базу как было.
+    await db.execute("UPDATE users SET is_active=TRUE WHERE uuid = ANY($1::text[])",
+                     [u["uuid"] for u in saved_users])
+    for row in saved_xray or []:
+        cols = list(row.keys())
+        marks = ", ".join("$%d" % (n + 1) for n in range(len(cols)))
+        await db.execute("INSERT INTO xray_users (%s) VALUES (%s)"
+                         % (", ".join(cols), marks), *[row[c] for c in cols])
     print("\nВСЁ ПРОШЛО")
 
 

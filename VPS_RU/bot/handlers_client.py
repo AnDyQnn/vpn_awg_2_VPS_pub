@@ -1042,12 +1042,18 @@ async def has_unseen_changes(tg_id) -> bool:
 async def client_how_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, uuid_val: str):
     """Те же три шага, что при выдаче — человек забывает, и это нормально."""
     query = update.callback_query
-    from handlers_xray import platform_keyboard
+    from handlers_xray import platform_keyboard, instructions
+    # Показываем полный список приложений сразу. Раньше здесь была одна
+    # строка «выберите систему» и кнопки — ни одной ссылки на экране, пока
+    # не нажмёшь ещё раз. Владелец не нашёл перечень у людей, и правильно:
+    # его там не было видно.
+    text = await instructions(uuid_val)
     await query.edit_message_text(
-        "❓ **Как подключить**\n\nВыберите свою систему:",
+        text,
         reply_markup=platform_keyboard(uuid_val,
                                        back=f"client_key_manage_{uuid_val}"),
-        parse_mode=ParseMode.MARKDOWN)
+        parse_mode=ParseMode.MARKDOWN,
+        disable_web_page_preview=True)
 
 
 async def client_platform_handler(update: Update, context: ContextTypes.DEFAULT_TYPE,
