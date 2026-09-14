@@ -156,6 +156,10 @@ async def grant_add_screen(update: Update, context: ContextTypes.DEFAULT_TYPE, r
             continue
         kb.append([InlineKeyboardButton(f"{u['name']} · {ip}",
                                         callback_data=f"role_gpeer_{role_id}_{u['uuid']}")])
+    # Самый частый случай для роли администратора — открыть всё внутри
+    # туннеля. Раньше это набиралось руками.
+    kb.append([InlineKeyboardButton("🌐 Весь туннель",
+                                    callback_data=f"role_gall_{role_id}")])
     kb.append([InlineKeyboardButton("✍️ Ввести имя или адрес",
                                     callback_data=f"role_gman_{role_id}")])
     kb.append(_back(role_id))
@@ -169,6 +173,19 @@ async def grant_add_screen(update: Update, context: ContextTypes.DEFAULT_TYPE, r
     await show_screen(query, context, head,
                       reply_markup=InlineKeyboardMarkup(kb),
                       parse_mode=ParseMode.MARKDOWN)
+
+
+async def grant_whole_tunnel(update: Update, context: ContextTypes.DEFAULT_TYPE,
+                             role_id: int):
+    """Открывает всю туннельную сеть разом.
+
+    Интернета это не касается: роли ограничивают только обмен внутри туннеля,
+    а мировой трафик уходит на клиент-сервер, разрешённый до всех запретов."""
+    query = update.callback_query
+    await db.add_role_grant(role_id, cidr=str(TUNNEL_NET))
+    ok, msg = await apply_access_rules("открыт весь туннель")
+    await query.answer(msg if ok else f"Не вышло: {msg}", show_alert=not ok)
+    await role_screen(update, context, role_id)
 
 
 async def grant_name(update: Update, context: ContextTypes.DEFAULT_TYPE,

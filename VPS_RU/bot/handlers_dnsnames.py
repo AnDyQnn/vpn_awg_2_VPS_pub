@@ -189,10 +189,19 @@ async def name_screen(update: Update, context: ContextTypes.DEFAULT_TYPE, name):
              f"Сейчас отвечает: `{now}`" if now
              else "_Сейчас не отвечает: у цели нет адреса в туннеле._"]
 
-    kb = [[InlineKeyboardButton("✏️ Переименовать", callback_data=f"dnm_ren_{name}")],
-          [InlineKeyboardButton("🎯 Сменить цель", callback_data=f"dnm_re_{name}")],
-          [InlineKeyboardButton("🗑 Удалить имя", callback_data=f"dnm_del_{name}")],
-          [InlineKeyboardButton("🔙 К именам", callback_data="dnm_menu")]]
+    service = await dn.node_name()
+    kb = [[InlineKeyboardButton("✏️ Переименовать", callback_data=f"dnm_ren_{name}")]]
+    if name == service:
+        # Страница блокировки — часть самой системы: на неё принудительно
+        # уводятся закрытые сайты. Удалить её значит оставить их без адреса,
+        # поэтому кнопки удаления здесь нет вовсе, а не «есть, но ругается».
+        lines.append("")
+        lines.append("_Это страница блокировки. Переименовать можно, удалить — "
+                     "нет: на неё уводятся закрытые сайты._")
+    else:
+        kb.append([InlineKeyboardButton("🎯 Сменить цель", callback_data=f"dnm_re_{name}")])
+        kb.append([InlineKeyboardButton("🗑 Удалить имя", callback_data=f"dnm_del_{name}")])
+    kb.append([InlineKeyboardButton("🔙 К именам", callback_data="dnm_menu")])
     await show_screen(query, context, "\n".join(lines),
                       reply_markup=InlineKeyboardMarkup(kb),
                       parse_mode=ParseMode.MARKDOWN)
@@ -245,6 +254,12 @@ async def retarget_request(update: Update, context: ContextTypes.DEFAULT_TYPE, n
 
 
 async def delete_name(update: Update, context: ContextTypes.DEFAULT_TYPE, name):
+    # Нажатие могло прийти со старого экрана, открытого до переименования.
+    if name == await dn.node_name():
+        await update.callback_query.answer(
+            "Страницу блокировки удалить нельзя — на неё уводятся закрытые "
+            "сайты. Переименовать можно.", show_alert=True)
+        return await names_menu(update, context)
     await db.delete_dns_name(name)
     ok, msg = await dn.apply_names("удаление имени")
     await update.callback_query.answer(msg if ok else f"Не вышло: {msg}", show_alert=not ok)

@@ -48,6 +48,27 @@ async def peer_ip_map():
     return await _map()
 
 
+def parse_site(raw: str):
+    """Достаёт домен из чего угодно: ссылки, адреса с www, просто имени.
+
+    Возвращает (домен, ошибка). Домен приводится к нижнему регистру и без
+    `www.`: списки хранятся именно так, а человек пишет как придётся."""
+    import re
+
+    text = (raw or "").strip().lower()
+    if not text:
+        return None, "Пустая строка"
+    text = re.sub(r"^[a-z]+://", "", text)      # отрезаем протокол
+    text = text.split("/")[0].split("?")[0]     # путь и параметры не нужны
+    text = text.split("@")[-1]                  # на случай почтового вида
+    text = text.strip(".")
+    if text.startswith("www."):
+        text = text[4:]
+    if not re.match(r"^[a-z0-9а-яё-]+(\.[a-z0-9а-яё-]+)+$", text):
+        return None, "Не похоже на адрес сайта. Пример: `example.com`"
+    return text, None
+
+
 async def peer_addr_map():
     """uuid → все адреса человека: пир AmneziaWG и двойник Xray, если он есть.
     Живёт здесь же, рядом с `peer_ip_map`, чтобы точка подмены была одна."""
@@ -75,9 +96,17 @@ async def apply_filters(reason: str = ""):
             clients[ip] = cats
 
     try:
+        common = await db.get_common_filters()
+        custom = await db.get_custom_blocks()
+    except Exception:
+        common, custom = [], []
+
+    try:
         async with api_session() as session:
             async with session.post(f"{WG_API_URL}/dns/filters",
                                     json={"clients": clients,
+                                          "common": common,
+                                          "custom": custom,
                                           "bot_link": BOT_LINK["url"]}, timeout=10) as resp:
                 if resp.status != 200:
                     return False, f"узел отклонил фильтры: {await resp.text()}"
@@ -86,6 +115,10 @@ async def apply_filters(reason: str = ""):
         return False, f"узел недоступен: {e}"
 
     msg = f"Фильтры применены: под фильтром {data.get('filtered', 0)} чел."
+    if common:
+        msg += f" · общих правил: {len(common)}"
+    if custom:
+        msg += f" · свой список: {len(custom)}"
     if reason:
         msg += f" ({reason})"
     try:
@@ -113,7 +146,19 @@ async def filters_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     by_uuid = await db.get_all_filters()
     sizes = await list_sizes()
 
+    common = await db.get_common_filters()
+    custom = await db.get_custom_blocks()
+
     lines = ["🧹 **Фильтрация сайтов**", ""]
+    if common or custom:
+        parts = []
+        if common:
+            parts.append("категорий для всех: "
+                         + ", ".join(TITLES.get(c, c) for c in common))
+        if custom:
+            parts.append(f"свой список: {len(custom)}")
+        lines.append("🌍 **Общие правила** — " + "; ".join(parts))
+        lines.append("")
     if not by_uuid:
         lines += ["Фильтры никому не включены — интернет у всех открыт полностью.",
                   "",
@@ -136,7 +181,8 @@ async def filters_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lines += ["", "⚠️ _В браузере с DNS-over-HTTPS фильтр обходится: там запрос "
                   "уходит внутри HTTPS и на уровне DNS его не видно._"]
 
-    kb = [[InlineKeyboardButton("👤 Выбрать человека", callback_data="flt_pick_0")]]
+    kb = [[InlineKeyboardButton("🌍 Общие правила", callback_data="flt_common")],
+          [InlineKeyboardButton("👤 Выбрать человека", callback_data="flt_pick_0")]]
     if by_uuid:
         kb.append([InlineKeyboardButton("🔄 Применить на узле", callback_data="flt_apply")])
     kb.append([InlineKeyboardButton("🔙 Администрирование", callback_data="svc_menu")])
@@ -218,3 +264,116 @@ async def apply_now(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ok, msg = await apply_filters("применение вручную")
     await update.callback_query.answer(msg, show_alert=True)
     await filters_menu(update, context)
+
+
+# --- ОБЩИЕ ПРАВИЛА --------------------------------------------------------
+async def common_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Правила, действующие сразу на всех.
+
+    Отдельный экран, а не «выдать всем по очереди»: тридцать карточек руками —
+    это не настройка, а работа, и она разъезжается при первом же новом ключе."""
+    query = update.callback_query
+    common = await db.get_common_filters()
+    custom = await db.get_custom_blocks()
+
+    lines = ["🌍 **Общие правила**", "",
+             "Действуют на всех, кто ходит через узел, включая тех, кому "
+             "личные фильтры не включали.", ""]
+    if common:
+        lines.append("Категории: " + ", ".join(TITLES.get(c, c) for c in common))
+    else:
+        lines.append("Категории не выбраны.")
+    if custom:
+        shown = ", ".join(f"`{d}`" for d in custom[:8])
+        lines.append(f"Свой список ({len(custom)}): {shown}"
+                     + ("…" if len(custom) > 8 else ""))
+    else:
+        lines.append("Свой список пуст.")
+
+    kb = []
+    for key, title in CATEGORIES:
+        mark = "✅" if key in common else "⬜️"
+        kb.append([InlineKeyboardButton(f"{mark} {title}",
+                                        callback_data=f"flt_ctog_{key}")])
+    kb.append([InlineKeyboardButton("➕ Закрыть сайт", callback_data="flt_cadd")])
+    if custom:
+        kb.append([InlineKeyboardButton("📋 Свой список", callback_data="flt_clist")])
+    kb.append([InlineKeyboardButton("🔙 Фильтры", callback_data="flt_menu")])
+
+    await show_screen(query, context, "\n".join(lines),
+                      reply_markup=InlineKeyboardMarkup(kb),
+                      parse_mode=ParseMode.MARKDOWN)
+
+
+async def common_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE, key: str):
+    common = set(await db.get_common_filters())
+    common.symmetric_difference_update({key})
+    await db.set_common_filters(common)
+    ok, msg = await apply_filters("общие правила")
+    await update.callback_query.answer(msg if ok else f"Не вышло: {msg}",
+                                       show_alert=not ok)
+    await common_screen(update, context)
+
+
+async def custom_add_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["state"] = "awaiting_block_site"
+    await show_screen(update.callback_query, context,
+                      "➕ **Закрыть сайт**\n\nПришлите адрес: `example.com` или "
+                      "ссылку целиком — разберу сам.\n\n"
+                      "_Закроется и сам сайт, и его поддомены. Правило подействует "
+                      "на всех._",
+                      reply_markup=InlineKeyboardMarkup(
+                          [[InlineKeyboardButton("🔙 Общие правила",
+                                                 callback_data="flt_common")]]),
+                      parse_mode=ParseMode.MARKDOWN)
+
+
+async def custom_add_entered(update: Update, context: ContextTypes.DEFAULT_TYPE, raw):
+    chat_id = update.effective_chat.id
+    domain, err = parse_site(raw)
+    if err:
+        await context.bot.send_message(chat_id=chat_id, text=f"⚠️ {err}",
+                                       parse_mode=ParseMode.MARKDOWN)
+        return
+    context.user_data["state"] = None
+    await db.add_custom_block(domain)
+    ok, msg = await apply_filters(f"закрыт сайт {domain}")
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text=(f"✅ `{domain}` закрыт для всех.\n\n{msg}" if ok else f"⚠️ {msg}"),
+        reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton("🔙 Общие правила", callback_data="flt_common")]]),
+        parse_mode=ParseMode.MARKDOWN)
+
+
+async def custom_list(update: Update, context: ContextTypes.DEFAULT_TYPE, page=0):
+    """Свой список с кнопками снятия: закрыть сайт легко, снять — тоже."""
+    query = update.callback_query
+    items = await db.get_custom_blocks()
+    per = 8
+    chunk = items[page * per:(page + 1) * per]
+
+    lines = ["📋 **Свой список**", "",
+             f"Закрыто сайтов: {len(items)}. Нажмите, чтобы снять запрет."]
+    kb = [[InlineKeyboardButton(f"🗑 {d}", callback_data=f"flt_cdel_{d}")]
+          for d in chunk]
+    nav = []
+    if page:
+        nav.append(InlineKeyboardButton("←", callback_data=f"flt_cpg_{page - 1}"))
+    if (page + 1) * per < len(items):
+        nav.append(InlineKeyboardButton("→", callback_data=f"flt_cpg_{page + 1}"))
+    if nav:
+        kb.append(nav)
+    kb.append([InlineKeyboardButton("🔙 Общие правила", callback_data="flt_common")])
+
+    await show_screen(query, context, "\n".join(lines),
+                      reply_markup=InlineKeyboardMarkup(kb),
+                      parse_mode=ParseMode.MARKDOWN)
+
+
+async def custom_remove(update: Update, context: ContextTypes.DEFAULT_TYPE, domain: str):
+    await db.remove_custom_block(domain)
+    ok, msg = await apply_filters(f"снят запрет {domain}")
+    await update.callback_query.answer(msg if ok else f"Не вышло: {msg}",
+                                       show_alert=not ok)
+    await custom_list(update, context)

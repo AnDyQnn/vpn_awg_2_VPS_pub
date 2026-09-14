@@ -500,6 +500,30 @@ class Database:
     async def count_xray_users(self):
         return await self.fetch_val(
             "SELECT COUNT(*) FROM xray_users WHERE revoked_at IS NULL") or 0
+    # --- ОБЩИЕ ПРАВИЛА ФИЛЬТРАЦИИ ----------------------------------------
+    # Категории, включённые сразу всем, и свой список сайтов владельца. Лежат
+    # в настройках, а не отдельной таблицей: это одна короткая строка на всю
+    # систему, и таблица ради неё была бы лишней сущностью.
+    async def get_common_filters(self):
+        raw = await self.get_setting("filters_common")
+        return [c for c in (raw or "").split(",") if c]
+
+    async def set_common_filters(self, cats):
+        await self.set_setting("filters_common", ",".join(sorted(set(cats))))
+
+    async def get_custom_blocks(self):
+        raw = await self.get_setting("filters_custom")
+        return [d for d in (raw or "").split(",") if d]
+
+    async def add_custom_block(self, domain):
+        items = set(await self.get_custom_blocks())
+        items.add(domain)
+        await self.set_setting("filters_custom", ",".join(sorted(items)))
+
+    async def remove_custom_block(self, domain):
+        items = [d for d in await self.get_custom_blocks() if d != domain]
+        await self.set_setting("filters_custom", ",".join(items))
+
     # --- ИМЕНА ВНУТРИ ТУННЕЛЯ --------------------------------------------
     async def set_dns_name(self, name, target_uuid=None, target_ip=None, comment=None):
         """Заводит или переназначает имя. Повторный вызов с тем же именем
