@@ -777,9 +777,20 @@ async def client_regen_action(update: Update, context: ContextTypes.DEFAULT_TYPE
             await context.bot.send_message(chat_id=chat_id, text=f"❌ Не вышло: {res}",
         reply_markup=exit_kb(to_client=True))
             return
-        await query.edit_message_text("✅ Готово. Новая ссылка ниже, прежняя "
+        # Сначала отправляем ссылку и только потом объявляем об успехе.
+        # Раньше бот писал «ссылка ниже», ссылка не собиралась, и человек
+        # оставался с обещанием вместо доступа — а владелец узнавал об
+        # этом только от него.
+        sent = await send_xray_profile(context, chat_id, uuid_val)
+        if not sent:
+            await query.edit_message_text(
+                "\u26a0\ufe0f Ключ перевыпущен, но ссылку собрать не вышло."
+                "\n\nВладельцу: не задан адрес сервера для Xray — "
+                "проверьте экран «Протоколы → Xray».",
+                reply_markup=exit_kb(to_client=True))
+            return
+        await query.edit_message_text("✅ Готово. Новая ссылка выше, прежняя "
                                       "больше не работает.")
-        await send_xray_profile(context, chat_id, uuid_val)
         await context.bot.send_message(
             chat_id=chat_id, text="Что дальше?",
             reply_markup=InlineKeyboardMarkup(
