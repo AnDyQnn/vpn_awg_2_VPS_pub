@@ -101,8 +101,13 @@ def parse_question(data):
 
 
 def build_a_response(query, qend, qtype, ip, ttl=BLOCK_TTL):
-    """Ответ с адресом. На запрос не-адреса отдаём NXDOMAIN: пустой ответ
-    клиент трактует как «такого имени нет, но переспроси», и он переспрашивает."""
+    """Ответ с адресом.
+
+    На запрос другого типа — IPv6, почтовый обмен и прочее — отвечаем пустым
+    успехом, а не NXDOMAIN. Разница принципиальная: NXDOMAIN значит «такого
+    имени не существует», и клиент, спросивший сначала A, а потом AAAA (так
+    делают все современные), поверит второму ответу и решит, что имени нет
+    вовсе — хотя адрес мы ему только что отдали."""
     tid = query[0:2]
     question = query[12:qend]
     if qtype == 1:                              # A
@@ -111,7 +116,7 @@ def build_a_response(query, qend, qtype, ip, ttl=BLOCK_TTL):
         answer = (b"\xc0\x0c" + struct.pack("!HHIH", 1, 1, ttl, 4)
                   + socket.inet_aton(ip))
         return tid + flags + counts + question + answer
-    flags = struct.pack("!H", 0x8183)           # NXDOMAIN
+    flags = struct.pack("!H", 0x8180)           # имя есть, записи такого типа нет
     counts = struct.pack("!HHHH", 1, 0, 0, 0)
     return tid + flags + counts + question
 
