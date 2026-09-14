@@ -365,6 +365,86 @@ check_logs "vpn_db"
 UPDATES=$(apt-get -s upgrade 2>/dev/null | grep -Po "^Inst \K[^ ]+" | wc -l)
 [ "${UPDATES:-0}" -eq 0 ] && add_check CAT_LOGS "Системные обновления ОС" "ok" "Все установлено" || add_check CAT_LOGS "Системные обновления ОС" "warning" "Доступно $UPDATES пакетов"
 
+# --- Отчёты недельного обслуживания ---------------------------------------
+# Сборщик мусора и проверка хоста пишут свои отчёты сюда же, в volumes/flags,
+# раз в неделю. Аудит их читает, а не перемеряет: так видно не только текущее
+# состояние, но и то, что обслуживание вообще происходит. Молчащий таймер
+# раньше выглядел ровно как исправный.
+
+jget() {   # jget <файл> <поле> — одно значение из плоского JSON, без jq
+    grep -o "\"$2\"[[:space:]]*:[[:space:]]*\"\?[^,\"}]*" "$1" 2>/dev/null         | head -n 1 | sed 's/.*:[[:space:]]*"\?//; s/[[:space:]]*$//'
+}
+jint() {   # то же, но числом; мусор и пустоту считаем нулём
+    local v
+    v=$(jget "$1" "$2" | tr -d ' ')
+    case "$v" in ''|-|*[!0-9-]*) echo 0;; *) echo "$v";; esac
+}
+
+NOW_TS=$(date +%s)
+STALE_DAYS=9   # таймер недельный; девять дней — это уже пропуск, а не разброс
+
+GC_FILE="$FLAG_DIR/gc.json"
+if [ -f "$GC_FILE" ]; then
+    GC_TS=$(jint "$GC_FILE" ts)
+    GC_AGE=$(( (NOW_TS - GC_TS) / 86400 ))
+    GC_FREED=$(jint "$GC_FILE" freed_mb)
+    if [ "$GC_TS" -le 0 ]; then
+        add_check CAT_STORAGE "Уборка мусора" "warning" "Отчёт не читается — файл повреждён"
+    elif [ "$GC_AGE" -gt "$STALE_DAYS" ]; then
+        add_check CAT_STORAGE "Уборка мусора" "warning" "Последняя ${GC_AGE} дн. назад — таймер не сработал"
+    elif [ "$GC_FREED" -gt 0 ]; then
+        add_check CAT_STORAGE "Уборка мусора" "ok" "${GC_AGE} дн. назад, освободила ${GC_FREED} МБ"
+    else
+        add_check CAT_STORAGE "Уборка мусора" "ok" "${GC_AGE} дн. назад, заметного мусора не было"
+    fi
+else
+    add_check CAT_STORAGE "Уборка мусора" "warning" "Ещё не отрабатывала"
+fi
+
+HH_FILE="$FLAG_DIR/host_health.json"
+if [ -f "$HH_FILE" ]; then
+    HH_TS=$(jint "$HH_FILE" ts)
+    HH_AGE=$(( (NOW_TS - HH_TS) / 86400 ))
+    if [ "$HH_TS" -le 0 ]; then
+        add_check CAT_HOST "Недельная проверка хоста" "warning" "Отчёт не читается — файл повреждён"
+    elif [ "$HH_AGE" -gt "$STALE_DAYS" ]; then
+        add_check CAT_HOST "Недельная проверка хоста" "warning" "Последняя ${HH_AGE} дн. назад — таймер не сработал"
+    else
+        add_check CAT_HOST "Недельная проверка хоста" "ok" "${HH_AGE} дн. назад"
+    fi
+
+    # Остальное имеет смысл только если отчёт прочитался: из пустых
+    # значений нельзя делать вывод «всё в порядке».
+    if [ "$HH_TS" -gt 0 ]; then
+        # Флаг ядра после обновлений. Его не смотрел никто, а плановая перезагрузка
+        # идёт по часам и о нём не знает: если она почему-то не случилась, флаг
+        # висит неделями, и обновления лежат применёнными наполовину.
+        if [ "$(jget "$HH_FILE" reboot_required)" = "true" ]; then
+            add_check CAT_HOST "Перезагрузка после обновлений" "warning" "Требуется — плановая не применила обновления"
+        else
+            add_check CAT_HOST "Перезагрузка после обновлений" "ok" "Не требуется"
+        fi
+
+        HH_UPG=$(jint "$HH_FILE" packages_upgradable)
+        if [ "$HH_UPG" -gt 50 ]; then
+            add_check CAT_HOST "Пакеты в очереди на обновление" "warning" "${HH_UPG} шт. — ночной apt не справляется"
+        else
+            add_check CAT_HOST "Пакеты в очереди на обновление" "ok" "${HH_UPG} шт."
+        fi
+
+        # /var/log — это НЕ журнал systemd, его чистит вакуум. Здесь файлы служб,
+        # за которыми до появления ротации не следил никто.
+        HH_LOG=$(jint "$HH_FILE" var_log_mb)
+        if [ "$HH_LOG" -ge 1024 ]; then
+            add_check CAT_STORAGE "Каталог /var/log" "warning" "${HH_LOG} МБ — ротация не справляется"
+        else
+            add_check CAT_STORAGE "Каталог /var/log" "ok" "${HH_LOG} МБ"
+        fi
+    fi
+else
+    add_check CAT_HOST "Недельная проверка хоста" "warning" "Ещё не отрабатывала"
+fi
+
 # ---- ПОДГОТОВКА JSON И ИСПРАВЛЕНИЕ RACE CONDITION ----
 
 CAT_NET="[${CAT_NET%,}]"
