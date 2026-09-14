@@ -1,3 +1,4 @@
+import json
 import os
 import re
 import time
@@ -1032,6 +1033,134 @@ async def auto_reboot_loop(app):
                             except Exception: pass
             except Exception as e: print(f"DE auto-reboot error: {e}")
         await asyncio.sleep(60)
+
+# ------------------------ НЕДЕЛЬНЫЙ ОТЧЁТ ОБ ОБСЛУЖИВАНИИ ------------------------
+def _read_flag(name):
+    """Отчёт, положенный скриптом обслуживания. Нет файла — значит, не было."""
+    try:
+        with open(f"/volumes/flags/{name}") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
+def _delta(now, was, unit="%", better="меньше"):
+    """Цифра рядом с прошлой неделей. Без прошлой — просто цифра."""
+    if now is None:
+        return "—"
+    if was is None or was == now:
+        return f"{now}{unit}"
+    sign = "+" if now > was else "−"
+    return f"{now}{unit} (было {was}{unit}, {sign}{abs(now - was)}{unit})"
+
+
+def _node_block(title, health, gc):
+    lines = [f"**{title}**"]
+    if not health and not gc:
+        lines.append("_обслуживание ещё не отрабатывало_")
+        return lines, {}
+
+    snap = {}
+    if health:
+        snap["disk"] = health.get("disk_used_pct")
+        snap["upgradable"] = health.get("packages_upgradable")
+        snap["reboot"] = bool(health.get("reboot_required"))
+    if gc:
+        snap["freed"] = gc.get("freed_mb")
+    return lines, snap
+
+
+async def weekly_health_loop(app):
+    """Раз в неделю: что сделало обслуживание и что изменилось с прошлого раза."""
+    while True:
+        now_msk = get_moscow_now()
+        if not (now_msk.weekday() == 6 and now_msk.hour == 7):
+            await asyncio.sleep(600)
+            continue
+
+        today = now_msk.strftime("%Y-%m-%d")
+        try:
+            if await db.get_setting("last_weekly_health") == today:
+                await asyncio.sleep(3600)
+                continue
+            await db.set_setting("last_weekly_health", today)
+
+            prev = {}
+            try:
+                prev = json.loads(await db.get_setting("weekly_health_prev") or "{}")
+            except ValueError:
+                prev = {}
+
+            health = _read_flag("host_health.json")
+            gc = _read_flag("gc.json")
+            contract = _read_flag("contract.json")
+
+            # Германия своих отчётов показать не может — у неё нет бота. Она их
+            # просто отдаёт, а собирает и показывает мастер.
+            de_health = de_gc = None
+            try:
+                async with api_session() as session:
+                    async with session.get(f"{DE_AGENT_URL}/host/maintenance",
+                                           timeout=10) as resp:
+                        if resp.status == 200:
+                            d = await resp.json()
+                            de_health, de_gc = d.get("health"), d.get("gc")
+            except Exception:
+                pass
+
+            lines = [f"🧹 **Недельное обслуживание** · {now_msk.strftime('%d.%m')}", ""]
+            snap = {}
+
+            for title, h, g, key in (("Мастер · Россия", health, gc, "ru"),
+                                     ("Выход · Германия", de_health, de_gc, "de")):
+                block, s = _node_block(title, h, g)
+                lines += block
+                if s:
+                    was = prev.get(key, {})
+                    lines.append("Диск " + _delta(s.get("disk"), was.get("disk")))
+                    freed = s.get("freed")
+                    if freed and freed > 0:
+                        lines.append(f"Уборка освободила {freed} МБ")
+                    elif freed is not None:
+                        lines.append("Уборка: заметного мусора не было")
+                    upg = s.get("upgradable")
+                    if upg:
+                        lines.append(f"Пакетов ждёт обновления: {upg}")
+                    if s.get("reboot"):
+                        lines.append("⚠️ Нужна перезагрузка — плановая не применила обновления")
+                    snap[key] = s
+                lines.append("")
+
+            # Сверка базы с узлом: её делает только мастер, за обе стороны.
+            if contract and contract.get("answered"):
+                n_err = contract.get("error", 0)
+                n_warn = contract.get("warning", 0)
+                n_ok = contract.get("ok", 0)
+                was_err = prev.get("contract_err")
+                if n_err:
+                    lines.append(f"❗️ **Расхождений базы и узла: {n_err}**")
+                    for row in contract.get("lines") or []:
+                        if row.get("status") == "error":
+                            lines.append(f"• {row.get('name')} — {row.get('msg')}")
+                elif was_err:
+                    lines.append(f"✅ Сверка: всё сошлось ({n_ok} проверок). "
+                                 f"На прошлой неделе было расхождений: {was_err}")
+                else:
+                    lines.append(f"✅ Сверка: всё сошлось ({n_ok} проверок)")
+                if n_warn:
+                    lines.append(f"_предупреждений: {n_warn}_")
+                snap["contract_err"] = n_err
+            elif contract is not None:
+                lines.append("⚠️ Сверка базы с узлом не дала ответа")
+
+            await db.set_setting("weekly_health_prev", json.dumps(snap))
+            await notify_admin(app, text=chr(10).join(lines).strip(),
+                               parse_mode=ParseMode.MARKDOWN)
+            await db.log_event("System", "Weekly maintenance report sent.")
+        except Exception as e:
+            print(f"Недельный отчёт обслуживания: {e}")
+        await asyncio.sleep(3600)
+
 
 # ------------------------ SCHEDULED UPDATE ------------------------
 async def scheduled_update_loop(app):
