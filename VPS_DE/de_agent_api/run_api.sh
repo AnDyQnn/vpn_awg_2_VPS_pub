@@ -44,6 +44,12 @@ fi
 # цепочку INPUT здесь никто не флашит.
 iptables -C INPUT -i wg0 -s 10.13.13.1 -p tcp --dport 8000 -j ACCEPT 2>/dev/null \
     || iptables -I INPUT 1 -i wg0 -s 10.13.13.1 -p tcp --dport 8000 -j ACCEPT || true
+# Петлю пускаем обязательно и ПЕРВЫМ правилом: запрос с 127.0.0.1 приходит
+# только изнутри контейнера, снаружи его подделать нельзя. Без этого исключения
+# правило ниже отрезает панель от самого узла — и сторож, проверяющий её
+# локально, считает живую панель мёртвой.
+iptables -C INPUT -i lo -p tcp --dport 8000 -j ACCEPT 2>/dev/null \
+    || iptables -I INPUT 1 -i lo -p tcp --dport 8000 -j ACCEPT || true
 iptables -C INPUT -p tcp --dport 8000 -j DROP 2>/dev/null \
     || iptables -A INPUT -p tcp --dport 8000 -j DROP || true
 
