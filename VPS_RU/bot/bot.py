@@ -1163,10 +1163,49 @@ async def start_subscriptions():
         print(f"Подписки: сервер не поднялся: {e}")
 
 
+async def wait_for_node(timeout=90):
+    """Ждём, пока панель узла начнёт отвечать.
+
+    Узел поднимается дольше бота: настраивает сеть, наполняет наборы адресов,
+    поднимает интерфейс. Всё восстановление состояния — роли, фильтры, имена,
+    конфиг Xray — идёт через его панель, и начинать его раньше бессмысленно:
+    первый же запрос упадёт, а второй раз никто не попробует.
+
+    Возвращает True, если дождались. Не дождались — работаем дальше: бот нужен
+    владельцу и без узла, хотя бы чтобы узнать, что узел лёг.
+    """
+    from utils import WG_API_URL, api_session
+    deadline = time.monotonic() + timeout
+    attempt = 0
+    while time.monotonic() < deadline:
+        attempt += 1
+        try:
+            async with api_session() as session:
+                async with session.get(f"{WG_API_URL}/health", timeout=3) as r:
+                    if r.status == 200:
+                        if attempt > 1:
+                            print(f"Узел ответил с {attempt}-й попытки, "
+                                  f"продолжаю восстановление состояния.")
+                        return True
+        except Exception:
+            pass
+        await asyncio.sleep(2)
+    print("Узел не ответил за %d с — состояние восстановить не удалось. "
+          "Роли, фильтры, имена и Xray останутся прежними до следующей "
+          "попытки." % timeout)
+    return False
+
+
 async def post_init(application):
     state_data.setdefault("bg_tasks", set())
 
     await setup_bot_ui(application)
+
+    # Сначала дожидаемся узла: всё, что ниже, ходит через его панель, и без
+    # неё просто впустую отпечатает ошибки. Так и было — после каждого
+    # обновления узел оставался без ролей, фильтров, имён и с прежним Xray.
+    await wait_for_node()
+
     await sync_wg_config()
 
     # Чиним ключи, перевыпущенные до фикса бага (routing_version=0 при свежем конфиге)
