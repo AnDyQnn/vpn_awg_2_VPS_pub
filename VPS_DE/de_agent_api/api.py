@@ -18,8 +18,15 @@ API_TOKEN = os.getenv("API_TOKEN", "").strip()
 
 MASTER_IP = "10.13.13.1"
 
+# Пути, которые отвечают без токена. Здесь только проверка «жив ли» — она не
+# отдаёт ничего, чего не видно снаружи по самому факту ответа, зато нужна
+# сторожу, который следит за узлом изнутри и токена не знает.
+OPEN_PATHS = {"/api/health"}
+
 
 def verify_token(request: Request):
+    if request.url.path in OPEN_PATHS:
+        return
     if not API_TOKEN:
         return
     if request.headers.get("X-Api-Key", "") == API_TOKEN:
@@ -199,6 +206,14 @@ def wg_status():
         return {"status": "offline", "details": "Interface wg0 is down"}
 
 # ----------------- СИСТЕМНЫЙ МОНИТОРИНГ И УПРАВЛЕНИЕ -----------------
+
+@app.get("/api/health")
+def health():
+    """Жив ли агент. Нарочно ничего не считает и никуда не ходит: проверка
+    должна отвечать мгновенно даже тогда, когда всё остальное сломалось, —
+    иначе сторож примет медленный ответ за смерть и начнёт лечить здоровое."""
+    return {"status": "ok"}
+
 
 @app.get("/api/system_stats")
 def get_system_stats():
