@@ -370,35 +370,66 @@ async def person_state(uuid_val):
     return state
 
 
-# --- ПРИЛОЖЕНИЯ -----------------------------------------------------------
-# Только названия, без ссылок: отправлять человека по ссылке, которую никто не
-# проверял, нельзя. Ссылки владелец добавляет сам, когда утверждает список.
-DEFAULT_APPS = {
-    "iPhone / iPad": ["Streisand", "V2Box", "Shadowrocket (платное)"],
-    "Android": ["v2rayNG", "Hiddify", "NekoBox"],
-    "Windows": ["Hiddify", "v2rayN", "NekoRay"],
-    "macOS": ["Streisand", "V2Box", "Hiddify"],
-    "Linux": ["Hiddify", "NekoRay"],
+# --- ПРИЛОЖЕНИЕ -----------------------------------------------------------
+# Клиент один на все платформы — Happ. Человеку, которому выдают VPN, выбор не
+# нужен, ему нужно, чтобы заработало; одинаковая инструкция для всех дешевле
+# любого списка альтернатив.
+#
+# Ссылки официальные, из репозитория проекта. Для iPhone их две: в российском
+# магазине лежит отдельное издание, и по ссылке на глобальное оно не ставится.
+APPS = {
+    "iPhone / iPad": [
+        ("App Store",
+         "https://apps.apple.com/us/app/happ-proxy-utility/id6504287215"),
+        ("App Store · российский аккаунт",
+         "https://apps.apple.com/ru/app/happ-proxy-utility-plus/id6746188973"),
+    ],
+    "Android": [
+        ("Google Play",
+         "https://play.google.com/store/apps/details?id=com.happproxy"),
+        ("Файлом, если Play недоступен",
+         "https://github.com/Happ-proxy/happ-android/releases/latest/download/Happ.apk"),
+    ],
+    "Windows": [
+        ("Установщик",
+         "https://github.com/Happ-proxy/happ-desktop/releases/latest/download/setup-Happ.x64.exe"),
+    ],
+    "macOS": [
+        ("Образ",
+         "https://github.com/Happ-proxy/happ-desktop/releases/latest/download/Happ.macOS.universal.dmg"),
+    ],
+    "Linux": [
+        ("deb",
+         "https://github.com/Happ-proxy/happ-desktop/releases/latest/download/Happ.linux.x64.deb"),
+        ("rpm",
+         "https://github.com/Happ-proxy/happ-desktop/releases/latest/download/Happ.linux.x64.rpm"),
+        ("Arch",
+         "https://github.com/Happ-proxy/happ-desktop/releases/latest/download/Happ.linux.x64.pkg.tar.zst"),
+    ],
 }
 
 
 async def apps_list():
-    """Список приложений по платформам. Свой, если владелец его правил."""
+    """Приложения по платформам. Свой список, если владелец его правил."""
     raw = await db.get_setting("xray_apps")
     if raw:
         try:
             return json.loads(raw)
         except Exception:
             pass
-    return DEFAULT_APPS
+    return APPS
 
 
-async def apps_approved():
-    """Показывать ли список людям.
+def apps_markdown(apps=None):
+    """Готовый кусок сообщения со ссылками.
 
-    Пока владелец его не утвердил, человек видит только ссылку: советовать
-    родственникам приложения, которых никто не смотрел, — плохая идея."""
-    return (await db.get_setting("xray_apps_ok")) == "1"
+    Ссылки оформлены подписью, а не голым адресом: в адресах бывают знаки,
+    которые Telegram принимает за разметку и ломает ссылку."""
+    lines = []
+    for platform, items in (apps or APPS).items():
+        links = " · ".join(f"[{label}]({url})" for label, url in items)
+        lines.append(f"  • **{platform}**: {links}")
+    return "\n".join(lines)
 
 
 async def qr_file(uuid_val):

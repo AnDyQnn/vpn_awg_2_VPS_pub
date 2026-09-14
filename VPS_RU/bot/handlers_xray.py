@@ -127,20 +127,15 @@ async def send_link(update: Update, context: ContextTypes.DEFAULT_TYPE, uuid_val
         return
     qr = await xray.qr_file(uuid_val)
 
-    text = ("🔑 **Ваш доступ к VPN**\n\n"
-            "1. Поставьте приложение для VPN\n"
-            "2. Отсканируйте картинку ниже или нажмите на ссылку — профиль "
-            "добавится сам\n"
-            "3. Включите VPN в приложении\n\n"
-            "⚠️ Ссылка личная. По ней подключаются к вашему доступу — "
-            "не передавайте её никому.")
+    text = await instructions(uuid_val)
 
     from delivery import track_send
     sent = 0
     for tid in (user.get("tg_ids") or []):
         async def _send(tid=tid):
             await context.bot.send_message(chat_id=tid, text=text,
-                                           parse_mode=ParseMode.MARKDOWN)
+                                           parse_mode=ParseMode.MARKDOWN,
+                                           disable_web_page_preview=True)
             if qr:
                 await context.bot.send_photo(chat_id=tid, photo=open(qr, "rb"))
             # Ссылку отдельным сообщением и без разметки: подчёркивания в
@@ -259,8 +254,7 @@ async def xray_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
              ""]
     lines.append(f"Подписки: `{escape_md(base)}`" if base
                  else "Подписки: _адрес не задан, автообновление выключено_")
-    lines.append("Приложения: " + ("список утверждён" if await xray.apps_approved()
-                                   else "_список не утверждён, людям не показывается_"))
+    lines.append("Приложение: Happ, ссылки на все системы")
 
     kb = [[InlineKeyboardButton("🔄 Применить конфиг заново", callback_data="xr_apply")],
           [InlineKeyboardButton("📱 Приложения", callback_data="xr_apps")]]
@@ -284,34 +278,20 @@ async def apply_now(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def apps_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """То же, что видит человек. Показывается владельцу, чтобы он мог глазами
+    проверить, куда именно отправляет родню."""
     query = update.callback_query
-    apps = await xray.apps_list()
-    approved = await xray.apps_approved()
+    lines = ["📱 **Приложение Happ**", "",
+             "Один клиент на все платформы — его ссылки и уходят людям "
+             "вместе с профилем:", "",
+             xray.apps_markdown(await xray.apps_list()), "",
+             "_Ссылки официальные: магазины приложений и релизы разработчика._"]
 
-    lines = ["📱 **Приложения по платформам**", ""]
-    for platform, names in apps.items():
-        lines.append(f"**{platform}**: " + escape_md(", ".join(names)))
-    lines += ["",
-              "Ссылок здесь намеренно нет: отправлять человека по ссылке, "
-              "которую никто не проверял, нельзя. Названия ищутся в магазине "
-              "приложений.", ""]
-    lines.append("Список **утверждён** и показывается людям." if approved
-                 else "Список **не утверждён**: человек видит только ссылку на "
-                      "профиль, без советов, что ставить.")
-
-    kb = [[InlineKeyboardButton("🚫 Снять утверждение" if approved
-                                else "✅ Утвердить список", callback_data="xr_apps_ok")],
-          [InlineKeyboardButton("🔙 Xray", callback_data="proto_xray")]]
+    kb = [[InlineKeyboardButton("🔙 Xray", callback_data="proto_xray")]]
     await show_screen(query, context, "\n".join(lines),
                       reply_markup=InlineKeyboardMarkup(kb),
-                      parse_mode=ParseMode.MARKDOWN)
-
-
-async def apps_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    now = await xray.apps_approved()
-    await db.set_setting("xray_apps_ok", "0" if now else "1")
-    await update.callback_query.answer("Снято" if now else "Утверждено")
-    await apps_screen(update, context)
+                      parse_mode=ParseMode.MARKDOWN,
+                      disable_preview=True)
 
 
 # --- ВЫКЛЮЧАТЕЛИ ----------------------------------------------------------
@@ -396,13 +376,8 @@ async def instructions(uuid_val=None):
     Список приложений появляется, только если владелец его утвердил: советовать
     родственникам программы, которых никто не смотрел, нельзя."""
     lines = ["🔑 **Ваш доступ к VPN**", ""]
-    if await xray.apps_approved():
-        lines.append("**1.** Поставьте приложение — найдите в магазине по названию:")
-        for platform, names in (await xray.apps_list()).items():
-            lines.append(f"  • {platform}: {escape_md(', '.join(names))}")
-    else:
-        lines.append("**1.** Поставьте приложение для VPN "
-                     "(какое именно — подскажет тот, кто выдал ключ)")
+    lines.append("**1.** Поставьте приложение **Happ** — выберите свою систему:")
+    lines.append(xray.apps_markdown(await xray.apps_list()))
     lines += [
         "**2.** Отсканируйте картинку ниже или нажмите на ссылку — "
         "профиль добавится сам",
@@ -445,7 +420,8 @@ async def handout(update, context, uuid_val, name, tg_id=None):
 
         async def _send():
             await context.bot.send_message(chat_id=tg_id, text=text,
-                                           parse_mode=ParseMode.MARKDOWN)
+                                           parse_mode=ParseMode.MARKDOWN,
+                                           disable_web_page_preview=True)
             if qr:
                 await context.bot.send_photo(chat_id=tg_id, photo=open(qr, "rb"))
             await context.bot.send_message(chat_id=tg_id, text=link)

@@ -294,7 +294,8 @@ def is_agent(name) -> bool:
     return (name or "").strip().upper() == AGENT_PEER_NAME
 
 
-async def show_screen(query, context, text, reply_markup=None, parse_mode=None):
+async def show_screen(query, context, text, reply_markup=None, parse_mode=None,
+                      disable_preview=False):
     """Показывает экран поверх текущего сообщения.
 
     Если текущее сообщение — картинка (например график), редактировать текст
@@ -311,8 +312,9 @@ async def show_screen(query, context, text, reply_markup=None, parse_mode=None):
 
     if not is_media:
         try:
-            return await query.edit_message_text(text, reply_markup=reply_markup,
-                                                 parse_mode=parse_mode)
+            return await query.edit_message_text(
+                text, reply_markup=reply_markup, parse_mode=parse_mode,
+                disable_web_page_preview=disable_preview)
         except Exception as e:
             low = str(e).lower()
             if "no text" not in low and "can't be edited" not in low and "not modified" not in low:
@@ -328,7 +330,8 @@ async def show_screen(query, context, text, reply_markup=None, parse_mode=None):
             pass
     return await context.bot.send_message(chat_id=chat_id, text=text,
                                           reply_markup=reply_markup,
-                                          parse_mode=parse_mode)
+                                          parse_mode=parse_mode,
+                                          disable_web_page_preview=disable_preview)
 
 
 def deregister_menu(chat_id):
