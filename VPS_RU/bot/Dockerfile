@@ -51,4 +51,8 @@ RUN ok=0; \
 
 COPY . .
 
+# Без буфера: иначе docker logs пуст первые минуты после запуска —
+# ровно тогда, когда в него и смотрят.
+ENV PYTHONUNBUFFERED=1
+
 CMD ["python", "bot.py"]
