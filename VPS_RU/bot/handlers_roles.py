@@ -21,7 +21,7 @@ from telegram.ext import ContextTypes
 
 from acl import apply_access_rules, peer_ip_map, grant_text
 from database import db
-from utils import escape_md, show_screen
+from utils import exit_kb, escape_md, show_screen
 
 TUNNEL_NET = ipaddress.ip_network("10.13.13.0/24")
 MASTER_IP = ipaddress.ip_address("10.13.13.1")
@@ -451,11 +451,13 @@ async def handle_role_text(update, context, state: str) -> bool:
     if state == "awaiting_role_name":
         context.user_data["state"] = None
         if not text:
-            await context.bot.send_message(chat_id, "Пустое название — отменил.")
+            await context.bot.send_message(chat_id, "Пустое название — отменил.",
+        reply_markup=exit_kb(("👥 Роли", "roles_menu")))
             return True
         role_id = await db.create_role(text[:40])
         if not role_id:
-            await context.bot.send_message(chat_id, "Роль с таким названием уже есть.")
+            await context.bot.send_message(chat_id, "Роль с таким названием уже есть.",
+        reply_markup=exit_kb(("👥 Роли", "roles_menu")))
             return True
         await db.log_event("Roles", f"Создана роль {text[:40]}")
         kb = [[InlineKeyboardButton("➕ Открыть доступ",

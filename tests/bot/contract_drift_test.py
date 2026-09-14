@@ -160,6 +160,22 @@ node_state(peers=[{"uuid": "uuid-a", "allowed_ips": "10.13.13.2/32"},
 expect("Имена внутри туннеля", "error", "дом")
 
 print()
+print("=== выходной узел: маршрут по умолчанию вместо адреса ===")
+# Та самая раскладка с боевого мастера. Раньше здесь получалось две ложные
+# тревоги сразу: «адрес 0.0.0.0 без счётчика» и «пира Германии нет на узле».
+node_state(peers=[{"uuid": "uuid-a", "allowed_ips": "10.13.13.2/32"},
+                  {"uuid": "uuid-b", "allowed_ips": "10.13.13.3/32"},
+                  {"uuid": "DE_AGENT", "allowed_ips": "0.0.0.0/0",
+                   "latest_handshake": int(__import__("time").time()) - 58}],
+           acct={"10.13.13.2": {}, "10.13.13.3": {}},
+           xray={"has_config": True, "up": True})
+NODE["/health"] = {"status": "ok"}
+NODE["/host/deploy_status"] = {"ts": 1, "hash": "abcdef1"}
+nc.de_get = lambda path: NODE[path]
+expect("Учёт трафика по адресам", "ok", "2 адресов")
+expect("Туннель до Германии", "ok", "рукопожатие")
+
+print()
 print("=== узел не отвечает вовсе ===")
 NODE.clear()
 expect("Пиры: база против узла", "error", "не удалось сверить")

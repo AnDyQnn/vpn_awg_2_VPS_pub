@@ -157,7 +157,9 @@ async def generate_vpn_graph():
 # И почему пара вообще нужна: узел упирается в ПАКЕТЫ, а не в мегабиты. В момент
 # торрента скорость может даже снизиться, а пакеты — стоять в потолке. На одной
 # панели это выглядело бы как «нагрузка упала», на двух видно, что сервер задыхается.
-NODE_CEILING = 7500      # замеренный потолок узла, клиентских пакетов в секунду
+# Потолок узла считается по факту и живёт в одном месте на весь проект:
+# см. node_ceiling() в insights.py. Раньше цифра была вписана здесь и
+# ещё раз на экране нагрузки — разойтись они могли молча.
 
 
 def _fmt_int(n):
@@ -228,7 +230,9 @@ async def generate_load_graph(hours=24, uuid=None, title=None, limit_line=None):
             ax2.plot(times, peaks, color=PALETTE[7], lw=1.2, ls=(0, (3, 3)), label="Пик в часе")
         ax2.set_ylabel("Пакеты в секунду", fontsize=10.5)
 
-        ref = limit_line if limit_line else (None if uuid else NODE_CEILING)
+        from insights import node_ceiling
+        ref = limit_line if limit_line else (
+            None if uuid else await node_ceiling())
         if ref:
             ax2.axhline(ref, color=PALETTE[4], lw=1.4, ls=(0, (5, 4)))
             ax2.text(times[0], ref * .95,

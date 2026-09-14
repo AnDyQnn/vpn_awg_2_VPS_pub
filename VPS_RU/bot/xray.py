@@ -27,7 +27,16 @@ from utils import WG_API_URL, api_session
 DEFAULT_PORT = 443
 # Чужой сайт, под который маскируется рукопожатие. Должен быть крупным,
 # доступным из России и поддерживать TLS 1.3.
-DEFAULT_DEST = "www.microsoft.com"
+# Домен, которым прикидывается вход.
+#
+# Узел стоит в России — значит и маска должна быть своя: домашний хостинг,
+# отдающий www.microsoft.com, выглядит страннее, чем отдающий объявления.
+# Замерено с самого узла: avito 86 мс против microsoft 261. Отклик видит не
+# клиент, а проверяющий, которого туда переадресуют, — медленный ответ сам по
+# себе примета.
+#
+# Меняется из бота, экран «Маска входа», там же замеры по остальным.
+DEFAULT_DEST = "avito.ru"
 
 
 async def settings():
@@ -61,8 +70,19 @@ async def ensure_keys():
         print(f"Xray: не удалось получить ключи: {e}")
         return None
 
-    private = keys.get("privatekey") or keys.get("private_key")
-    public = keys.get("password") or keys.get("publickey") or keys.get("public_key")
+    # Имена полей у генератора меняются от версии к версии: было «Private key»
+    # и «Public key», в 26.3 стало «PrivateKey» и «Password (PublicKey)».
+    # Поэтому ищем по смыслу, а не по точному совпадению — иначе следующее
+    # переименование снова оставит человека без ключа.
+    def _find(*hints):
+        for name, value in keys.items():
+            plain = name.replace("_", "").replace("(", "").replace(")", "")
+            if all(h in plain for h in hints):
+                return value
+        return None
+
+    private = _find("private")
+    public = _find("public") or keys.get("password")
     if not private or not public:
         print(f"Xray: узел вернул неожиданный формат ключей: {list(keys)}")
         return None

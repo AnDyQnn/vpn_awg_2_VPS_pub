@@ -23,6 +23,11 @@ import urllib.request
 
 sys.path.insert(0, "/app")
 
+# Подсеть туннеля: всё, что вне её, адресом пира не является. Нужна, чтобы
+# отличить настоящий адрес от маршрута по умолчанию у выходного узла.
+TUNNEL_PREFIX = "10.13.13."
+EXIT_ROUTE = "0.0.0.0/0"
+
 WG_API_URL = os.getenv("WG_API_URL", "http://127.0.0.1:8000/api")
 DE_AGENT_URL = os.getenv("DE_AGENT_URL", "http://10.13.13.254:8000/api")
 API_TOKEN = os.getenv("API_TOKEN", "").strip()
@@ -152,9 +157,11 @@ async def main():
     try:
         acct = node_get("/accounting").get("peers") or {}
         peers = node_get("/peers")
+        # Только адреса внутри туннеля. У выходного узла в этом поле стоит
+        # маршрут по умолчанию — счётчика на него нет и быть не должно.
         addrs = {p.get("allowed_ips", "").split("/")[0]
                  for p in peers if p.get("allowed_ips")}
-        addrs.discard("")
+        addrs = {a for a in addrs if a.startswith(TUNNEL_PREFIX)}
         blind = addrs - set(acct)
         if blind:
             say("error", "Учёт трафика по адресам",
@@ -178,8 +185,13 @@ async def main():
     # если он молчит, именно здесь и написано почему.
     try:
         peers = node_get("/peers")
+        # Выходной узел узнаём по маршруту по умолчанию: он единственный, кому
+        # разрешено принимать весь трафик. По адресу 10.13.13.254 его искать
+        # нельзя — узел отдаёт только первую из разрешённых сетей, а первой
+        # стоит как раз маршрут.
         de_peer = [p for p in peers
-                   if p.get("allowed_ips", "").startswith("10.13.13.254")]
+                   if EXIT_ROUTE in p.get("allowed_ips", "")
+                   or p.get("allowed_ips", "").startswith("10.13.13.254")]
         if not de_peer:
             say("error", "Туннель до Германии", "пира Германии нет на узле")
         elif not de_peer[0].get("latest_handshake"):

@@ -6,7 +6,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from telegram.constants import ParseMode
 
-from utils import escape_md, stop_bg_tasks, deregister_menu, ADMIN_ID, CONFIGS_DIR, WG_API_URL, dt_to_moscow, api_session
+from utils import exit_kb, escape_md, stop_bg_tasks, deregister_menu, ADMIN_ID, CONFIGS_DIR, WG_API_URL, dt_to_moscow, api_session
 from database import db
 from acl import grant_text
 from delivery import track_send, describe as delivery_text
@@ -422,7 +422,8 @@ async def finish_key_creation(update: Update, context: ContextTypes.DEFAULT_TYPE
             context.user_data["proto"] = "xray"
             return
         
-        await context.bot.send_message(chat_id=chat_id, text=f"✅ **Ключ сгенерирован!**\n\nВы можете добавить его в приложение AmneziaWG.", parse_mode=ParseMode.MARKDOWN)
+        await context.bot.send_message(chat_id=chat_id, text=f"✅ **Ключ сгенерирован!**\n\nВы можете добавить его в приложение AmneziaWG.", parse_mode=ParseMode.MARKDOWN,
+        reply_markup=exit_kb(("👥 Люди", "list_users")))
         await context.bot.send_document(chat_id=chat_id, document=open(c_path, "rb"), caption=f"📄 {name}")
         await context.bot.send_photo(chat_id=chat_id, photo=open(q_path, "rb"))
         
@@ -437,9 +438,11 @@ async def finish_key_creation(update: Update, context: ContextTypes.DEFAULT_TYPE
 
             ok, err = await track_send(new_uid, tg_id, _send_to_client)
             if ok:
-                await context.bot.send_message(chat_id=chat_id, text=f"✅ Конфиг и меню успешно отправлены клиенту `{tg_id}`.")
+                await context.bot.send_message(chat_id=chat_id, text=f"✅ Конфиг и меню успешно отправлены клиенту `{tg_id}`.",
+        reply_markup=exit_kb(("👥 Люди", "list_users")))
             else:
-                await context.bot.send_message(chat_id=chat_id, text=f"⚠️ Клиент `{tg_id}` не получил конфиг (возможно, он не запустил бота командой /start):\n`{err}`", parse_mode=ParseMode.MARKDOWN)
+                await context.bot.send_message(chat_id=chat_id, text=f"⚠️ Клиент `{tg_id}` не получил конфиг (возможно, он не запустил бота командой /start):\n`{err}`", parse_mode=ParseMode.MARKDOWN,
+        reply_markup=exit_kb(("👥 Люди", "list_users")))
         
         keyboard = [[InlineKeyboardButton("🔙 В главное меню", callback_data="back_to_main")]]
         await context.bot.send_message(chat_id=chat_id, text="Готово! Что делаем дальше?", reply_markup=InlineKeyboardMarkup(keyboard))

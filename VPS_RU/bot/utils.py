@@ -334,6 +334,26 @@ async def show_screen(query, context, text, reply_markup=None, parse_mode=None,
                                           disable_web_page_preview=disable_preview)
 
 
+def exit_kb(*extra, to_client=False):
+    """Клавиатура для сообщения, которым разговор закончился.
+
+    Такое сообщение обязано иметь выход: иначе человек упирается в него и лезет
+    листать чат вверх в поисках чего-нибудь нажимаемого. `extra` — пары
+    (подпись, callback) для более точного возврата: к тому, что только что
+    получилось, а не просто в начало.
+    """
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    rows = [[InlineKeyboardButton(title, callback_data=data)]
+            for title, data in extra]
+    if to_client:
+        rows.append([InlineKeyboardButton("🏠 Личный кабинет",
+                                          callback_data="client_menu")])
+    else:
+        rows.append([InlineKeyboardButton("🔙 Главное меню",
+                                          callback_data="back_to_main")])
+    return InlineKeyboardMarkup(rows)
+
+
 def deregister_menu(chat_id):
     if chat_id in state_data["active_menus"]:
         del state_data["active_menus"][chat_id]

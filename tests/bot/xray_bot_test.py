@@ -110,7 +110,11 @@ async def main():
 
     print("\n=== маскировка ===")
     rs = cfg["inbounds"][0]["streamSettings"]["realitySettings"]
-    assert rs["privateKey"] == "PRIV-TEST" and rs["serverNames"] == ["www.microsoft.com"]
+    # Не вписанная строка, а то, что реально настроено: маску меняют, и тест
+    # не должен падать из-за этого, иначе его однажды просто выключат.
+    dest = (await xray.settings())["dest"]
+    assert rs["privateKey"] == "PRIV-TEST" and rs["serverNames"] == [dest], rs
+    assert dest, "маска не задана вовсе"
     assert cfg["inbounds"][0]["port"] == 443
     print("Reality настроен, порт 443, ключ от узла: ок")
 
