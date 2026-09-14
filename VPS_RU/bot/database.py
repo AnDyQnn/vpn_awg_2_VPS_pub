@@ -242,6 +242,24 @@ class Database:
             await self.execute(
                 "CREATE INDEX IF NOT EXISTS idx_traffic_hourly_hour ON traffic_hourly(hour);")
 
+            # --- ИМЕНА ВНУТРИ ТУННЕЛЯ ---
+            # Имя ведёт либо на человека, либо на конкретный адрес. На человека —
+            # основной случай: адрес подставляется живым, и перевыпуск ключа имя
+            # не ломает. На адрес — для того, что пиром не является.
+            #
+            # ON DELETE CASCADE: удалили человека — его имя уходит с ним, иначе
+            # оно осталось бы висеть и однажды указало бы на чужой адрес.
+            await self.execute("""
+                CREATE TABLE IF NOT EXISTS dns_names (
+                    name TEXT PRIMARY KEY,
+                    target_uuid TEXT REFERENCES users(uuid) ON DELETE CASCADE,
+                    target_ip TEXT,
+                    comment TEXT,
+                    created_at TIMESTAMP DEFAULT NOW(),
+                    CHECK (target_uuid IS NOT NULL OR target_ip IS NOT NULL)
+                );
+            """)
+
             # --- ФИЛЬТРАЦИЯ САЙТОВ ---
             # Категории на человека, а не на роль: роль про домашние сервисы,
             # фильтр про внешний интернет, и людям они назначаются по разной
@@ -389,6 +407,42 @@ class Database:
         await self.execute("DELETE FROM pending_retire WHERE old_uuid=$1", old_uuid)
 
     # ------------------------ КОНТРОЛЬ НАГРУЗКИ ------------------------
+    # --- ИМЕНА ВНУТРИ ТУННЕЛЯ --------------------------------------------
+    async def set_dns_name(self, name, target_uuid=None, target_ip=None, comment=None):
+        """Заводит или переназначает имя. Повторный вызов с тем же именем
+        меняет, куда оно ведёт, — это и есть «переименовать цель»."""
+        await self.execute(
+            """INSERT INTO dns_names (name, target_uuid, target_ip, comment)
+               VALUES ($1,$2,$3,$4)
+               ON CONFLICT (name) DO UPDATE SET
+                   target_uuid=$2, target_ip=$3, comment=$4""",
+            name, target_uuid, target_ip, comment)
+
+    async def rename_dns_name(self, old_name, new_name):
+        """Меняет само имя, сохраняя цель."""
+        await self.execute("UPDATE dns_names SET name=$2 WHERE name=$1",
+                           old_name, new_name)
+
+    async def delete_dns_name(self, name):
+        await self.execute("DELETE FROM dns_names WHERE name=$1", name)
+
+    async def get_dns_name(self, name):
+        rows = await self.fetch_all(
+            "SELECT name, target_uuid, target_ip, comment FROM dns_names WHERE name=$1",
+            name)
+        return dict(rows[0]) if rows else None
+
+    async def list_dns_names(self):
+        """Все имена с подписью цели — для экрана и для раскладки на узел."""
+        rows = await self.fetch_all(
+            """SELECT n.name, n.target_uuid, n.target_ip, n.comment, u.name AS person
+               FROM dns_names n LEFT JOIN users u ON u.uuid = n.target_uuid
+               ORDER BY n.name""")
+        return [dict(r) for r in rows]
+
+    async def count_dns_names(self):
+        return await self.fetch_val("SELECT COUNT(*) FROM dns_names") or 0
+
     # --- ФИЛЬТРАЦИЯ САЙТОВ -----------------------------------------------
     async def get_user_filters(self, uuid):
         rows = await self.fetch_all(

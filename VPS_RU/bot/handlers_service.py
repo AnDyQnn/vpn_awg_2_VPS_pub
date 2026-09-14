@@ -151,6 +151,14 @@ async def service_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         filtered = await db.count_filtered_users()
     except Exception:
         filtered = 0
+    try:
+        names_count = await db.count_dns_names()
+    except Exception:
+        names_count = 0
+    lines.append("🏷 *Имена в туннеле:* "
+                 + (f"заведено {names_count}" if names_count
+                    else "нет, ходим по адресам"))
+
     lines.append("🧹 *Фильтрация сайтов:* "
                  + (f"включена у {filtered} чел." if filtered
                     else "никому не включена"))
@@ -171,6 +179,7 @@ async def service_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🔑 Переезд на новый ключ", callback_data="mig_menu")],
         [InlineKeyboardButton("🛡 Доступы · роли", callback_data="roles_menu"),
          InlineKeyboardButton("🧹 Фильтры", callback_data="flt_menu")],
+        [InlineKeyboardButton("🏷 Имена в туннеле", callback_data="dnm_menu")],
         [InlineKeyboardButton(
             "📋 Ждут решения" + (f" · {len(decisions)}" if decisions else ""),
             callback_data="kd_list"),
