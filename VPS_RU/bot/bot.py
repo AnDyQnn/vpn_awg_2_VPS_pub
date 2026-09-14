@@ -941,7 +941,7 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("🔙 Отмена", callback_data="back_to_main")],
         ]
         await query.edit_message_text(
-            "📢 **Рассылка всем пользователям**\n\nВыбери, что отправить:",
+            "📢 **Рассылка всем пользователям**\n\nВыберите, что отправить:",
             reply_markup=InlineKeyboardMarkup(kb), parse_mode=ParseMode.MARKDOWN)
         return
     if data == "broadcast_custom":

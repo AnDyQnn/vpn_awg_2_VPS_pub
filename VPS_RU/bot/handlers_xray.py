@@ -79,7 +79,7 @@ async def connections_screen(update: Update, context: ContextTypes.DEFAULT_TYPE,
     kb = []
     if state["has_xray"]:
         kb.append([InlineKeyboardButton("📨 Выслать ссылку", callback_data=f"xr_send_{uuid_val}")])
-        kb.append([InlineKeyboardButton("♻️ Перевыпустить (старая умрёт)",
+        kb.append([InlineKeyboardButton("♻️ Перевыпустить ссылку",
                                         callback_data=f"xr_issue_{uuid_val}")])
         # Отключить AmneziaWG можно только тому, кто уже доехал по Xray.
         if state["awg_ip"]:
