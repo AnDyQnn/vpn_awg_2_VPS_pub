@@ -1150,6 +1150,19 @@ XRAY_BIN = "/usr/local/bin/xray"
 XRAY_CONF = f"{CONF_DIR}/xray.json"
 XRAY_STATE = f"{CONF_DIR}/protocols.json"
 XRAY_PID = "/tmp/xray.pid"
+XRAY_LOG = "/tmp/xray.log"
+
+# Потолок памяти процессу Xray. Обычно он ест 40–80 МБ; 256 МБ — это запас в
+# три раза и одновременно граница, за которой он точно ведёт себя ненормально.
+# При достижении потолка Xray упадёт на своей же попытке выделить память —
+# сторож поднимет его заново. Это несравнимо мягче, чем когда система начинает
+# убивать процессы по своему выбору и попадает в туннель или в базу.
+XRAY_MEM_LIMIT = 256 * 1024 * 1024
+# Журнал писался дописыванием без предела, а лежит в записываемом слое
+# контейнера — то есть рос на диске хоста. Норма та же, что у контейнеров в
+# compose: три файла по 10 МБ, дальше старое вытесняется.
+XRAY_LOG_LIMIT = 10 * 1024 * 1024
+XRAY_LOG_KEEP = 3
 
 
 def proto_state():
@@ -1219,6 +1232,30 @@ def xray_sync_addresses(addrs):
     return sorted(want)
 
 
+def xray_log_rotate():
+    """Ротация журнала по той же норме, что у контейнеров: три файла по 10 МБ.
+
+    Обрезать «оставив хвост» было бы проще, но тогда пропадает начало беды —
+    а именно оно обычно и объясняет, что случилось. Поэтому полноценная
+    ротация: свежий файл начинается с нуля, два предыдущих остаются целыми."""
+    try:
+        if os.path.getsize(XRAY_LOG) < XRAY_LOG_LIMIT:
+            return
+    except OSError:
+        return
+    try:
+        oldest = f"{XRAY_LOG}.{XRAY_LOG_KEEP - 1}"
+        if os.path.exists(oldest):
+            os.remove(oldest)
+        for n in range(XRAY_LOG_KEEP - 2, 0, -1):
+            src = f"{XRAY_LOG}.{n}"
+            if os.path.exists(src):
+                os.replace(src, f"{XRAY_LOG}.{n + 1}")
+        os.replace(XRAY_LOG, f"{XRAY_LOG}.1")
+    except OSError as e:
+        print(f"Журнал Xray не повернулся: {e}")
+
+
 def xray_running():
     """Жив ли процесс.
 
@@ -1273,9 +1310,19 @@ def xray_start():
     if not os.path.exists(XRAY_CONF):
         return False, "конфиг ещё не создан"
     xray_stop()
+
+    xray_log_rotate()
+
+    def _limit_memory():
+        """Ставится уже в дочернем процессе, перед запуском Xray."""
+        import resource
+        resource.setrlimit(resource.RLIMIT_AS,
+                           (XRAY_MEM_LIMIT, XRAY_MEM_LIMIT))
+
     proc = subprocess.Popen([XRAY_BIN, "run", "-c", XRAY_CONF],
-                            stdout=open("/tmp/xray.log", "a"),
-                            stderr=subprocess.STDOUT)
+                            stdout=open(XRAY_LOG, "a"),
+                            stderr=subprocess.STDOUT,
+                            preexec_fn=_limit_memory)
     with open(XRAY_PID, "w") as f:
         f.write(str(proc.pid))
     time.sleep(1)

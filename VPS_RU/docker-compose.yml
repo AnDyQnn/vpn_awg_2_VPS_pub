@@ -19,6 +19,8 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
       PGDATA: /var/lib/postgresql/data/pgdata
+    # Потолок памяти: измеренное потребление 70 МБ, запас пятикратный.
+    mem_limit: 384m
     volumes:
       - ./volumes/database:/var/lib/postgresql/data
       - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql
@@ -48,6 +50,9 @@ services:
       # Токен панели: второй рубеж поверх правил файрвола. Пустой — узел работает
       # как раньше, обновление ничего не ломает.
       API_TOKEN: ${API_TOKEN:-}
+    # Потолок памяти. Измерено 105 МБ; Xray добавит ещё 40–80, а у самого
+    # Xray внутри стоит свой потолок в 256 МБ. Полгигабайта — с запасом.
+    mem_limit: 512m
     volumes:
       - ./volumes/wireguard:/etc/amnezia/amneziawg
       - /lib/modules:/lib/modules
@@ -73,8 +78,8 @@ services:
     logging:
       driver: json-file
       options:
-        max-size: "5m"
-        max-file: "2"
+        max-size: "10m"
+        max-file: "3"
 
   # ---------------- BOT (FRONTEND) ----------------
   vpn_bot:
@@ -104,6 +109,9 @@ services:
       WG_API_URL: http://127.0.0.1:8000/api
       # IP адрес агента в Германии внутри туннеля
       DE_AGENT_URL: http://10.13.13.254:8000/api
+    # Потолок памяти: измерено 107 МБ, но бот рисует графики и собирает
+    # Excel — на этом бывают всплески, поэтому запас пятикратный.
+    mem_limit: 512m
     volumes:
       - ./volumes:/volumes
       # Версия — ОДНА на весь проект, из корня. Раньше монтировался
@@ -116,6 +124,6 @@ services:
     logging:
       driver: json-file
       options:
-        max-size: "5m"
-        max-file: "2"
+        max-size: "10m"
+        max-file: "3"
 

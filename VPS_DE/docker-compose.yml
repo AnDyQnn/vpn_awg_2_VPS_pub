@@ -13,6 +13,10 @@ services:
       - INTERNAL_SUBNET=10.13.13.0
       # Должен совпадать с API_TOKEN на мастере
       - API_TOKEN=${API_TOKEN:-}
+    # Потолок памяти: измерено 47 МБ при 961 МБ на узле. Запас пятикратный —
+    # смысл не в экономии, а в том, чтобы разросшийся процесс падал сам, а не
+    # заставлял систему убивать кого попало.
+    mem_limit: 256m
     volumes:
       - ./volumes/wireguard:/etc/amnezia/amneziawg
       - ./volumes/flags:/volumes/flags
@@ -27,5 +31,5 @@ services:
     logging:
       driver: json-file
       options:
-        max-size: "5m"
-        max-file: "2"
+        max-size: "10m"
+        max-file: "3"
