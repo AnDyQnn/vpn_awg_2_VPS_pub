@@ -114,9 +114,9 @@ async def service_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if stuck:
         blocked = sum(1 for s in stuck if s["blocked_at"])
         tail = f", из них не дошло {blocked}" if blocked else ""
-        lines.append(f"📨 *Доставка ключей:* не подключились {len(stuck)}{tail}")
+        lines.append(f"📨 *Не подключились:* {len(stuck)} чел.{tail}")
     else:
-        lines.append("📨 *Доставка ключей:* все отправленные ключи дошли")
+        lines.append("📨 *Не подключились:* таких нет, все вышли на связь")
 
     lines.append("")
     try:
@@ -200,7 +200,7 @@ async def service_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "📋 Ждут решения" + (f" · {len(decisions)}" if decisions else ""),
             callback_data="kd_list"),
          InlineKeyboardButton(
-            "📨 Доставка" + (f" · {len(stuck)}" if stuck else ""),
+            "📨 Не подключились" + (f" · {len(stuck)}" if stuck else ""),
             callback_data="deliv_list")],
     ]
     if not tickets:

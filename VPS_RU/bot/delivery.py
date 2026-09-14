@@ -69,12 +69,12 @@ async def delivery_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     items = await db.get_stuck_deliveries(STUCK_HOURS)
 
     if not items:
-        text = ("📨 **Доставка ключей**\n\n"
-                "Все отправленные ключи дошли до подключения.")
+        text = ("📨 **Кто не подключился**\n\n"
+                "Таких нет: все, кому отправляли ключ, подключились.")
         kb = [[InlineKeyboardButton("🔙 Администрирование", callback_data="svc_menu")]]
     else:
-        lines = ["📨 **Доставка ключей**", "",
-                 "Отправлено, но человек ещё не подключился:", ""]
+        lines = ["📨 **Кто не подключился**", "",
+                 "Ключ отправлен, а человек так и не вышел на связь:", ""]
         kb = []
         for it in items:
             icon, short = stage(it)
