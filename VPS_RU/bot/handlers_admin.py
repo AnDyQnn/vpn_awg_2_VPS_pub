@@ -14,6 +14,7 @@ from utils import (
     api_session,
     ADMIN_ID, WG_API_URL, escape_md, state_data, stop_bg_tasks, deregister_menu, 
     safe_delete, get_current_version, get_update_info, broadcast_message, get_moscow_now, ts_to_moscow, dt_to_moscow,
+    show_screen,
     DE_AGENT_URL
 )
 from ui import main_menu
@@ -187,6 +188,55 @@ async def return_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
             sent_msg = await bot.send_message(chat_id=chat_id, text=text, reply_markup=markup, parse_mode=ParseMode.MARKDOWN)
 
     if sent_msg: state_data["active_menus"][chat_id] = sent_msg.message_id
+
+
+async def backups_list_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Что за копии лежат на сервере: когда, целые ли, зашифрованы ли.
+
+    Три вопроса, ради которых в этот список и заглядывают. Проверку целостности
+    архива бот умел давно — её просто никто не звал, и о сломанной копии
+    узнавали в тот момент, когда она понадобилась.
+    """
+    from backup_manager import list_backups, BACKUP_PASSWORD
+    query = update.callback_query
+    await query.answer()
+
+    try:
+        items = await asyncio.to_thread(list_backups)
+    except Exception as e:
+        items = []
+        print(f"Копии: список не собрался: {e}")
+
+    lines = ["📦 **Копии на сервере**", ""]
+    if not items:
+        lines += [
+            "Ни одной копии не нашлось.",
+            "",
+            "_Копия собирается при запуске бота и по кнопке «Копия мастера». "
+            "Если её нет совсем — стоит нажать и посмотреть, что скажет._",
+        ]
+    else:
+        whole = sum(1 for i in items if i["ok"])
+        lines.append(f"Всего: **{len(items)}**, целых: **{whole}**")
+        if not BACKUP_PASSWORD:
+            lines.append("⚠️ _Пароль архива не задан — копии лежат "
+                         "незашифрованными._")
+        lines.append("")
+        for item in items[:8]:
+            mark = "✅" if item["ok"] else "⚠️"
+            when = dt_to_moscow(item["when"]).strftime("%d.%m %H:%M")
+            lines.append(f"{mark} {when} · {item['size_mb']} МБ")
+            lines.append(f"     `{escape_md(item['name'])}`")
+            if not item["ok"]:
+                lines.append(f"     _{escape_md(item['note'])}_")
+        if len(items) > 8:
+            lines.append(f"…и ещё {len(items) - 8}")
+
+    kb = [[InlineKeyboardButton("💾 Сделать копию сейчас", callback_data="backup")],
+          [InlineKeyboardButton("🔙 Архивы и база", callback_data="menu_backups")]]
+    await show_screen(query, context, "\n".join(lines),
+                      reply_markup=InlineKeyboardMarkup(kb),
+                      parse_mode=ParseMode.MARKDOWN)
 
 async def update_persistent_backup(context: ContextTypes.DEFAULT_TYPE, force_new: bool = False):
     try:

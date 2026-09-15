@@ -877,6 +877,7 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "svc_mode_on": await set_mode(update, context, True); return
     if data == "svc_mode_off": await set_mode(update, context, False); return
     # Токен панелей: состояние, переключатель расписания и смена по кнопке.
+    if data == "backup_list": await backups_list_screen(update, context); return
     if data == "svc_token": await token_screen(update, context); return
     if data == "svc_tok_toggle": await token_toggle(update, context); return
     if data == "svc_tok_now": await token_now(update, context); return
