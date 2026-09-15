@@ -226,19 +226,19 @@
     line-height:1.9;
     word-break:break-all;
   }
-  /* Плашка на весь блок: причина отказа — главное на странице, и она должна
-     читаться как единое целое, а не как строка с кружком посередине. */
-  .panel{
-    padding:16px 18px;
+  /* Плашка только под категорию, и во всю ширину: кружок вокруг одного слова
+     выглядел наклейкой, а причина отказа — обычный текст и в рамке не
+     нуждается. */
+  .cat{
+    display:block;
+    margin-top:14px;
+    padding:12px 16px;
     border:1px solid var(--border);
     border-radius:12px;
     background:rgba(88,166,255,.06);
-  }
-  .panel .cat{
-    display:block;
-    margin-top:8px;
     color:var(--accent);
     font-size:13.5px;
+    text-align:left;
   }
   .ref{
     margin:12px 0 0;
@@ -322,7 +322,7 @@
 
   <h1>Этот сайт закрыт фильтром</h1>
 
-  <p class="text panel">Доступ ограничен администратором<span class="cat">Категория: Соцсети</span></p>
+  <p class="text">Доступ ограничен администратором<span class="cat">Категория: Соцсети</span></p>
   <p class="text">Если это ошибка — свяжитесь с поддержкой</p>
 
   <a class="cta" href="https://t.me/example_bot">
