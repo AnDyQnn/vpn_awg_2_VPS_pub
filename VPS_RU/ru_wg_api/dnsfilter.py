@@ -635,15 +635,21 @@ def _render_block_page(host, category):
         why = "Категория: <b>%s</b>" % CATEGORY_TITLES.get(category, category)
         # Две строки: предложение на строку. Один перевод, а не пустая строка
         # между ними — так это и просили.
-        note = ("Доступ ограничен администратором.<br>"
-                "Если это ошибка — свяжитесь с поддержкой.")
+        # Три блока, а не два: причина, запрет, подсказка. Каждый со своим
+        # разделителем — так же, как на странице про доступы.
+        note = "Доступ ограничен администратором"
+        hint = "Если это ошибка — свяжитесь с поддержкой"
         icon = ICON_FILTER
     else:
         head = "Доступ к этому сервису закрыт"
         why = "Доступ ограничен администратором"
         note = "Если это ошибка — свяжитесь с поддержкой"
+        hint = ""                      # здесь блоков два, третий не нужен
         icon = ICON_ACCESS
     page = _page_cache
+    # Пустой блок оставил бы лишний разделитель и дыру под ним.
+    if not hint:
+        page = page.replace('<p class="text">__HINT__</p>', "", 1)
     # Кнопка «обратиться» — только когда есть куда. Без адреса убираем её
     # целиком: мёртвая кнопка хуже отсутствующей, по ней жмут впустую.
     if link:
@@ -656,6 +662,7 @@ def _render_block_page(host, category):
             .replace("__HEAD__", head)
             .replace("__WHY__", why)
             .replace("__NOTE__", note)
+            .replace("__HINT__", hint)
             .replace("__ICON__", icon)
             .replace("__CONTACT__", contact)
             .replace("__CATEGORY__", CATEGORY_TITLES.get(category, category or "")))
