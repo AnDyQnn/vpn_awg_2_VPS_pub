@@ -1,16 +1,27 @@
 # -*- coding: utf-8 -*-
-"""По ссылке можно нажать, а не только выделять и копировать.
+"""Ссылка доходит до человека текстом — и никакая кнопка этому не мешает.
 
-Владелец спросил, нельзя ли сделать ссылку нажимаемой, чтобы открывалось
-приложение. Можно: схему `vless://` Telegram принимает и в тексте, и в кнопке —
-проверено прямым запросом к его API, разбор проходит, ошибка приходит только
-про несуществующий чат. Кириллица в хвосте ссылки (имя человека) тоже проходит.
+Я сделал кнопку «Добавить в приложение» со ссылкой `vless://` внутри и решил,
+что проверил её: отправил запрос в API телеграма и получил ошибку про
+несуществующий чат, а не про ссылку. Принял это за разрешение. На деле проверка
+чата идёт РАНЬШЕ проверки ссылки, и про ссылку тот ответ не говорил ничего.
 
-Но кнопка — не замена ссылке. Если приложение не установлено, нажатие приведёт
-в никуда, и человеку останется только скопировать текст. Поэтому проверяем не
-«кнопка есть», а «кнопка есть И ссылка осталась текстом».
+На бою вышло так:
+
+    BadRequest: Inline keyboard button url 'vless://...' is invalid:
+    unsupported url protocol
+
+QR уходил, а следующее сообщение — со ссылкой — падало. Человек оставался с
+картинкой и без доступа.
+
+Поэтому проверяется теперь не наличие кнопки, а то, что важно: ссылка ушла
+текстом, и ни в одной клавиатуре нет схемы, которую телеграм не принимает.
+Последнее — по всему исходнику, а не только здесь.
 """
 import asyncio
+import io
+import os
+import re
 import sys
 
 sys.path.insert(0, "/app")
@@ -25,7 +36,7 @@ sent = []
 def check(name, cond, detail=""):
     global ok
     ok = ok and cond
-    print("  %s %-48s %s" % ("•" if cond else "ПРОВАЛ:", name, detail))
+    print("  %s %-50s %s" % ("•" if cond else "ПРОВАЛ:", name, detail))
 
 
 class FakeBot:
@@ -54,41 +65,61 @@ async def main():
         await db.set_setting(key, val)
 
     link = await xray.profile_link("bt-1")
-    print("=== сама ссылка ===")
+    print("=== ссылка ===")
     check("собралась", bool(link))
-    check("имя человека в хвосте — кириллицей",
-          link.endswith("Ссылкин"), link[-12:])
+    check("имя человека в хвосте", link.endswith("Ссылкин"), link[-12:])
 
     print()
-    print("=== клавиатура к ссылке ===")
-    kb = xray.link_keyboard(link, ("🏠 Личный кабинет", "client_menu"))
-    buttons = [b for row in kb.inline_keyboard for b in row]
-    opener = [b for b in buttons if getattr(b, "url", None)]
-    check("есть кнопка со ссылкой", len(opener) == 1,
-          opener[0].text if opener else "нет")
-    check("кнопка ведёт ровно на эту ссылку",
-          opener and opener[0].url == link)
-    check("выход рядом есть",
-          any(getattr(b, "callback_data", None) == "client_menu" for b in buttons))
-
-    print()
-    print("=== ссылка при этом осталась текстом ===")
+    print("=== она доходит до человека текстом ===")
     import handlers_client as hc
     sent.clear()
     await hc.send_xray_profile(FakeContext(), 1, "bt-1")
     texts = [m.get("text") for m in sent if m.get("text")]
     check("ссылка ушла отдельным сообщением", link in texts,
-          "иначе её нельзя скопировать, если приложения нет")
-    with_button = [m for m in sent
-                   if m.get("markup") and any(getattr(b, "url", None)
-                                              for row in m["markup"].inline_keyboard
-                                              for b in row)]
-    check("и у него есть кнопка", len(with_button) >= 1)
+          "её выделяют и копируют")
+    check("QR тоже ушёл", any(m.get("photo") for m in sent))
+    check("предупреждение о личной ссылке на месте",
+          any("не передавайте" in (x or "") for x in texts))
 
     print()
-    print("=== предупреждение о личной ссылке на месте ===")
-    check("сказано не передавать",
-          any("не передавайте" in (x or "") for x in texts))
+    print("=== ни одна кнопка не ведёт на схему, которой телеграм не знает ===")
+    # Кнопки принимают только http, https и tg. Всё остальное телеграм
+    # отвергает целиком — и сообщение не уходит вовсе.
+    allowed = ("http://", "https://", "tg://")
+    bad = []
+    for m in sent:
+        kb = m.get("markup")
+        if not kb:
+            continue
+        for row in kb.inline_keyboard:
+            for b in row:
+                url = getattr(b, "url", None)
+                if url and not url.startswith(allowed):
+                    bad.append(url[:40])
+    check("в отправленном таких нет", not bad, ", ".join(bad) or "—")
+
+    # И по всему исходнику: чтобы следующая такая кнопка не доехала до людей.
+    src_bad = []
+    for name in sorted(os.listdir("/app")):
+        if not name.endswith(".py"):
+            continue
+        text = io.open(os.path.join("/app", name), encoding="utf-8").read()
+        for m in re.finditer(r"InlineKeyboardButton\((?:[^()]|\([^()]*\))*\)", text):
+            call = m.group(0)
+            if "url=" not in call:
+                continue
+            # Разрешаем только явно безопасные схемы и подстановки, которые
+            # собираются из настроек бота (там всегда http-адрес).
+            if re.search(r'url=(f?")(https?|tg)://', call):
+                continue
+            if re.search(r"url=\w*(link|url|base|sub)\w*\b", call):
+                src_bad.append((name, text[:m.start()].count(chr(10)) + 1,
+                                re.sub(r"\s+", " ", call)[:70]))
+    if src_bad:
+        for name, line, snippet in src_bad:
+            print("      %s:%d  %s" % (name, line, snippet))
+    check("и в исходнике тоже", not src_bad,
+          "кнопка с чужой схемой рушит всё сообщение целиком")
 
     await db.execute("DELETE FROM xray_users WHERE user_uuid LIKE 'bt-%'")
     await db.execute("DELETE FROM users WHERE uuid LIKE 'bt-%'")

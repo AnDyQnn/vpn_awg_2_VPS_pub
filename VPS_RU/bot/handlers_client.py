@@ -200,9 +200,13 @@ async def send_client_menu(context: ContextTypes.DEFAULT_TYPE, user_id: int, fir
          InlineKeyboardButton("🌐 Рос. сервисы", callback_data="client_bypass_info")],
         [InlineKeyboardButton("🆘 Сообщить о проблеме", callback_data="support_start")],
     ]
-    # Кнопку показываем, только когда есть непрочитанное — иначе она просто мозолит глаза.
-    if await has_unseen_changes(user_id):
-        keyboard.insert(2, [InlineKeyboardButton("✨ Что нового", callback_data="client_whats_new")])
+    # Кнопка стоит всегда. Раньше она появлялась только при непрочитанном —
+    # «чтобы не мозолила», — но человек видит это меню каждый день и привыкает,
+    # где что лежит. Кнопка, которая то есть, то нет, читается как поломка, а
+    # не как заботливость. Непрочитанное отмечаем значком, место не меняем.
+    mark = "✨" if await has_unseen_changes(user_id) else "📄"
+    keyboard.insert(2, [InlineKeyboardButton(f"{mark} Что нового",
+                                             callback_data="client_whats_new")])
     if check_admin(user_id):
         keyboard.append([InlineKeyboardButton("🚪 Выйти из режима клиента", callback_data="back_to_main")])
     
@@ -665,11 +669,11 @@ async def send_xray_profile(context, chat_id, uuid_val):
     if qr:
         await context.bot.send_photo(chat_id=chat_id, photo=open(qr, "rb"),
                                      caption="📱 Отсканируйте в приложении")
-    # Кнопка открывает ссылку в приложении; сама ссылка остаётся текстом,
-    # чтобы её можно было скопировать, если приложение ещё не стоит.
+    # Только текст, без кнопки: схему `vless://` Telegram в кнопке не
+    # принимает — отвечает «unsupported url protocol», и тогда сообщение со
+    # ссылкой не уходит вовсе. Человек остаётся с одним QR.
     await context.bot.send_message(chat_id=chat_id, text=link,
-                                   reply_markup=xray.link_keyboard(
-                                       link, ("🏠 Личный кабинет", "client_menu")))
+                                   reply_markup=exit_kb(to_client=True))
     # Подписка — то, ради чего всё делалось: изменения доезжают сами, и
     # перевыпускать ничего не нужно. Отдаём её вместе с разовой ссылкой и
     # объясняем разницу, иначе человек добавит первое попавшееся.

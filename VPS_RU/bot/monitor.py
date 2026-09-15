@@ -275,7 +275,7 @@ async def get_dashboard():
     sep = "━━━━━━━━━━━━━━"
 
     return (
-        f"📊 **Состояние серверов** · Россия и Германия\n"
+        f"📊 **Дашборд** · Россия и Германия\n"
         f"{sep}\n"
         f"{ru_dot} 🇷🇺 **RU** · мастер\n"
         f"{ru_block}\n\n"
@@ -941,18 +941,26 @@ async def load_collector_loop(app):
 
                         # Счётчики могли обнулиться — контейнер перезапускали.
                         rec = merged.setdefault(uuid_val, [0, 0, 0, 0])
-                        d_in = max(0, cur["rx_packets"] - old["rx_packets"])
-                        d_out = max(0, cur["tx_packets"] - old["tx_packets"])
-                        rec[0] += d_in
-                        rec[1] += d_out
-                        rec[2] += max(0, cur["rx_bytes"] - old["rx_bytes"])
-                        rec[3] += max(0, cur["tx_bytes"] - old["tx_bytes"])
+                        # Узел считает от лица пира: `tx` — он отдал, `rx` — он
+                        # принял. В базе договорённость обратная (см. insights):
+                        # bytes_in — это ОТДАЧА человека, bytes_out — его ПРИЁМ.
+                        # Раньше здесь приём уезжал в колонку отдачи, и доля
+                        # отдачи выходила перевёрнутой: любой качающий получал
+                        # «отдаёт больше, чем принимает».
+                        up_pkt = max(0, cur["tx_packets"] - old["tx_packets"])
+                        down_pkt = max(0, cur["rx_packets"] - old["rx_packets"])
+                        rec[0] += up_pkt
+                        rec[1] += down_pkt
+                        rec[2] += max(0, cur["tx_bytes"] - old["tx_bytes"])
+                        rec[3] += max(0, cur["rx_bytes"] - old["rx_bytes"])
                         # Отметка живого трафика по адресу. У Xray нет
                         # рукопожатия, и это единственный признак, по которому
                         # видно, что человек сейчас на связи.
-                        if d_in or d_out:
+                        if up_pkt or down_pkt:
                             state_data["addr_seen"][ip] = time.time()
 
+                    # Имена — от лица человека и в том же смысле, что в базе:
+                    # in — его отдача, out — его приём.
                     for uuid_val, (d_pkt_in, d_pkt_out, d_byt_in, d_byt_out) in merged.items():
                         pps = (d_pkt_in + d_pkt_out) / dt
                         total_pkt = d_pkt_in + d_pkt_out
@@ -970,6 +978,7 @@ async def load_collector_loop(app):
                                 "started": datetime.utcnow(), "up": 0, "down": 0})
                             rec["peak"] = max(rec["peak"], pps)
                             rec["size"] = avg_size or rec["size"]
+                            # in — отдача человека, out — его приём.
                             rec["up"] += d_byt_in
                             rec["down"] += d_byt_out
                             rec["misses"] = 0
