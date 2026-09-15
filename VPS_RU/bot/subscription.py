@@ -16,6 +16,7 @@
 """
 import asyncio
 import base64
+import json
 import os
 import time
 
@@ -118,6 +119,35 @@ async def handle_sub(request):
         headers=headers)
 
 
+async def handle_routing(request):
+    """Профиль маршрутизации в чистом виде — для скрипта, а не для приложения.
+
+    Приложение получает профиль вместе с подпиской и ничего больше знать не
+    должно. Но на машине, которая настраивается скриптом, приложения нет: там
+    нужен сам JSON, чтобы разложить правила своими средствами.
+
+    Адрес тот же личный токен, что и у подписки: отдельного доступа не заводим,
+    иначе появится второй секрет с той же силой и своей судьбой.
+    """
+    token = request.match_info.get("token", "")
+    rec = await db.get_xray_by_token(token) if token else None
+    if not rec or not rec["is_active"]:
+        return web.Response(status=404, text="not found")
+    try:
+        import happ_routing
+        profile = await happ_routing.profile(rec["user_uuid"])
+    except Exception as e:
+        print(f"Профиль по токену: {e}")
+        return web.Response(status=500, text="error")
+
+    body = json.dumps(profile, ensure_ascii=False, indent=2)
+    return web.Response(
+        body=body.encode(),
+        content_type="application/json",
+        charset="utf-8",
+        headers={"Cache-Control": "no-store"})
+
+
 async def handle_root(request):
     """Корень молчит. На сервере с открытым портом это важнее вежливости:
     страница-приветствие сразу говорит сканеру, что тут есть что искать."""
@@ -128,6 +158,9 @@ async def start_server():
     """Поднимает сервер подписок. Вызывается один раз при старте бота."""
     app = web.Application()
     app.router.add_get("/sub/{token}", handle_sub)
+    # Тот же профиль, но голым JSON: скрипту нужен он, а не ссылка для
+    # приложения.
+    app.router.add_get("/routing/{token}", handle_routing)
     app.router.add_get("/", handle_root)
 
     runner = web.AppRunner(app, access_log=None)
