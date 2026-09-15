@@ -78,6 +78,14 @@ class Database:
                     UNIQUE(uuid, tg_id)
                 );
             """)
+            # Логин в Telegram — рядом с привязкой, а не вместо неё: логин
+            # человек меняет и убирает, а id у него один навсегда.
+            res_un = await self.fetch_all(
+                "SELECT column_name FROM information_schema.columns WHERE table_schema='public' "
+                "AND table_name='user_tg_links' AND column_name='username';")
+            if not res_un:
+                await self.execute("ALTER TABLE user_tg_links ADD COLUMN username TEXT;")
+
             await self.execute("""
                 CREATE TABLE IF NOT EXISTS events_log (
                     id SERIAL PRIMARY KEY,
@@ -285,6 +293,30 @@ class Database:
                     CHECK (target_uuid IS NOT NULL OR target_ip IS NOT NULL)
                 );
             """)
+
+            # --- ПОДДЕРЖКА ПРОЕКТА ---
+            # Реквизит: карта, телефон для СБП или картинка с QR. У картинки в
+            # value лежит file_id телеграма — по нему бот пересылает её без
+            # файла на диске.
+            await self.execute("""
+                CREATE TABLE IF NOT EXISTS donate_methods (
+                    id SERIAL PRIMARY KEY,
+                    kind TEXT NOT NULL,
+                    bank TEXT,
+                    value TEXT NOT NULL,
+                    note TEXT,
+                    created_at TIMESTAMP DEFAULT NOW()
+                );
+            """)
+            # Когда человеку в последний раз напоминали о поддержке. Версии
+            # выходят пачками, и без этой отметки напоминание пришло бы
+            # несколько раз за день — после такого выключают уведомления.
+            res_dn = await self.fetch_all(
+                "SELECT column_name FROM information_schema.columns WHERE table_schema='public' "
+                "AND table_name='notify_prefs' AND column_name='donate_reminded_at';")
+            if not res_dn:
+                await self.execute(
+                    "ALTER TABLE notify_prefs ADD COLUMN donate_reminded_at TIMESTAMP;")
 
             # --- ФИЛЬТРАЦИЯ САЙТОВ ---
             # Категории на человека, а не на роль: роль про домашние сервисы,
@@ -533,6 +565,57 @@ class Database:
     async def remove_custom_block(self, domain):
         items = [d for d in await self.get_custom_blocks() if d != domain]
         await self.set_setting("filters_custom", ",".join(items))
+
+    # --- ЛОГИН В TELEGRAM ------------------------------------------------
+    async def set_tg_username(self, tg_id, username):
+        """Запоминает логин. Пустой не затирает известный: человек мог просто
+        открыть бота из аккаунта без логина, и терять прежний незачем."""
+        if not username:
+            return
+        await self.execute(
+            "UPDATE user_tg_links SET username=$2 WHERE tg_id=$1",
+            tg_id, username.lstrip("@"))
+
+    async def get_tg_usernames(self, tg_ids):
+        """Логины разом на список привязок — по одному запросу на карточку."""
+        if not tg_ids:
+            return {}
+        rows = await self.fetch_all(
+            "SELECT DISTINCT tg_id, username FROM user_tg_links "
+            "WHERE tg_id = ANY($1::bigint[]) AND username IS NOT NULL",
+            [int(t) for t in tg_ids])
+        return {r["tg_id"]: r["username"] for r in rows}
+
+    # --- ПОДДЕРЖКА ПРОЕКТА -----------------------------------------------
+    async def add_donate_method(self, kind, value, bank=None, note=None):
+        await self.execute(
+            "INSERT INTO donate_methods (kind, bank, value, note) VALUES ($1,$2,$3,$4)",
+            kind, bank, value, note)
+
+    async def list_donate_methods(self):
+        """Порядок — тот, в каком заводили: владелец кладёт первым то, чем
+        пользуются чаще, и менять этот порядок за него не надо."""
+        rows = await self.fetch_all(
+            "SELECT id, kind, bank, value, note FROM donate_methods ORDER BY id")
+        return [dict(r) for r in rows]
+
+    async def get_donate_method(self, method_id):
+        rows = await self.fetch_all(
+            "SELECT id, kind, bank, value, note FROM donate_methods WHERE id=$1",
+            int(method_id))
+        return dict(rows[0]) if rows else None
+
+    async def delete_donate_method(self, method_id):
+        await self.execute("DELETE FROM donate_methods WHERE id=$1", int(method_id))
+
+    async def get_donate_reminded_at(self, tg_id):
+        return await self.fetch_val(
+            "SELECT donate_reminded_at FROM notify_prefs WHERE tg_id=$1", tg_id)
+
+    async def set_donate_reminded_at(self, tg_id):
+        await self.execute(
+            """INSERT INTO notify_prefs (tg_id, donate_reminded_at) VALUES ($1, NOW())
+               ON CONFLICT (tg_id) DO UPDATE SET donate_reminded_at=NOW()""", tg_id)
 
     # --- ИМЕНА ВНУТРИ ТУННЕЛЯ --------------------------------------------
     async def set_dns_name(self, name, target_uuid=None, target_ip=None, comment=None):

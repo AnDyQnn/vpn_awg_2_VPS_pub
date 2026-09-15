@@ -334,6 +334,25 @@ async def show_screen(query, context, text, reply_markup=None, parse_mode=None,
                                           disable_web_page_preview=disable_preview)
 
 
+async def send_copyable(bot, chat_id, text, **kwargs):
+    """Шлёт текст так, чтобы он копировался одним касанием.
+
+    Telegram копирует в буфер целиком то, что помечено как код. Пометка идёт
+    сущностью, а не разметкой: в ссылках попадаются знаки, которые разметка
+    принимает на свой счёт, и одно непарное подчёркивание роняет сообщение
+    целиком — так уже терялась выдача ключа.
+
+    Длина — в кодовых единицах UTF-16, как её считает Telegram: имя в ссылке
+    бывает с эмодзи, и там обычный len() промахивается.
+    """
+    from telegram import MessageEntity
+    length = len(text.encode("utf-16-le")) // 2
+    return await bot.send_message(
+        chat_id=chat_id, text=text,
+        entities=[MessageEntity(type=MessageEntity.CODE, offset=0, length=length)],
+        **kwargs)
+
+
 def exit_kb(*extra, to_client=False):
     """Клавиатура для сообщения, которым разговор закончился.
 

@@ -12,7 +12,7 @@ from telegram.ext import ContextTypes
 
 import xray
 from database import db
-from utils import exit_kb, escape_md, show_screen
+from utils import exit_kb, escape_md, show_screen, send_copyable
 
 BACK_SERVICE = [InlineKeyboardButton("🔙 Администрирование", callback_data="svc_menu")]
 
@@ -138,9 +138,9 @@ async def send_link(update: Update, context: ContextTypes.DEFAULT_TYPE, uuid_val
                                            disable_web_page_preview=True)
             if qr:
                 await context.bot.send_photo(chat_id=tid, photo=open(qr, "rb"))
-            # Ссылку отдельным сообщением и без разметки: подчёркивания в
-            # ссылке Telegram принимает за курсив и ломает её.
-            await context.bot.send_message(chat_id=tid, text=link)
+            # Ссылку отдельным сообщением и кодом: так она копируется
+            # одним касанием и не ломается о собственные подчёркивания.
+            await send_copyable(context.bot, tid, link)
         ok, err = await track_send(uuid_val, tid, _send)
         sent += 1 if ok else 0
 
@@ -148,7 +148,7 @@ async def send_link(update: Update, context: ContextTypes.DEFAULT_TYPE, uuid_val
         await context.bot.send_message(chat_id=query.message.chat_id,
                                        text=f"{user['name']} — Telegram не привязан, "
                                             f"ссылка ниже")
-        await context.bot.send_message(chat_id=query.message.chat_id, text=link)
+        await send_copyable(context.bot, query.message.chat_id, link)
     await query.answer("Отправлено" if sent else "Telegram не привязан — ссылка здесь")
     await connections_screen(update, context, uuid_val)
 
@@ -548,10 +548,10 @@ async def handout(update, context, uuid_val, name, tg_id=None):
         reply_markup=exit_kb(("👥 Люди", "list_users")))
     if qr:
         await context.bot.send_photo(chat_id=chat_id, photo=open(qr, "rb"))
-    # Ссылка отдельным сообщением и без разметки: подчёркивания в ней Telegram
-    # принимает за курсив и ломает ссылку.
+    # Ссылка отдельным сообщением и кодом: копируется одним касанием и не
+    # ломается о собственные подчёркивания.
     # Без кнопки: Telegram не принимает схему `vless://` в кнопке.
-    await context.bot.send_message(chat_id=chat_id, text=link)
+    await send_copyable(context.bot, chat_id, link)
 
     if tg_id:
         from delivery import track_send

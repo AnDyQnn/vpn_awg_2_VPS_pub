@@ -217,6 +217,19 @@ async def service_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines.append("🔀 *Протоколы:* узел не ответил")
 
     lines.append("")
+    try:
+        import donate
+        d_rows = await donate.methods()
+        if not d_rows:
+            lines.append("💳 *Поддержка проекта:* реквизитов нет")
+        else:
+            lines.append("💳 *Поддержка проекта:* реквизитов " + str(len(d_rows))
+                         + (", кнопка у людей есть" if await donate.enabled()
+                            else ", кнопка у людей выключена"))
+    except Exception:
+        pass
+
+    lines.append("")
     lines.append(f"🆘 *Обращения:* {'открытых нет' if not tickets else f'{tickets} открытых'}")
 
     main_label = ("🚦 Включить ограничение" if mode == "observe"
@@ -240,7 +253,8 @@ async def service_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🔀 Протоколы", callback_data="proto_menu")],
         [InlineKeyboardButton("🛡 Доступы · роли", callback_data="roles_menu"),
          InlineKeyboardButton("🧹 Фильтры", callback_data="flt_menu")],
-        [InlineKeyboardButton("🏷 Имена в туннеле", callback_data="dnm_menu")],
+        [InlineKeyboardButton("🏷 Имена в туннеле", callback_data="dnm_menu"),
+         InlineKeyboardButton("💳 Поддержка", callback_data="don_menu")],
         [InlineKeyboardButton(
             "📋 Ждут решения" + (f" · {len(decisions)}" if decisions else ""),
             callback_data="kd_list"),
