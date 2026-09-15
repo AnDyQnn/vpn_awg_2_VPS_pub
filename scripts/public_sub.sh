@@ -234,7 +234,7 @@ timer_on() {
         echo
         echo "[Service]"
         echo "Type=oneshot"
-        echo "ExecStart=$SELF_DIR/public_sub.sh renew $NODE_DIR"
+        echo "ExecStart=/bin/bash $SELF_DIR/public_sub.sh renew $NODE_DIR"
     } > /etc/systemd/system/vpn-subcert.service
 
     # Дважды в сутки. Сертификат живёт 160 часов, certbot берётся за продление,
@@ -277,7 +277,10 @@ case "${1:-status}" in
         say "владелец закрыл подписку наружу — не трогаю"
         exit 0
     fi
-    exec "$0" on "$NODE_DIR"
+    # Через bash, а не напрямую: бит запуска на этом файле не гарантирован.
+    # Обновление раздаёт права только внутри папки ноды, а мы лежим в общей —
+    # и "exec" молча упирался в «Permission denied».
+    exec bash "$0" on "$NODE_DIR"
     ;;
 
   on)

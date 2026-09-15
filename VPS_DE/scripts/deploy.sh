@@ -119,6 +119,9 @@ fi
 echo "[Deploy] Шаг 2: Выдача прав на скрипты в папке $NODE_DIR..."
 cd "$NODE_DIR" || exit 1
 find . -type f -name "*.sh" -exec chmod +x {} \;
+# Общие скрипты лежат вне папки ноды, а запускают их и systemd-юниты. Без
+# бита запуска они молча упираются в «Permission denied».
+find "$PROJECT_ROOT/scripts" -type f -name "*.sh" -exec chmod +x {} \; 2>/dev/null
 
 # 3b. Гарантируем swap и при обновлении (идемпотентно). Полезно и на DE при 1–2 ГБ RAM.
 if [ -f "$PROJECT_ROOT/scripts/ensure_swap.sh" ]; then
