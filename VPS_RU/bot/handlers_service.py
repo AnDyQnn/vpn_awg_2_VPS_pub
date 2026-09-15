@@ -269,7 +269,7 @@ async def service_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
          # Не «Поддержка»: ниже есть «🆘 Поддержка» про обращения, и две кнопки
          # с одним словом читаются как одна и та же.
          InlineKeyboardButton("💳 Донаты", callback_data="don_menu")],
-        [InlineKeyboardButton("🔑 Токен панелей", callback_data="svc_token")],
+        [InlineKeyboardButton("🔑 Ключ панелей", callback_data="svc_token")],
         [InlineKeyboardButton(
             "📋 Ждут решения" + (f" · {len(decisions)}" if decisions else ""),
             callback_data="kd_list"),
@@ -831,7 +831,7 @@ async def ensure_api_token(app):
             await app.bot.send_message(
                 chat_id=ADMIN_ID, text=text,
                 reply_markup=InlineKeyboardMarkup(
-                    [[InlineKeyboardButton("🔑 Токен панелей",
+                    [[InlineKeyboardButton("🔑 Ключ панелей",
                                            callback_data="svc_token")]]))
         except Exception:
             pass
@@ -958,7 +958,7 @@ async def rotate_loop(app):
                                     text=("\U0001f501 Смена токена панелей: " + msg),
                                     reply_markup=InlineKeyboardMarkup(
                                         [[InlineKeyboardButton(
-                                            "🔑 Токен панелей",
+                                            "🔑 Ключ панелей",
                                             callback_data="svc_token")]]))
                             except Exception:
                                 pass
@@ -975,10 +975,13 @@ async def token_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     days = await rotation_days()
     last = await db.get_setting("api_token_rotated_at")
 
-    lines = ["🔑 **Токен панелей**", ""]
+    lines = ["🔑 **Ключ панелей узлов**", ""]
     lines.append("Состояние: " + ("**задан**" if API_TOKEN else "**пуст**"))
     lines.append("Смена по расписанию: " + (f"**раз в {days} дн.**" if on
                                             else "выключена"))
+    if not on:
+        lines.append("     _Сам ключ при этом есть и работает — выключена "
+                     "только автоматическая смена._")
     if last:
         lines.append(f"Последняя смена: {last[:16].replace('T', ' ')} UTC")
     lines += ["",
@@ -1017,7 +1020,7 @@ async def token_now(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await show_screen(query, context,
                       ("✅ " if ok else "⚠️ ") + "Смена токена: " + msg,
                       reply_markup=InlineKeyboardMarkup(
-                          [[InlineKeyboardButton("🔑 К токену",
+                          [[InlineKeyboardButton("🔑 К ключу",
                                                  callback_data="svc_token")]]),
                       parse_mode=ParseMode.MARKDOWN)
 
