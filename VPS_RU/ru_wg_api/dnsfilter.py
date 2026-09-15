@@ -424,6 +424,9 @@ HITS_MAX_BYTES = 2 * 1024 * 1024
 # поддоменов, а при отказе повторяет. Пишем не чаще раза в минуту на пару
 # «адрес + домен», иначе журнал засыпет одна открытая вкладка.
 _hit_seen = {}
+# Номер, выданный этой паре: его показывает страница отказа, и он обязан
+# совпадать с записанным в журнал.
+_hit_refs = {}
 HIT_QUIET_SECONDS = 60
 
 
@@ -445,9 +448,16 @@ def record_hit(client_ip, name, category):
     if now - _hit_seen.get(key, 0) < HIT_QUIET_SECONDS:
         return
     _hit_seen[key] = now
+    ref = hit_ref(client_ip, name, now)
+    # Запоминаем выданный номер: страницу человек открывает не в ту же секунду,
+    # что браузер спросил адрес, и пересчёт по времени дал бы ДРУГОЙ номер —
+    # тот, которого нет ни в одном журнале. Искать по такому владелец будет
+    # долго и безуспешно.
+    _hit_refs[key] = ref
     if len(_hit_seen) > 4096:                       # не растим память бесконечно
         for k in sorted(_hit_seen, key=_hit_seen.get)[:2048]:
             del _hit_seen[k]
+            _hit_refs.pop(k, None)
     try:
         if os.path.exists(HITS_FILE) and os.path.getsize(HITS_FILE) > HITS_MAX_BYTES:
             # Половину старых отбрасываем: журнал — для разбора недавнего, а не
@@ -459,7 +469,7 @@ def record_hit(client_ip, name, category):
         with open(HITS_FILE, "a", encoding="utf-8") as f:
             f.write(json.dumps({"ts": int(now), "ip": client_ip,
                                 "domain": name, "category": category,
-                                "ref": hit_ref(client_ip, name, now)},
+                                "ref": ref},
                                ensure_ascii=False) + chr(10))
     except OSError as e:
         print(f"Журнал попыток: {e}", flush=True)
@@ -702,7 +712,11 @@ async def handle_http(reader, writer):
             # инцидента с этим номером просто не существовало бы. Повтора не
             # будет: на пару «адрес + домен» стоит минута тишины.
             record_hit(ip[0], host.lower(), category or "доступы")
-            ref = hit_ref(ip[0], host.lower(), time.time())
+            # Берём номер, который уже выдан этой паре, а не считаем заново:
+            # минута с момента запроса могла смениться, и человек получил бы
+            # номер, которого нет в журнале.
+            ref = _hit_refs.get((ip[0], host.lower())) or hit_ref(
+                ip[0], host.lower(), time.time())
         body = _render_block_page(host, category, ref).encode("utf-8")
         writer.write(b"HTTP/1.1 200 OK\r\n"
                      b"Content-Type: text/html; charset=utf-8\r\n"
