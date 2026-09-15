@@ -135,10 +135,67 @@ async def main():
           "память — такой же ресурс, как процессор")
 
     print()
-    print("=== TLS ===")
+    print("=== без сертификата наружу не слушается вовсе ===")
+    # Это и есть вся защита от «случайно отдали подписку открытым текстом».
+    # Порт наружу опубликован всегда, но сокет на нём существует, только пока
+    # рядом лежит сертификат. Нет файла — некому отдавать.
+    import os
+    import tempfile
+
     sub.CERT_DIR = "/nonexistent"
-    check("без сертификата TLS не включается", sub.build_ssl() is None,
-          "порт при этом закрыт снаружи, шифровать нечего")
+    sub._ssl_ctx = None
+    sub._tls_site = None
+    check("TLS не собирается", sub.build_ssl() is None)
+    check("внешний вход не поднялся", await sub.tls_start() is False,
+          "порт опубликован, но слушать его некому")
+    check("и его действительно нет", sub._tls_site is None)
+
+    print()
+    print("=== сертификат появился — вход открылся сам ===")
+    # Так работает и включение, и выключение: отдельного тумблера нет, состояние
+    # — это наличие файла. Настройка, которую можно выставить не так, была бы
+    # ещё одним способом однажды открыть порт без сертификата.
+    tmp = tempfile.mkdtemp()
+    import ssl as _ssl
+    have_cert = False
+    try:
+        import subprocess
+        rc = subprocess.run(
+            ["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
+             "-keyout", os.path.join(tmp, "privkey.pem"),
+             "-out", os.path.join(tmp, "fullchain.pem"),
+             "-days", "1", "-subj", "/CN=test"],
+            capture_output=True, timeout=60).returncode
+        have_cert = rc == 0
+    except Exception:
+        have_cert = False
+
+    sub.CERT_DIR = tmp
+    if have_cert:
+        check("сертификат виден", sub.cert_ready())
+        ctx = sub.build_ssl()
+        check("TLS собрался", ctx is not None)
+        check("старый протокол не принимается",
+              ctx.minimum_version >= _ssl.TLSVersion.TLSv1_2,
+              "старьё нужно только тем, кто ищет слабое место")
+    else:
+        # openssl в образе бота нет — и это нормально: дату сертификата считает
+        # хост, а не бот. Проверяем тогда хотя бы то, что решение принимается
+        # по файлам, а не по настройке.
+        open(os.path.join(tmp, "fullchain.pem"), "w").write("x")
+        open(os.path.join(tmp, "privkey.pem"), "w").write("x")
+        check("сертификат виден по файлам", sub.cert_ready(),
+              "состояние — это файл, а не запись в настройках")
+        os.remove(os.path.join(tmp, "fullchain.pem"))
+        check("файл убрали — состояние закрыто", not sub.cert_ready(),
+              "так же работает и выключение")
+
+    print()
+    print("=== внутренний вход от этого не зависит ===")
+    check("порт внутри туннеля свой", sub.SUB_PORT != sub.PUBLIC_PORT,
+          "внутри %d, снаружи %d" % (sub.SUB_PORT, sub.PUBLIC_PORT))
+    check("наружу публикуется только внешний", sub.PUBLIC_PORT == 8443,
+          "8080 открытым текстом наружу не публикуется намеренно")
 
 
 asyncio.get_event_loop().run_until_complete(main())

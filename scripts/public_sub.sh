@@ -37,11 +37,11 @@ STATE="$FLAGS_DIR/public_sub.json"
 
 # Порт наружу. 8443 — обычный запасной HTTPS: он не выделяется среди чужого
 # трафика и не путается с 443, на котором сидит вход Xray.
-PUBLIC_PORT="${SUB_PUBLIC_PORT:-8443}"
+PUBLIC_PORT=8443
 # Куда Docker разворачивает этот порт: статический адрес контейнера из
 # docker-compose и порт сервера подписок внутри него.
 CONT_IP=172.20.0.6
-CONT_PORT=8080
+CONT_PORT=8443
 CHAIN=VPN_SUB
 CERT_NAME=vpn-node-ip
 LIVE="/etc/letsencrypt/live/$CERT_NAME"
@@ -267,12 +267,12 @@ case "${1:-status}" in
     issue || exit 1
     firewall_on
     timer_on
-    # Переменные окружения — отдельными файлами-просьбами, как это делает бот:
-    # так .env не переписывается целиком и ничего чужого не теряется.
-    printf 'SUB_BIND=0.0.0.0\n' > "$FLAGS_DIR/set_env.subbind"
-    printf 'SUB_PUBLIC_PORT=%s\n' "$PUBLIC_PORT" > "$FLAGS_DIR/set_env.subport"
+    # Ничего в .env писать не нужно. Состояние — это наличие сертификата, и
+    # бот видит его сам: раз в десять минут он сверяет файлы и открывает или
+    # закрывает внешний вход. Переменная, которую можно забыть выставить, была
+    # бы ещё одним способом однажды открыть порт без сертификата.
     report "on" "подписка открыта наружу на порту $PUBLIC_PORT"
-    say "порт станет публичным после docker compose up -d в $NODE_DIR"
+    say "бот подхватит сертификат в течение десяти минут"
     ;;
 
   renew)
@@ -306,11 +306,11 @@ case "${1:-status}" in
   off)
     firewall_off
     timer_off
+    # Сертификат убран — значит бот закроет внешний вход сам. Порт останется
+    # опубликованным, но слушать его будет некому.
     rm -f "$CERT_DIR/fullchain.pem" "$CERT_DIR/privkey.pem"
-    printf 'SUB_BIND=127.0.0.1\n' > "$FLAGS_DIR/set_env.subbind"
-    printf 'SUB_PUBLIC_PORT=8080\n' > "$FLAGS_DIR/set_env.subport"
-    report "off" "подписка снова только внутри сервера"
-    say "порт закроется после docker compose up -d в $NODE_DIR"
+    report "off" "подписка снова только внутри туннеля"
+    say "бот закроет внешний вход в течение десяти минут"
     ;;
 
   status)

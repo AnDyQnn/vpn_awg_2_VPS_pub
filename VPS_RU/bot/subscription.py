@@ -302,15 +302,41 @@ async def handle_root(request):
     return web.Response(status=404, text="not found")
 
 
-# --- Сертификат -------------------------------------------------------------
+# --- Сертификат и вход снаружи ----------------------------------------------
+#
+# Здесь два разных входа, и путать их нельзя.
+#
+# Внутренний (SUB_PORT, 8080) — для тех, кто уже в туннеле. Он открытым текстом
+# и это нормально: туннель уже шифрует, а наружу этот порт не публикуется
+# вовсе. Он работает всегда, с первой секунды жизни бота.
+#
+# Внешний (PUBLIC_PORT, 8443) — для интернета, и он существует ТОЛЬКО пока
+# рядом лежит действующий сертификат. Нет сертификата — нет и сокета: снаружи
+# порт просто молчит, как закрытый. Это и есть вся защита от «случайно отдали
+# подписку открытым текстом»: её нельзя отдать, потому что слушать некому.
+#
+# Настройки у этого нет намеренно. Настройка, которую можно забыть выставить
+# или выставить не так, — сама по себе способ однажды открыть порт без
+# сертификата. Здесь такого способа нет.
+PUBLIC_PORT = 8443
 
 _ssl_ctx = None
 _cert_seen = (0, 0)
+_runner = None
+_tls_site = None
 
 
 def cert_paths():
     return (os.path.join(CERT_DIR, "fullchain.pem"),
             os.path.join(CERT_DIR, "privkey.pem"))
+
+
+def cert_ready():
+    cert, key = cert_paths()
+    try:
+        return os.path.getsize(cert) > 0 and os.path.getsize(key) > 0
+    except OSError:
+        return False
 
 
 def cert_stamp():
@@ -325,15 +351,11 @@ def cert_stamp():
 
 
 def build_ssl():
-    """Готовит TLS, если сертификат положили. Нет файлов — нет и TLS.
-
-    Так подписка остаётся рабочей в обоих случаях: пока она слушает только сам
-    сервер, шифровать нечего; как только её открыли наружу, сертификат уже
-    лежит рядом."""
+    """Готовит TLS. Нет файлов — нет и TLS, и внешнего входа тоже нет."""
     global _ssl_ctx, _cert_seen
-    cert, key = cert_paths()
-    if not (os.path.exists(cert) and os.path.exists(key)):
+    if not cert_ready():
         return None
+    cert, key = cert_paths()
     ctx = _ssl_ctx or ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
     ctx.load_cert_chain(cert, key)
     # Старые версии протокола держать незачем: приложения-клиенты все умеют
@@ -343,24 +365,61 @@ def build_ssl():
     return ctx
 
 
-async def cert_watch():
-    """Сертификат на IP живёт 160 часов и меняется раз в несколько суток.
+async def tls_start():
+    """Поднять внешний вход. Без сертификата не поднимается — и это главное."""
+    global _tls_site
+    if _tls_site is not None or _runner is None:
+        return False
+    ctx = build_ssl()
+    if ctx is None:
+        return False
+    site = web.TCPSite(_runner, "0.0.0.0", PUBLIC_PORT, ssl_context=ctx,
+                       backlog=64)
+    await site.start()
+    _tls_site = site
+    print(f"Подписка: внешний вход открыт на {PUBLIC_PORT} по https")
+    return True
 
-    Перечитываем его на месте, а не перезапуском бота: SSLContext разрешает
-    подменить цепочку, и новые соединения берут уже новый сертификат. Иначе
-    продление стоило бы обрыва всех разговоров в Telegram."""
+
+async def tls_stop():
+    """Убрать внешний вход. Порт остаётся опубликованным, но слушать некому."""
+    global _tls_site, _ssl_ctx
+    if _tls_site is None:
+        return False
+    await _tls_site.stop()
+    _tls_site, _ssl_ctx = None, None
+    print("Подписка: внешний вход закрыт")
+    return True
+
+
+async def cert_watch():
+    """Следит за сертификатом и за тем, есть ли вообще внешний вход.
+
+    Сертификат на IP живёт 160 часов и меняется раз в несколько суток.
+    Перечитываем его на месте: SSLContext разрешает подменить цепочку, и новые
+    соединения берут уже новый сертификат. Перезапускать ради этого бота
+    значило бы рвать все разговоры в Telegram раз в пять дней.
+
+    Здесь же и переключение: сертификат появился — вход открылся, сертификат
+    убрали — закрылся. Отдельного тумблера поэтому не нужно, состояние одно и
+    видно по файлу."""
     while True:
         await asyncio.sleep(600)
         try:
-            if _ssl_ctx is not None and cert_stamp() != _cert_seen:
+            if not cert_ready():
+                await tls_stop()
+            elif _tls_site is None:
+                await tls_start()
+            elif cert_stamp() != _cert_seen:
                 build_ssl()
                 print("Подписка: сертификат перечитан")
         except Exception as e:
-            print(f"Подписка: сертификат не перечитался: {e}")
+            print(f"Подписка: не удалось обновить внешний вход: {e}")
 
 
 async def start_server():
     """Поднимает сервер подписок. Вызывается один раз при старте бота."""
+    global _runner
     # client_max_size — тело запроса. У нас его не бывает вовсе, и четырёх
     # килобайт хватит, чтобы отказ пришёл раньше, чем что-то прочитается.
     app = web.Application(middlewares=[guard], client_max_size=4096)
@@ -383,13 +442,14 @@ async def start_server():
         # читают до конца, и её длину выбирает не наша сторона.
         max_line_size=4096, max_field_size=4096)
     await runner.setup()
+    _runner = runner
 
-    ctx = build_ssl()
-    site = web.TCPSite(runner, "0.0.0.0", SUB_PORT, ssl_context=ctx,
-                       backlog=64)
-    await site.start()
-    if ctx:
-        asyncio.create_task(cert_watch())
-    print("Сервер подписок слушает порт %d (%s)"
-          % (SUB_PORT, "https" if ctx else "http, только изнутри"))
+    # Внутренний вход — всегда. Он не публикуется наружу и нужен тем, кто уже
+    # в туннеле.
+    await web.TCPSite(runner, "0.0.0.0", SUB_PORT, backlog=64).start()
+    outside = await tls_start()
+    asyncio.create_task(cert_watch())
+    print("Сервер подписок: внутри порт %d, снаружи %s"
+          % (SUB_PORT, ("порт %d" % PUBLIC_PORT) if outside
+             else "закрыто (нет сертификата)"))
     return runner
