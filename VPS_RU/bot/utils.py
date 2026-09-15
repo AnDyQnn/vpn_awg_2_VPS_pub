@@ -111,6 +111,25 @@ def request_env_change(key: str, value: str):
         pass
 
 
+async def env_change_applied(timeout: int = 45) -> bool:
+    """Дождаться, пока демон на хосте заберёт просьбу.
+
+    Раньше бот писал «записано и применяется» сразу после того, как положил
+    файл. Но положить — не значит применить: если демон не запущен, просьба
+    лежит вечно, а человек уверен, что всё сделал. Пароль архива после такого
+    спрашивается снова и снова, и выглядит это как поломка бота.
+
+    Признак простой: демон забирает файл, когда применил. Исчез — применено.
+    """
+    import asyncio
+    flag = FLAGS_DIR / "set_env"
+    for _ in range(max(1, timeout)):
+        if not flag.exists():
+            return True
+        await asyncio.sleep(1)
+    return False
+
+
 def api_session(**kwargs):
     """Сессия для запросов к панелям узлов — с токеном, если он задан."""
     import aiohttp

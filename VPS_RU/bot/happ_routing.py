@@ -37,7 +37,10 @@ ALWAYS_DIRECT = [
     "192.168.0.0/16",
     "169.254.0.0/16",
     "224.0.0.0/4",
-    "255.255.255.255",
+    # С маской, а не голым адресом: списки схлопываются через разбор сетей, и
+    # после него запись всё равно станет такой. Пусть она с самого начала
+    # совпадает с тем, что уедет человеку.
+    "255.255.255.255/32",
 ]
 
 
@@ -47,6 +50,31 @@ def _is_net(value):
     имя, записанное в сети, просто не сработает."""
     value = (value or "").strip()
     return bool(value) and (value[0].isdigit() or ":" in value)
+
+
+def _collapse(nets):
+    """Схлопывает сети в минимальный набор.
+
+    Список исключений набирается по одному домену за раз, и в нём копятся
+    соседние и вложенные подсети: /24 внутри /16, две половинки одной /23.
+    На поведение это не влияет, а профиль раздувает — а он должен помещаться
+    в QR, который человек сканирует телефоном.
+
+    Что не разобралось, оставляем как есть: лучше лишняя строка, чем молча
+    выброшенное правило.
+    """
+    import ipaddress
+    parsed, kept = [], []
+    for item in nets:
+        try:
+            parsed.append(ipaddress.ip_network(item, strict=False))
+        except ValueError:
+            kept.append(item)
+    try:
+        merged = [str(n) for n in ipaddress.collapse_addresses(parsed)]
+    except (TypeError, ValueError):
+        merged = [str(n) for n in parsed]
+    return merged + kept
 
 
 async def profile(uuid_val=None):
@@ -76,10 +104,15 @@ async def profile(uuid_val=None):
     except Exception:
         cidrs = []
 
-    direct_ip = list(ALWAYS_DIRECT)
+    # Заведённые сети держим отдельно от домашних. Схлопывать их вместе нельзя:
+    # почти всё, что добавляют вручную, лежит внутри 10.0.0.0/8, и при слиянии
+    # запись просто исчезает из профиля. Работать она продолжит — 10/8 и так
+    # идёт мимо туннеля, — но владелец, открыв профиль, своей записи не найдёт
+    # и решит, что её не сохранили.
+    listed = []
     for cidr in cidrs:
-        if cidr not in direct_ip:
-            direct_ip.append(cidr)
+        if cidr not in listed:
+            listed.append(cidr)
 
     # Личные записи ключа — поверх общего списка.
     proxy_sites, proxy_ip = [], []
@@ -95,8 +128,8 @@ async def profile(uuid_val=None):
             if row["direction"] == "proxy":
                 (proxy_ip if _is_net(value) else proxy_sites).append(value)
             elif _is_net(value):
-                if value not in direct_ip:
-                    direct_ip.append(value)
+                if value not in listed:
+                    listed.append(value)
             else:
                 domains.append(value.lower())
 
@@ -111,7 +144,7 @@ async def profile(uuid_val=None):
         "DomesticDNSIP": "8.8.8.8",
         "DnsHosts": {"cloudflare-dns.com": "1.1.1.1", "dns.google": "8.8.8.8"},
         "DirectSites": sorted(set(domains)),
-        "DirectIp": direct_ip,
+        "DirectIp": list(ALWAYS_DIRECT) + _collapse(listed),
         # Имя, не совпавшее ни с одним правилом по имени, проверяется ещё и по
         # адресу: иначе домен из исключений, к которому обратились по адресу,
         # ушёл бы в туннель.
