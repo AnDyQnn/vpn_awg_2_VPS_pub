@@ -125,7 +125,10 @@ async def send_link(update: Update, context: ContextTypes.DEFAULT_TYPE, uuid_val
     await query.answer("Готовлю…")
 
     user = await db.get_user_by_uuid(uuid_val)
-    link = await xray.profile_link(uuid_val)
+    # Тот же кусок, что уходит человеку: сервера и профиль маршрутизации.
+    # Иначе владелец пересылает одно, а бот отдаёт другое — и разбираться,
+    # почему у человека нет сплита, приходится вслепую.
+    link = await xray.bundle_text(uuid_val)
     if not link:
         await query.answer("Ссылка не собралась: проверьте адрес сервера в настройках",
                            show_alert=True)
@@ -535,7 +538,10 @@ async def handout(update, context, uuid_val, name, tg_id=None):
         reply_markup=exit_kb(("👥 Люди", "list_users")))
         return False
 
-    link = await xray.profile_link(uuid_val)
+    # Тот же кусок, что уходит человеку: сервера и профиль маршрутизации.
+    # Иначе владелец пересылает одно, а бот отдаёт другое — и разбираться,
+    # почему у человека нет сплита, приходится вслепую.
+    link = await xray.bundle_text(uuid_val)
     if not link:
         # Пустой текст Telegram не принимает: раньше здесь падала вся выдача, и
         # ссылки не оставалось ни у владельца, ни у человека. Причина всегда

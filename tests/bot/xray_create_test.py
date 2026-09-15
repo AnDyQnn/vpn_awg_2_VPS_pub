@@ -158,6 +158,12 @@ async def main():
     print("владельцу сообщений:", len(to_admin), "· человеку:", len(to_user))
     assert any("vless://" in m[1] for m in to_admin), "владельцу ссылка не ушла"
     assert any("vless://" in m[1] for m in to_user), "человеку ссылка не ушла"
+    # Владелец пересылает ровно то же, что получает человек: иначе разбираться,
+    # почему у того нет сплита, приходится вслепую.
+    admin_blob = next(m[1] for m in to_admin if "vless://" in m[1])
+    user_blob = next(m[1] for m in to_user if "vless://" in m[1])
+    assert admin_blob == user_blob, "владельцу и человеку ушло разное"
+    assert "happ://routing/" in user_blob, "в куске нет профиля маршрутизации"
     assert 555 in ctx.bot.photos, "QR человеку не ушёл"
     # Предупреждение — подписью к картинке, третьего сообщения нет.
     caps = [c for c in ctx.bot.captions if c[0] == 555]
