@@ -226,6 +226,20 @@
     line-height:1.9;
     word-break:break-all;
   }
+  /* Плашка категории: единственное конкретное на странице, и строкой текста
+     она терялась. */
+  .chip{
+    display:inline-block;
+    margin-top:12px;
+    padding:5px 11px;
+    border:1px solid var(--border);
+    border-radius:999px;
+    background:rgba(88,166,255,.08);
+    color:var(--accent);
+    font-size:12.5px;
+    letter-spacing:.02em;
+    white-space:nowrap;
+  }
   .host b{
     display:block;
     color:var(--red);
@@ -310,7 +324,7 @@
     Обратиться в поддержку
   </a>
 
-  <p class="host"><b>Запрошенный адрес</b><span>__DOMAIN__</span></p>
+  <p class="host"><b>Запрошенный адрес</b><span>__DOMAIN__</span>__REF__</p>
 </main>
 
 <script>

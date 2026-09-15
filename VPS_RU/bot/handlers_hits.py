@@ -89,7 +89,8 @@ async def collect_hits():
             await db.add_filter_hit(
                 datetime.utcfromtimestamp(int(row.get("ts") or 0)),
                 uuid_val, name, ip, public,
-                (row.get("domain") or "").lower(), row.get("category"))
+                (row.get("domain") or "").lower(), row.get("category"),
+                row.get("ref"))
             added += 1
         except Exception:
             pass
@@ -134,7 +135,8 @@ async def hits_screen(update: Update, context: ContextTypes.DEFAULT_TYPE, page=0
             mark = "🔴" if not row["seen_at"] else "▫️"
             who = escape_md(row["name"] or "неизвестный ключ")
             lines.append(f"{mark} {_when(row['happened_at'])} · **{who}**")
-            lines.append(f"     `{escape_md(row['domain'])}`")
+            lines.append(f"     `{escape_md(row['domain'])}`"
+                         + (f" · `{row['ref']}`" if row.get("ref") else ""))
 
     kb = []
     for row in rows:
@@ -170,7 +172,7 @@ async def hit_open(update: Update, context: ContextTypes.DEFAULT_TYPE, hit_id):
     await db.mark_filter_hit_seen(hit_id)
 
     lines = [
-        "🚨 **Инцидент**", "",
+        "🚨 **Инцидент** `%s`" % (row.get("ref") or "без номера"), "",
         f"🕒 {_when(row['happened_at'])} (МСК)",
         f"👤 {escape_md(row['name'] or 'ключ не определён')}",
         f"🌐 Домен: `{escape_md(row['domain'])}`",
