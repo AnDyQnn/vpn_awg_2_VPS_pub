@@ -128,9 +128,11 @@ async def main():
           "· файлов:", len(sent["documents"]))
     # Человеку уходит один адрес — подписка. Разовая ссылка осталась у
     # владельца: человеку нужен один способ подключиться, а не три.
-    assert any("/sub/" in m for m in sent["messages"]), sent["messages"]
+    assert any("vless://" in m for m in sent["messages"]), sent["messages"]
     assert not sent["documents"], "человеку на Xray прислали файл конфига"
-    assert any("не передавайте" in m for m in sent["messages"])
+    # Предупреждение — подписью к картинке, чтобы не плодить третье сообщение.
+    assert any("не передавайте" in (m or "")
+               for m in sent["messages"] + sent["photos"]), sent["photos"]
     print("ссылка, QR и предупреждение: ок")
 
     print("\n=== «на связи» по трафику двойника ===")
@@ -156,7 +158,7 @@ async def main():
     assert await xray.subscription_body(token) == "", "старая ссылка ещё жива"
     # Человеку уходит один адрес — подписка. Разовая ссылка осталась
     # у владельца: человеку нужен один способ подключиться, а не три.
-    assert any("/sub/" in m for m in sent["messages"]), sent["messages"]
+    assert any("vless://" in m for m in sent["messages"]), sent["messages"]
     print("новая ссылка выдана, старая мертва: ок")
 
     await db.execute("DELETE FROM users WHERE uuid LIKE 'cl-%'")

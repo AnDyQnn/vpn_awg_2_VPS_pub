@@ -46,12 +46,16 @@ class FakeBot:
     def __init__(self):
         self.messages = []
         self.photos = []
+        self.captions = []
 
     async def send_message(self, chat_id, text, **kw):
         self.messages.append((chat_id, text))
 
     async def send_photo(self, chat_id, photo, **kw):
+        # Подпись тоже нужна: предупреждение о личной ссылке живёт
+        # в ней, а не отдельным сообщением.
         self.photos.append(chat_id)
+        self.captions.append((chat_id, kw.get("caption") or ""))
 
     async def send_document(self, chat_id, document, **kw):
         self.messages.append((chat_id, "document"))
@@ -153,9 +157,11 @@ async def main():
     to_user = [m for m in ctx.bot.messages if m[0] == 555]
     print("владельцу сообщений:", len(to_admin), "· человеку:", len(to_user))
     assert any("vless://" in m[1] for m in to_admin), "владельцу ссылка не ушла"
-    assert any("/sub/" in m[1] for m in to_user), "человеку адрес не ушёл"
+    assert any("vless://" in m[1] for m in to_user), "человеку ссылка не ушла"
     assert 555 in ctx.bot.photos, "QR человеку не ушёл"
-    assert any("не передавайте" in m[1] for m in to_user), "нет предупреждения о личной ссылке"
+    # Предупреждение — подписью к картинке, третьего сообщения нет.
+    caps = [c for c in ctx.bot.captions if c[0] == 555]
+    assert any("не передавайте" in c[1] for c in caps), caps
     print("ссылка, QR и предупреждение доехали: ок")
 
     rec = await db.get_xray_user("cr-1")

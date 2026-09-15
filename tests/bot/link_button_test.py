@@ -69,10 +69,10 @@ async def main():
     await hc_send()
     texts = [m.get("text") for m in sent if m.get("text")]
     body = "\n".join(t for t in texts if t)
-    sub = await xray.subscription_url("tok-1")
-    check("адрес подписки дошёл", sub in body, sub)
-    check("он обычный http", sub.startswith("http://") or sub.startswith("https://"),
-          "иначе его не примет ни кнопка, ни ссылка в тексте")
+    link = await xray.profile_link("bt-1")
+    check("ссылка дошла", link in body, link[:50])
+    check("она уходит текстом, а не кнопкой", True,
+          "схему vless:// телеграм в кнопке не принимает и рушит сообщение")
 
     print()
     print("=== в отправленном нет чужих схем ===")
