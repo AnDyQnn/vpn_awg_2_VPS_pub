@@ -125,6 +125,27 @@ if command -v journalctl >/dev/null 2>&1; then
     [ "$DRY" = "0" ] && journalctl --vacuum-time=7d >/dev/null 2>&1
 fi
 
+# --- 6.5 текстовые журналы ------------------------------------------------
+# journalctl чистит только своё. Рядом лежит /var/log/syslog, который пишет
+# rsyslog и который никто не подрезает между ротациями: на узле выхода он
+# дорос до полугигабайта при диске в десять. Ротация раз в неделю тут не
+# спасает — файл распухает за один день.
+for LOG in /var/log/syslog /var/log/messages /var/log/kern.log; do
+    [ -f "$LOG" ] || continue
+    SZ=$(du -m "$LOG" 2>/dev/null | cut -f1)
+    [ -z "$SZ" ] && continue
+    if [ "$SZ" -gt 100 ]; then
+        say "журнал $(basename "$LOG"): ${SZ} МБ — подрезаю"
+        if [ "$DRY" = "0" ]; then
+            # Оставляем хвост: свежие записи — единственное, ради чего в этот
+            # файл вообще заглядывают. Обрезаем на месте, чтобы не отбирать
+            # у rsyslog открытый дескриптор.
+            tail -n 20000 "$LOG" > "$LOG.keep" 2>/dev/null &&
+                cat "$LOG.keep" > "$LOG" && rm -f "$LOG.keep"
+        fi
+    fi
+done
+
 AFTER=$(free_mb)
 say "свободно после уборки: ${AFTER} МБ (освобождено $((AFTER - BEFORE)) МБ)"
 
