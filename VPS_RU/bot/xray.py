@@ -598,16 +598,12 @@ def apps_markdown(apps=None):
 
 
 async def qr_file(uuid_val):
-    """QR с подпиской — его сканируют приложением на телефоне.
+    """QR с самой ссылкой — его сканируют приложением на телефоне.
 
-    Раньше кодировалась разовая ссылка, и получалось два разных способа
-    подключиться: отсканировал — одно, скопировал — другое. Теперь и там и там
-    подписка, чтобы у человека был ровно один путь.
+    Именно ссылка, а не адрес подписки: приложение понимает её сразу и заводит
+    подключение без лишних шагов, как AmneziaWG понимает файл конфига.
     """
-    rec = await db.get_xray_user(uuid_val)
-    link = await subscription_url(rec["sub_token"]) if rec else ""
-    if not link:
-        link = await profile_link(uuid_val)
+    link = await profile_link(uuid_val)
     if not link:
         return None
     import qrcode

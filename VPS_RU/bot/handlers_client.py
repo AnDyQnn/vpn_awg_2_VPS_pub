@@ -657,42 +657,29 @@ async def client_check_all_handler(update: Update, context: ContextTypes.DEFAULT
 # --- ОБРАБОТЧИКИ (ОСТАЛЬНЫЕ) ---
 
 async def send_xray_profile(context, chat_id, uuid_val):
-    """Отдаёт человеку подключение: QR и один адрес подписки.
+    """Отдаёт человеку подключение: QR и ссылку. Больше ничего.
 
-    Раньше отсюда уходило семь сообщений и три разных адреса: разовая ссылка,
-    подписка, подписка с исключениями и объяснения ко всем трём. Человеку нужно
-    одно — добавить в приложение и забыть, как с конфигом AmneziaWG.
+    В AmneziaWG человек получает один готовый конфиг — в нём уже прописано и
+    что идёт через туннель, и что мимо. Здесь то же самое: одна ссылка, которую
+    приложение понимает сразу.
 
-    Адрес отдаём кодом, а не текстом: иначе телеграм делает из него ссылку,
-    человек жмёт и попадает в браузер, где видит набор символов вместо
-    приложения. Кодом его можно нажать и скопировать.
+    Ссылка уходит отдельным сообщением и без разметки: подчёркивания в ней
+    телеграм принимает за курсив и ломает её.
     """
     import xray
-    rec = await db.get_xray_user(uuid_val)
-    sub = await xray.subscription_url(rec["sub_token"]) if rec else ""
-    if not sub:
-        # Без подписки остаётся разовая ссылка — на случай, если адрес
-        # подписок почему-то не собрался. Пустоту человеку слать нельзя.
-        sub = await xray.profile_link(uuid_val)
-    if not sub:
+    link = await xray.profile_link(uuid_val)
+    if not link:
         return False
 
     qr = await xray.qr_file(uuid_val)
     if qr:
         await context.bot.send_photo(
             chat_id=chat_id, photo=open(qr, "rb"),
-            caption="📱 Отсканируйте в приложении — или скопируйте адрес ниже")
+            caption=("📱 Отсканируйте в приложении — или скопируйте ссылку ниже.\n"
+                     "Она личная, не передавайте её никому."))
 
-    await context.bot.send_message(
-        chat_id=chat_id,
-        text=("🔑 **Ваше подключение**\n\n"
-              f"`{sub}`\n\n"
-              "Нажмите на адрес, чтобы скопировать, и добавьте его в приложение "
-              "как подписку. Настройки дальше обновляются сами — перевыпускать "
-              "ничего не придётся.\n\n"
-              "⚠️ Адрес личный, не передавайте его никому."),
-        parse_mode=ParseMode.MARKDOWN,
-        reply_markup=exit_kb(to_client=True))
+    await context.bot.send_message(chat_id=chat_id, text=link,
+                                   reply_markup=exit_kb(to_client=True))
 
     try:
         await db.delivery_downloaded(uuid_val)

@@ -43,7 +43,9 @@ class FakeBot:
         sent.append(text)
 
     async def send_photo(self, **kw):
-        pass
+        # Предупреждение о личной ссылке живёт в подписи к картинке, а не
+        # отдельным сообщением — значит и запоминать надо её.
+        sent.append(kw.get("caption") or "")
 
 
 class FakeContext:
@@ -88,20 +90,53 @@ async def main():
     await db.set_setting("xray_sub_base", "")
 
     print()
-    print("=== человеку подписка доходит, а не остаётся в настройках ===")
+    print("=== человеку уходит ссылка, а не адрес подписки ===")
+    # Подписка остаётся механизмом и работает, но человек получает то же, что
+    # в амнезии: один готовый конфиг. Адрес, по которому надо куда-то ходить,
+    # он открывал в браузере и видел набор символов.
     import handlers_client as hc
     sent.clear()
     await hc.send_xray_profile(FakeContext(), 1, "sb-1")
-    everything = "\n".join(x for x in sent if x)
-    check("ссылка подписки отправлена", url in everything)
-    check("объяснено, что с ней делать", "обновляются сами" in everything,
-          "человек должен понять, что перевыпускать не придётся")
-    # Адрес теперь ровно один: раньше человеку уходили и разовая ссылка, и
-    # подписка, и объяснения к обеим — семь сообщений и три адреса.
-    check("второго адреса рядом нет", "vless://" not in everything,
-          "один способ подключиться, а не три")
-    check("предупреждение про личную ссылку на месте",
-          "не передавайте" in everything)
+    everything = chr(10).join(x for x in sent if x)
+    check("ушла ссылка", "vless://" in everything)
+    check("адреса подписки в ней нет", "/sub/" not in everything,
+          "человеку — конфиг, а не адрес")
+    check("предупреждение на месте", "не передавайте" in everything)
+
+    await db.execute("DELETE FROM xray_users WHERE user_uuid LIKE 'sb-%'")
+    await db.execute("DELETE FROM users WHERE uuid LIKE 'sb-%'")
+    await db.execute(
+        "INSERT INTO users (name, uuid, is_active) VALUES ('Подписчик','sb-1',TRUE)")
+    await db.execute(
+        "INSERT INTO xray_users (user_uuid, xray_uuid, sub_token) "
+        "VALUES ('sb-1','x-1','ТОКЕН-1')")
+    for key, val in (("xray_public_key", "PUB"), ("xray_short_id", "ab"),
+                     ("server_host", "1.2.3.4"), ("xray_sub_base", "")):
+        await db.set_setting(key, val)
+
+    print("=== адрес подписки есть без всякой настройки ===")
+    base = await xray.subscription_base()
+    check("адрес не пуст", bool(base), base)
+    check("ведёт внутрь туннеля", base.startswith("http://10.13.13."),
+          "наружу ничего не торчит, сертификат не нужен")
+
+    print()
+    print("=== ссылка подписки собирается ===")
+    url = await xray.subscription_url("ТОКЕН-1")
+    print("  ", url)
+    check("ссылка есть", bool(url))
+    check("личный токен внутри", "ТОКЕН-1" in url)
+    check("путь тот самый", "/sub/" in url)
+
+    print()
+    print("=== заданное владельцем сильнее умолчания ===")
+    await db.set_setting("xray_sub_base", "https://vpn.example.ru/")
+    check("взят заданный",
+          await xray.subscription_base() == "https://vpn.example.ru",
+          await xray.subscription_base())
+    check("хвостовая косая убрана",
+          not (await xray.subscription_base()).endswith("/"))
+    await db.set_setting("xray_sub_base", "")
 
     await db.execute("DELETE FROM xray_users WHERE user_uuid LIKE 'sb-%'")
     await db.execute("DELETE FROM users WHERE uuid LIKE 'sb-%'")
