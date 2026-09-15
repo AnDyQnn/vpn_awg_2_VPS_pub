@@ -179,7 +179,7 @@
     margin-top:14px;
     padding-top:14px;
     border-top:1px solid rgba(48,54,61,.75);
-    max-width:30ch;
+    max-width:42ch;
     color:var(--muted);
     font-size:14.5px;
   }
@@ -226,20 +226,28 @@
     line-height:1.9;
     word-break:break-all;
   }
-  /* Плашка категории: единственное конкретное на странице, и строкой текста
-     она терялась. */
-  .chip{
-    display:inline-block;
-    margin-top:12px;
-    padding:5px 11px;
+  /* Плашка на весь блок: причина отказа — главное на странице, и она должна
+     читаться как единое целое, а не как строка с кружком посередине. */
+  .panel{
+    padding:16px 18px;
     border:1px solid var(--border);
-    border-radius:999px;
-    background:rgba(88,166,255,.08);
+    border-radius:12px;
+    background:rgba(88,166,255,.06);
+  }
+  .panel .cat{
+    display:block;
+    margin-top:8px;
     color:var(--accent);
-    font-size:12.5px;
-    letter-spacing:.02em;
+    font-size:13.5px;
+  }
+  .ref{
+    margin:12px 0 0;
+    font-family:var(--font-mono);
+    font-size:12px;
+    color:var(--muted);
     white-space:nowrap;
   }
+  .ref span{color:var(--fg)}
   .host b{
     display:block;
     color:var(--red);
@@ -275,7 +283,7 @@
     .badge{width:92px;height:92px;margin-bottom:24px}
     .scanner{width:74px;height:74px}
     .text{max-width:32ch;font-size:15px}
-    .text + .text{max-width:28ch}
+    .text + .text{max-width:42ch}
     .cta{
       margin-top:26px;
       width:100%;
@@ -314,7 +322,7 @@
 
   <h1>__HEAD__</h1>
 
-  <p class="text">__WHY__</p>
+  <p class="text panel">__WHY__</p>
   <p class="text">__NOTE__</p>
 
   <a class="cta" href="__CONTACT_HREF__">
@@ -324,7 +332,8 @@
     Обратиться в поддержку
   </a>
 
-  <p class="host"><b>Запрошенный адрес</b><span>__DOMAIN__</span>__REF__</p>
+  <p class="host"><b>Запрошенный адрес</b><span>__DOMAIN__</span></p>
+  __REF__
 </main>
 
 <script>

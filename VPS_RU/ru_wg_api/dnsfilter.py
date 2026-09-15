@@ -649,7 +649,7 @@ def _render_block_page(host, category, ref=""):
     if category:
         head = "Этот сайт закрыт фильтром"
         why = ('Доступ ограничен администратором'
-               '<br><span class="chip">%s</span>'
+               '<span class="cat">Категория: %s</span>'
                % CATEGORY_TITLES.get(category, category))
         note = "Если это ошибка — свяжитесь с поддержкой"
         icon = ICON_FILTER
@@ -660,7 +660,9 @@ def _render_block_page(host, category, ref=""):
         icon = ICON_ACCESS
     # Номер показываем только когда он есть: пустая строка «Инцидент —» хуже
     # отсутствующей.
-    ref_block = ('<b style="margin-top:14px">Номер инцидента</b><span>%s</span>'
+    # Одной строкой: подпись и значение в столбик человек копирует по частям
+    # и присылает половину.
+    ref_block = ('<p class="ref">Номер инцидента: <span>%s</span></p>'
                  % ref) if ref else ""
 
     page = _page_cache
