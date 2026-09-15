@@ -18,6 +18,7 @@ from utils import (
     api_session,
     BOT_TOKEN, ADMIN_ID, WG_API_URL, DE_AGENT_URL, escape_md, state_data, stop_bg_tasks, deregister_menu,
     safe_delete, get_current_version, broadcast_message, extract_tg_id, check_admin, sanitize_name,
+    env_change_applied,
     analyze_resource, CONFIGS_DIR
 )
 from database import db
@@ -462,10 +463,24 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         request_env_change("BACKUP_PASSWORD", pw)
         await context.bot.send_message(
             chat_id=chat_id,
-            text=("🔐 Пароль записан в `.env` и применяется — бот сейчас перезапустится.\n\n"
-                  "⚠️ Сохраните пароль отдельно: без него архивы не открыть, "
-                  "а в базе его нет намеренно."),
-            parse_mode=ParseMode.MARKDOWN)
+            text="🔐 Пароль передан на сервер. Жду, пока применится…")
+        # Положить просьбу — не значит применить её. Записывает переменную демон
+        # на хосте; если он не запущен, просьба пролежит вечно, а бот раньше
+        # рапортовал об успехе и снова требовал пароль на следующем экране.
+        if await env_change_applied():
+            text = ("🔐 Пароль записан в `.env` — бот сейчас перезапустится.\n\n"
+                    "⚠️ Сохраните пароль отдельно: без него архивы не открыть, "
+                    "а в базе его нет намеренно.")
+        else:
+            text = ("⚠️ **Пароль не применился.**\n\n"
+                    "Записывает его служба обновлений на сервере, и она не "
+                    "ответила. Проверьте её:\n"
+                    "`systemctl status vpn-updater`\n"
+                    "`systemctl restart vpn-updater`\n\n"
+                    "Пароль не потерян: просьба лежит в `volumes/flags/set_env` "
+                    "и применится, как только служба поднимется.")
+        await context.bot.send_message(chat_id=chat_id, text=text,
+                                       parse_mode=ParseMode.MARKDOWN)
         return
 
     # Кастомная рассылка: админ прислал свой текст → шлём его ВСЕМ пользователям.

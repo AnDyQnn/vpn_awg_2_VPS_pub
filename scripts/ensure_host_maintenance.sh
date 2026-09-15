@@ -162,6 +162,31 @@ EOF
 systemctl daemon-reload 2>/dev/null || true
 systemctl enable --now vpn-watchdog.service 2>/dev/null || true
 
+# 4.5 ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ ОПИСАНЫ В .env
+# Переменная, которой в файле нет вовсе, ничем не отличается от переменной с
+# пустым значением: и то и другое выглядит как пустота. Разница в том, что
+# первую никто никогда не спрашивал — и понять это по файлу невозможно.
+#
+# Значений здесь не придумываем: пароль архива должен знать человек, а не
+# скрипт. Заводим пустые строки, чтобы было видно, чего не хватает, и чтобы
+# демону было что заменять.
+# Файл берём только существующий: в репозитории лежат папки обоих узлов, а
+# стоит на хосте один. Создавать `.env` соседу значит оставить на диске файл,
+# который ничего не настраивает и путает при разборе.
+for ENV_DIR in "$(dirname "$SELF_DIR")"/VPS_RU "$(dirname "$SELF_DIR")"/VPS_DE; do
+    ENV_FILE="$ENV_DIR/.env"
+    [ -f "$ENV_FILE" ] || continue
+    chmod 600 "$ENV_FILE" 2>/dev/null || true
+    # API_TOKEN общий для обоих узлов, пароль архива — только у мастера. Лишняя
+    # пустая строка ничему не мешает, а недостающая прячет проблему.
+    for KEY in API_TOKEN BACKUP_PASSWORD; do
+        if ! grep -q "^${KEY}=" "$ENV_FILE" 2>/dev/null; then
+            echo "${KEY}=" >> "$ENV_FILE"
+            echo "[maintenance] в $(basename "$ENV_DIR")/.env добавлена строка ${KEY}="
+        fi
+    done
+done
+
 # 5. Применяем всё. (SSH-порт закрепляется в install.sh обычным sshd — здесь не трогаем.)
 systemctl daemon-reload 2>/dev/null || true
 systemctl restart apt-daily.timer apt-daily-upgrade.timer 2>/dev/null || true

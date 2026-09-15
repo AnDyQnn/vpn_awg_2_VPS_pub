@@ -602,11 +602,10 @@ def apps_markdown(apps=None):
     return "\n".join(lines)
 
 
-# Сколько байт согласны положить в картинку. Предел QR при низкой коррекции —
-# около 2950 байт, но чем плотнее код, тем хуже он читается с экрана телефоном.
-# Не влезло — в картинке остаются только сервера, профиль человек вставит
-# текстом: лучше так, чем нечитаемый QR.
-QR_LIMIT = 1800
+# Картинку делаем крупной: код с профилем плотный, и мелкими точками он не
+# читается с экрана чужой камерой. Восемь точек на модуль — размер, при котором
+# сканируется и с телефона, и с монитора.
+QR_BOX = 8
 
 
 async def bundle_lines(uuid_val):
@@ -644,12 +643,24 @@ async def qr_file(uuid_val):
     lines = await bundle_lines(uuid_val)
     if not lines:
         return None
-    payload = "\n".join(lines)
-    if len(payload.encode()) > QR_LIMIT:
-        # Профиль в картинку не влез. Сервера важнее: без них не будет вообще
-        # ничего, а сплит доедет текстом.
-        payload = "\n".join(l for l in lines if not l.startswith("happ://"))
     import qrcode
     path = f"/tmp/xray_{uuid_val}.png"
-    qrcode.make(payload, error_correction=qrcode.constants.ERROR_CORRECT_L).save(path)
+
+    def draw(payload):
+        code = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_L,
+                             box_size=QR_BOX, border=4)
+        code.add_data(payload)
+        # fit=True подбирает размер кода под данные — вплоть до предельного,
+        # а не обрезает их.
+        code.make(fit=True)
+        code.make_image().save(path)
+
+    try:
+        draw("\n".join(lines))
+    except qrcode.exceptions.DataOverflowError:
+        # Предел QR — около 2950 байт, упереться в него можно только очень
+        # длинным списком исключений. Тогда в картинке остаются сервера: без
+        # них не будет вообще ничего, а сплит доедет текстом рядом.
+        print(f"QR: профиль не влез в картинку для {uuid_val}")
+        draw("\n".join(l for l in lines if not l.startswith("happ://")))
     return path
