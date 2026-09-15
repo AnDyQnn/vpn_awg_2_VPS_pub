@@ -85,6 +85,27 @@ if [ ! -f "$NODE_DIR/.env" ] && [ -f "$ENV_BAK" ]; then
     echo "[Deploy] .env восстановлен из бэкапа (креды сохранены)"
 fi
 
+# 1b. ПЕРЕХОД НА ОБНОВЛЁННЫЙ СКРИПТ.
+#
+# Работаем из копии, снятой ДО git pull, иначе reset --hard перезаписал бы файл
+# у нас под ногами. Из этого следует неприятное: правки в самом деплое не
+# действуют никогда — а при неудаче откат уносит их обратно, и следующего раза
+# не наступает. Поэтому код обновился — передаём работу новому скрипту. Один
+# раз, по метке, чтобы не закружиться.
+if [ -z "${DEPLOY_HANDOVER:-}" ] && [ -f "$_ORIG_SCRIPT_DIR/deploy.sh" ]; then
+    if ! cmp -s "$0" "$_ORIG_SCRIPT_DIR/deploy.sh"; then
+        echo "[Deploy] Скрипт обновления изменился — передаю работу новой версии."
+        NEW_COPY="$(mktemp /tmp/deploy_new.XXXXXX.sh)"
+        cp "$_ORIG_SCRIPT_DIR/deploy.sh" "$NEW_COPY"
+        chmod +x "$NEW_COPY"
+        DEPLOY_HANDOVER=1 DEPLOY_SELF_COPY="$_ORIG_SCRIPT_DIR/deploy.sh" \
+            bash "$NEW_COPY" "$@"
+        rc=$?
+        rm -f "$NEW_COPY"
+        exit $rc
+    fi
+fi
+
 # Фиксируем актуальный коммит, чтобы бот не считал, что обновление всё ещё доступно.
 # (Раньше volumes/VERSION писался только install.sh → локальный хеш «застывал».)
 mkdir -p "$NODE_DIR/volumes"
@@ -166,6 +187,12 @@ done
 
 if [ -n "$problem" ] && [ -n "$PREV_HASH" ]; then
     echo "[Deploy] ⛔ Новая версия нездорова:$problem"
+    # Откат уносит с собой и улики: контейнер будет пересоздан, и почему он был
+    # нездоров, выяснять станет негде.
+    if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qx de_vpn_agent; then
+        echo "[Deploy] --- последние строки de_vpn_agent ---"
+        docker logs --tail 25 de_vpn_agent 2>&1 | sed 's/^/[Deploy]   /'
+    fi
     echo "[Deploy] ↩️  ОТКАТ на предыдущую версию ${PREV_HASH:0:7}..."
     cd "$PROJECT_ROOT" && git reset --hard "$PREV_HASH"
     [ ! -f "$NODE_DIR/.env" ] && [ -f "$ENV_BAK" ] && cp -f "$ENV_BAK" "$NODE_DIR/.env"

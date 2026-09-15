@@ -102,6 +102,32 @@ if [ ! -f "$NODE_DIR/.env" ] && [ -f "$ENV_BAK" ]; then
     echo "[Deploy] .env восстановлен из бэкапа (креды сохранены)"
 fi
 
+# 1b. ПЕРЕХОД НА ОБНОВЛЁННЫЙ СКРИПТ.
+#
+# Работаем из копии, снятой ДО git pull, — иначе reset --hard перезаписал бы файл
+# у нас под ногами. Но из этого следует неприятное: правки в самом деплое не
+# действуют никогда. Скрипт делает свою работу по старым правилам, а новые лежат
+# рядом и ждут следующего раза, которого при неудаче не наступит: откат
+# возвращает дерево назад вместе с ними.
+#
+# Так и вышло: проверка после обновления отклоняла здоровую версию, а починка
+# этой проверки не могла доехать, потому что её отбрасывала она же.
+#
+# Поэтому: код обновился — передаём работу новому скрипту. Один раз, по метке,
+# чтобы не закружиться.
+if [ -z "${DEPLOY_HANDOVER:-}" ] && [ -f "$_ORIG_SCRIPT_DIR/deploy.sh" ]; then
+    if ! cmp -s "$0" "$_ORIG_SCRIPT_DIR/deploy.sh"; then
+        echo "[Deploy] Скрипт обновления изменился — передаю работу новой версии."
+        NEW_COPY="$(mktemp /tmp/deploy_new.XXXXXX.sh)"
+        cp "$_ORIG_SCRIPT_DIR/deploy.sh" "$NEW_COPY"
+        chmod +x "$NEW_COPY"
+        DEPLOY_HANDOVER=1 DEPLOY_SELF_COPY="$_ORIG_SCRIPT_DIR/deploy.sh"             bash "$NEW_COPY" "$@"
+        rc=$?
+        rm -f "$NEW_COPY"
+        exit $rc
+    fi
+fi
+
 # Фиксируем актуальный коммит, чтобы бот не считал, что обновление всё ещё доступно.
 # (Раньше volumes/VERSION писался только install.sh → локальный хеш «застывал».)
 mkdir -p "$NODE_DIR/volumes"
@@ -230,6 +256,13 @@ done
 
 if [ -n "$problem" ] && [ -n "$PREV_HASH" ]; then
     echo "[Deploy] ⛔ Новая версия нездорова:$problem"
+    # Откат уносит с собой и улики. Без этих строк остаётся только «не
+    # отвечает», а почему — выяснять уже негде: контейнеры пересозданы.
+    for c in vpn_wireguard vpn_bot; do
+        docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "$c" || continue
+        echo "[Deploy] --- последние строки $c ---"
+        docker logs --tail 25 "$c" 2>&1 | sed 's/^/[Deploy]   /'
+    done
     echo "[Deploy] ↩️  ОТКАТ на предыдущую версию ${PREV_HASH:0:7}..."
     cd "$PROJECT_ROOT" && git reset --hard "$PREV_HASH"
     cd "$NODE_DIR"
