@@ -86,6 +86,9 @@ from handlers_xray import (
     connections_screen, issue_xray, send_link, drop_awg, why_locked,
     mask_screen, mask_set,
 )
+from handlers_hits import (
+    hits_screen, hit_open, hits_seen_all, hits_loop,
+)
 from handlers_routes import (
     routes_menu, routes_ask, routes_delete, routes_show, handle_route_input,
 )
@@ -962,6 +965,14 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await dnm_delete(update, context, data.split("_", 2)[2]); return
 
     # --- Фильтрация сайтов ---
+    # Попытки на закрытое. Длинные префиксы раньше коротких.
+    if data == "hit_list": await hits_screen(update, context); return
+    if data == "hit_seen_all": await hits_seen_all(update, context); return
+    if data.startswith("hit_pg_"):
+        await hits_screen(update, context, int(data.split("hit_pg_")[1])); return
+    if data.startswith("hit_open_"):
+        await hit_open(update, context, data.split("hit_open_")[1]); return
+
     if data == "flt_menu": await filters_menu(update, context); return
     if data == "flt_common": await flt_common(update, context); return
     if data == "flt_cadd": await flt_cadd(update, context); return
@@ -1398,6 +1409,8 @@ async def post_init(application):
         asyncio.create_task(start_subscriptions()),
         # токен панелей выдаётся сам, если его нет — вводить ничего не нужно
         asyncio.create_task(ensure_api_token(application)),
+        # Попытки на закрытое забираем с узла и складываем как заявки.
+        asyncio.create_task(hits_loop(application)),
         # И дальше раз в час: клиент-сервер мог подняться позже мастера, и
         # догонять его иначе было бы нечем.
         asyncio.create_task(watch_api_token(application)),

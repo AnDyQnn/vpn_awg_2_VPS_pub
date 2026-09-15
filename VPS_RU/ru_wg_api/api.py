@@ -1687,6 +1687,20 @@ def get_dns_filters():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/dns/hits")
+def get_dns_hits(since: int = 0, limit: int = 500):
+    """Попытки достучаться до закрытого — новее указанного времени.
+
+    Узел знает только адрес в туннеле: кто за ним стоит и с какого внешнего
+    адреса пришёл, знает бот. Поэтому здесь голые факты, а разбор — у него.
+    """
+    try:
+        from dnsfilter import read_hits
+        return {"hits": read_hits(since=since, limit=limit)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/api/migration/start")
 def api_mig_start(req: MigrationStart):
     try:

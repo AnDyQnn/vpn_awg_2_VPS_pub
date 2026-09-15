@@ -1,0 +1,501 @@
+<title>Доступ ограничен</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  /* Палитра Gateway Hub: тёмная панель, синий акцент, зелёный код, фиолетовый бренд */
+  :root{
+    --bg:#0e1116;
+    --bg2:#161b22;
+    --fg:#c9d1d9;
+    --muted:#8b949e;
+    --accent:#58a6ff;
+    --good:#3fb950;
+    --border:#30363d;
+    --red:#f85149;
+    --orange:#ff8f4d;
+    --amber:#d29922;
+    --violet:#8a63ff;
+    --violet2:#a371f7;
+    --violet3:#7857d6;
+    --font-body:"IBM Plex Sans","Segoe UI",system-ui,sans-serif;
+    --font-mono:"IBM Plex Mono",ui-monospace,Consolas,monospace;
+  }
+
+  *{box-sizing:border-box}
+
+  body{
+    margin:0;
+    min-height:100vh;
+    min-height:100svh;          /* без прыжков при появлении адресной строки */
+    background:var(--bg);
+    color:var(--fg);
+    font-family:var(--font-body);
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    padding-inline:20px;
+    padding-block:48px;
+    position:relative;
+    overflow-x:hidden;
+    -webkit-text-size-adjust:100%;
+    -webkit-tap-highlight-color:transparent;
+  }
+
+  /* фоновый canvas — сеть, код и оборудование, как в панели */
+  #fx{position:fixed;inset:0;z-index:0;pointer-events:none}
+
+  .card{
+    position:relative;
+    z-index:1;
+    width:100%;
+    max-width:470px;
+    background:rgba(22,27,34,.92);
+    border:1px solid var(--border);
+    border-radius:16px;
+    padding:46px 34px 34px;
+    text-align:center;
+    box-shadow:0 24px 64px -26px rgba(0,0,0,.85), 0 0 0 1px rgba(138,99,255,.06);
+    backdrop-filter:blur(6px);
+  }
+
+  /* ---------- замок: сканер + эхо ---------- */
+  .badge{
+    position:relative;
+    width:100px;height:100px;
+    margin:0 auto 28px;
+    display:grid;place-items:center;
+    cursor:pointer;
+  }
+  /* расходящиеся круги */
+  .badge .w{
+    position:absolute;inset:0;
+    border-radius:50%;
+    border:1px solid var(--red);
+    opacity:0;
+    animation:echo 2.7s ease-out infinite;
+  }
+  .badge .w2{animation-delay:.9s;border-color:var(--orange)}
+  .badge .w3{animation-delay:1.8s;border-color:#ffd166}
+  /* окно сканера */
+  .scanner{
+    position:relative;
+    width:80px;height:80px;
+    border-radius:50%;
+    overflow:hidden;
+    display:grid;place-items:center;
+    background:radial-gradient(circle at 50% 45%, rgba(248,81,73,.13), rgba(0,0,0,0) 70%);
+    box-shadow:inset 0 0 0 1px rgba(48,54,61,.95);
+  }
+  .scanner .lines{
+    position:absolute;inset:0;
+    background:repeating-linear-gradient(0deg, rgba(88,166,255,.10) 0 1px, transparent 1px 7px);
+    opacity:.5;
+  }
+  .scanner .scan{
+    position:absolute;left:-8%;width:116%;height:2px;top:8%;
+    background:linear-gradient(90deg,transparent,#ffd166,transparent);
+    box-shadow:0 0 16px 3px rgba(255,209,102,.45);
+    animation:sweep 2.4s cubic-bezier(.5,0,.5,1) infinite;
+  }
+  .badge svg{
+    position:relative;z-index:2;display:block;overflow:visible;
+    animation:scanlit 2.4s cubic-bezier(.5,0,.5,1) infinite;
+  }
+  .badge:focus-visible{outline:2px solid var(--accent);outline-offset:6px;border-radius:50%}
+
+  .shackle{
+    stroke:var(--orange);
+    transform-origin:12px 11px;
+    animation:latch .9s cubic-bezier(.34,1.42,.5,1) .15s both;
+  }
+  .lockbody{
+    stroke:var(--red);
+    stroke-dasharray:64;
+    stroke-dashoffset:64;
+    animation:draw .85s ease-out .05s forwards;
+  }
+  .keyhole{
+    fill:#ffd166;
+    opacity:0;
+    animation:blip .5s ease-out 1s forwards;
+  }
+
+  @keyframes echo{
+    0%{transform:scale(.5);opacity:.85}
+    70%{opacity:.12}
+    100%{transform:scale(1.55);opacity:0}
+  }
+  @keyframes sweep{
+    0%{top:6%;opacity:0}
+    12%{opacity:1}
+    88%{opacity:1}
+    100%{top:92%;opacity:0}
+  }
+  @keyframes scanlit{
+    0%,100%{filter:none}
+    50%{filter:drop-shadow(0 0 7px rgba(255,209,102,.9))}
+  }
+  @keyframes draw{to{stroke-dashoffset:0}}
+  @keyframes latch{
+    0%{transform:translateY(-7px) scaleY(1.16);opacity:0}
+    55%{opacity:1}
+    100%{transform:translateY(0) scaleY(1);opacity:1}
+  }
+  @keyframes blip{
+    0%{opacity:0;transform:scale(.2)}
+    60%{opacity:1;transform:scale(1.35)}
+    100%{opacity:1;transform:scale(1)}
+  }
+
+  /* ---------- текст ---------- */
+  h1{
+    font-weight:700;
+    font-size:clamp(21px,5vw,26px);
+    line-height:1.25;
+    letter-spacing:.01em;
+    margin:0 0 18px;
+    text-wrap:balance;
+    background:linear-gradient(100deg,
+      #f85149 0%, #ff7a59 18%, #ff9f43 34%, #ffd166 50%,
+      #ff9f43 66%, #ff7a59 82%, #f85149 100%);
+    background-size:280% 100%;
+    -webkit-background-clip:text;
+    background-clip:text;
+    color:transparent;
+    animation:flow 7s linear infinite;
+  }
+  @keyframes flow{
+    0%{background-position:0% 50%}
+    100%{background-position:280% 50%}
+  }
+
+  .text{
+    margin:0 auto;
+    max-width:34ch;
+    font-size:15px;
+    line-height:1.7;
+    color:var(--fg);
+  }
+  .text + .text{
+    margin-top:14px;
+    padding-top:14px;
+    border-top:1px solid rgba(48,54,61,.75);
+    max-width:30ch;
+    color:var(--muted);
+    font-size:14.5px;
+  }
+  .text b{color:var(--accent);font-weight:500}
+  .text + .text b{
+    color:var(--amber);
+    font-weight:600;
+    white-space:nowrap;
+  }
+
+  /* ---------- кнопка ---------- */
+  .cta{
+    display:inline-flex;
+    align-items:center;
+    gap:9px;
+    margin-top:30px;
+    padding:13px 27px;
+    border-radius:10px;
+    background:linear-gradient(135deg,var(--violet) 0%,var(--violet2) 52%,var(--violet3) 100%);
+    color:#fff;
+    font-size:15px;
+    font-weight:600;
+    letter-spacing:.3px;
+    text-decoration:none;
+    box-shadow:0 6px 20px rgba(124,92,219,.42), inset 0 1px 0 rgba(255,255,255,.28);
+    transition:transform .15s ease, box-shadow .15s ease, filter .15s ease;
+  }
+  .cta:hover{
+    transform:translateY(-1px);
+    filter:brightness(1.08);
+    box-shadow:0 9px 28px rgba(124,92,219,.58), inset 0 1px 0 rgba(255,255,255,.34);
+  }
+  .cta:active{transform:translateY(0);filter:brightness(.96)}
+  .cta:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+  .cta svg{display:block;flex:none}
+
+  /* ---------- подвал ---------- */
+  .host{
+    margin:30px 0 0;
+    padding-top:20px;
+    border-top:1px solid var(--border);
+    font-family:var(--font-mono);
+    font-size:12px;
+    line-height:1.9;
+    word-break:break-all;
+  }
+  .host b{
+    display:block;
+    color:var(--red);
+    font-weight:500;
+    font-size:10.5px;
+    letter-spacing:.14em;
+    text-transform:uppercase;
+    opacity:.85;
+  }
+  .host span{
+    color:var(--red);
+    font-size:13px;
+    text-shadow:0 0 18px rgba(248,81,73,.45);
+  }
+
+  @media (prefers-reduced-motion: reduce){
+    .badge .w,.scanner .scan,.badge svg,.shackle,.lockbody,.keyhole{animation:none}
+    .lockbody{stroke-dashoffset:0}
+    .keyhole{opacity:1}
+    .cta{transition:none}
+    .cta:hover{transform:none}
+  }
+
+  /* ---------- телефон ---------- */
+  @media (max-width:560px){
+    body{padding-block:28px}
+    .card{
+      padding:36px 22px 26px;
+      border-radius:14px;
+      backdrop-filter:none;            /* размытие на телефоне дорогое */
+      background:rgba(22,27,34,.95);
+    }
+    .badge{width:92px;height:92px;margin-bottom:24px}
+    .scanner{width:74px;height:74px}
+    .text{max-width:32ch;font-size:15px}
+    .text + .text{max-width:28ch}
+    .cta{
+      margin-top:26px;
+      width:100%;
+      justify-content:center;
+      padding:15px 20px;               /* палец, а не мышь */
+    }
+    .host{margin-top:26px}
+  }
+  @media (max-width:380px){
+    .card{padding:30px 18px 22px}
+    .badge{width:84px;height:84px;margin-bottom:20px}
+    .scanner{width:68px;height:68px}
+    h1{font-size:20px}
+    .text{font-size:14.5px;max-width:30ch}
+  }
+  /* низкие экраны в альбомной ориентации */
+  @media (max-height:520px) and (orientation:landscape){
+    body{padding-block:24px}
+    .badge{width:76px;height:76px;margin-bottom:16px}
+    .scanner{width:62px;height:62px}
+    .card{padding:26px 24px 20px}
+  }
+</style>
+
+<canvas id="fx" aria-hidden="true"></canvas>
+
+<main class="card">
+  <div class="badge" id="badge" tabindex="0" role="button" aria-label="Повторить анимацию">
+    <span class="w w1"></span><span class="w w2"></span><span class="w w3"></span>
+    <span class="scanner">
+      <span class="lines"></span>
+      <span class="scan"></span>
+      <svg width="44" height="44" viewBox="0 0 24 24" fill="none"
+           stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path class="shackle" d="M7.6 10.4V7.2a4.4 4.4 0 0 1 8.8 0v3.2" fill="none"></path>
+        <rect class="lockbody" x="4.2" y="10.4" width="15.6" height="10.4" rx="2.6" fill="none"></rect>
+        <circle class="keyhole" cx="12" cy="15.6" r="1.25"></circle>
+      </svg>
+    </span>
+  </div>
+
+  <h1>Этот сайт закрыт фильтром</h1>
+
+  <p class="text">Категория: <b>Для взрослых</b></p>
+  <p class="text">Так настроено для вашего ключа. Сайт работает — его не открывает фильтр, а не поломка сети.</p>
+
+  <a class="cta" href="https://t.me/example_bot">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M21.7 3.3c-.3-.25-.72-.3-1.1-.15L2.9 10.3c-.44.17-.72.58-.7 1.04.02.46.33.85.78.98l4.36 1.26 1.7 5.2c.13.4.48.68.9.72h.1c.38 0 .74-.2.94-.53l2.4-3.9 4.3 3.17c.2.15.44.23.68.23.13 0 .26-.02.38-.07.36-.13.62-.44.7-.81l3.1-13.3c.1-.4-.03-.8-.34-1.05zM9.6 13.2l-.5 3.1-1-3.05 8-5.2-6.5 5.15z"></path>
+    </svg>
+    Обратиться в поддержку
+  </a>
+
+  <p class="host"><b>Запрошенный адрес</b><span>pornhub.com</span></p>
+</main>
+
+<script>
+(function(){
+  var badge = document.getElementById('badge');
+  if (badge) {
+    var replay = function(){
+      var svg = badge.querySelector('svg');
+      if (!svg) return;
+      var clone = svg.cloneNode(true);
+      svg.parentNode.replaceChild(clone, svg);
+    };
+    badge.addEventListener('click', replay);
+    badge.addEventListener('keydown', function(e){
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); replay(); }
+    });
+  }
+})();
+
+(function(){
+  var cv = document.getElementById('fx');
+  if (!cv || !cv.getContext) return;
+  var bx = cv.getContext('2d');
+  var TAU = Math.PI * 2;
+  var chars = '01<>{}[]/\\=+-#01ABEF$';
+  var W = 0, H = 0, nodes = [], cols = [], eq = [];
+  var still = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  /* плотность 'hi', как на странице логина Gateway Hub: 70 узлов, rain 1.1, eq 22.
+     На телефоне режется, как в оригинале: узлы вдвое, дождь вдвое, техника на 0.55 */
+  /* Узлов — от площади экрана, а не фиксированно: на широком мониторе 70 штук
+     расползаются и связи не набираются. Дистанция связи тоже поднята. */
+  function dens(){
+    if (innerWidth < 700) return { nodes: 34, rain: 0.5, eq: 9 };
+    var n = Math.round(innerWidth * innerHeight / 19000);
+    return { nodes: Math.max(70, Math.min(130, n)), rain: 1.1, eq: 22 };
+  }
+
+  function init(){
+    var D = dens(), i;
+    nodes = [];
+    for (i = 0; i < D.nodes; i++) nodes.push({
+      x: Math.random(), y: Math.random(),
+      vx: (Math.random() - .5) * 0.0004, vy: (Math.random() - .5) * 0.0004
+    });
+    cols = [];
+    var n = Math.floor(W / 16 * D.rain);
+    for (i = 0; i < n; i++) cols.push({ x: Math.random() * W, y: Math.random() * H, sp: 0.4 + Math.random() });
+    eq = [];
+    for (i = 0; i < D.eq; i++) eq.push({
+      x: Math.random() * W, y: Math.random() * H,
+      v: 0.12 + Math.random() * 0.32, sz: 11 + Math.random() * 11,
+      t: Math.floor(Math.random() * 4), rot: Math.random() * 0.5 - 0.25
+    });
+  }
+
+  function resize(){
+    W = cv.width = innerWidth;
+    H = cv.height = innerHeight;
+    init();
+    if (still) frame(true);
+  }
+
+  /* упрощённые силуэты оборудования: стойка, роутер, свитч, антенна */
+  function eqIcon(t, sz){
+    bx.lineWidth = 1.3;
+    bx.strokeStyle = 'rgba(88,166,255,1)';
+    if (t === 0){
+      bx.strokeRect(-sz * .4, -sz * .6, sz * .8, sz * 1.2);
+      for (var i = -1; i <= 1; i++){
+        bx.beginPath(); bx.moveTo(-sz * .28, i * sz * .3); bx.lineTo(sz * .28, i * sz * .3); bx.stroke();
+      }
+      bx.fillStyle = 'rgba(63,185,80,1)';
+      bx.fillRect(sz * .16, -sz * .52, sz * .1, sz * .1);
+    } else if (t === 1){
+      bx.strokeRect(-sz * .5, -sz * .18, sz, sz * .45);
+      bx.beginPath();
+      bx.moveTo(-sz * .25, -sz * .18); bx.lineTo(-sz * .34, -sz * .6);
+      bx.moveTo(sz * .25, -sz * .18); bx.lineTo(sz * .34, -sz * .6);
+      bx.stroke();
+    } else if (t === 2){
+      bx.strokeRect(-sz * .55, -sz * .22, sz * 1.1, sz * .42);
+      for (var j = 0; j < 5; j++) bx.strokeRect(-sz * .46 + j * sz * .2, sz * .02, sz * .12, sz * .12);
+    } else {
+      for (var k = 1; k <= 3; k++){
+        bx.beginPath(); bx.arc(0, sz * .3, sz * .18 * k, Math.PI * 1.15, Math.PI * 1.85); bx.stroke();
+      }
+      bx.fillStyle = bx.strokeStyle;
+      bx.beginPath(); bx.arc(0, sz * .3, sz * .06, 0, TAU); bx.fill();
+    }
+  }
+
+  function frame(once){
+    bx.clearRect(0, 0, W, H);
+
+    var i, j;
+    if (!once){
+      for (i = 0; i < nodes.length; i++){
+        var n = nodes[i];
+        n.x += n.vx; n.y += n.vy;
+        if (n.x < 0 || n.x > 1) n.vx *= -1;
+        if (n.y < 0 || n.y > 1) n.vy *= -1;
+      }
+    }
+    /* Сетка ячеек размером с дистанцию связи: каждый узел сравнивается только
+       с соседями из своей и соседних ячеек, а не со всеми подряд. Без этого
+       число сравнений растёт квадратом от числа узлов и кадр проседает. */
+    var R = 178, cell = R, cw = Math.ceil(W / cell) + 1, ch = Math.ceil(H / cell) + 1;
+    var buckets = [];
+    for (i = 0; i < nodes.length; i++){
+      var px = nodes[i].x * W, py = nodes[i].y * H;
+      nodes[i].px = px; nodes[i].py = py;
+      var key = (py / cell | 0) * cw + (px / cell | 0);
+      (buckets[key] || (buckets[key] = [])).push(nodes[i]);
+    }
+    bx.lineWidth = 1;
+    for (var gy = 0; gy < ch; gy++){
+      for (var gx = 0; gx < cw; gx++){
+        var here = buckets[gy * cw + gx];
+        if (!here) continue;
+        for (var oy = 0; oy <= 1; oy++){
+          for (var ox = (oy === 0 ? 0 : -1); ox <= 1; ox++){
+            var near = buckets[(gy + oy) * cw + (gx + ox)];
+            if (!near) continue;
+            var same = (oy === 0 && ox === 0);
+            for (i = 0; i < here.length; i++){
+              for (j = same ? i + 1 : 0; j < near.length; j++){
+                var a = here[i], b = near[j];
+                var dx = a.px - b.px, dy = a.py - b.py;
+                var d2 = dx * dx + dy * dy;
+                if (d2 < R * R){
+                  var d = Math.sqrt(d2);
+                  bx.strokeStyle = 'rgba(88,166,255,' + (0.15 * (1 - d / R)).toFixed(3) + ')';
+                  bx.beginPath(); bx.moveTo(a.px, a.py); bx.lineTo(b.px, b.py); bx.stroke();
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    bx.fillStyle = 'rgba(88,166,255,.42)';
+    bx.beginPath();
+    for (i = 0; i < nodes.length; i++){
+      bx.moveTo(nodes[i].px + 1.6, nodes[i].py);
+      bx.arc(nodes[i].px, nodes[i].py, 1.6, 0, TAU);
+    }
+    bx.fill();
+
+    bx.font = '13px ' + (getComputedStyle(document.body).getPropertyValue('--font-mono') || 'monospace');
+    for (i = 0; i < cols.length; i++){
+      var c = cols[i];
+      if (!once){
+        c.y += c.sp;
+        if (c.y > H + 14){ c.y = -14; c.x = Math.random() * W; }
+      }
+      bx.fillStyle = 'rgba(63,185,80,.17)';
+      bx.fillText(chars[(Math.floor(c.y / 16) + i) % chars.length], c.x, c.y);
+    }
+
+    for (i = 0; i < eq.length; i++){
+      var e = eq[i];
+      if (!once){
+        e.y += e.v; e.rot += 0.002;
+        if (e.y > H + e.sz){ e.y = -e.sz; e.x = Math.random() * W; }
+      }
+      bx.save();
+      bx.globalAlpha = 0.16;
+      bx.translate(e.x, e.y);
+      bx.rotate(e.rot);
+      eqIcon(e.t, e.sz);
+      bx.restore();
+    }
+
+    if (!once) requestAnimationFrame(function(){ frame(false); });
+  }
+
+  addEventListener('resize', resize);
+  addEventListener('orientationchange', function(){ setTimeout(resize, 120); });
+  resize();
+  if (!still) requestAnimationFrame(function(){ frame(false); });
+})();
+</script>

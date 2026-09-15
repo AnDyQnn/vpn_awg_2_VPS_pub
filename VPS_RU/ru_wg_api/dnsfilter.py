@@ -329,6 +329,63 @@ class Names:
 
 NAMES = Names()
 
+# --- ЖУРНАЛ ПОПЫТОК --------------------------------------------------------
+# Файл, а не память: бот забирает записи не мгновенно, а узел может
+# перезапуститься. Потолок по размеру — диск на узле маленький, и журнал не
+# должен становиться причиной его переполнения.
+HITS_FILE = os.path.join(os.path.dirname(STATE_FILE), "dns_hits.jsonl")
+HITS_MAX_BYTES = 2 * 1024 * 1024
+# Один и тот же домен браузер спрашивает пачками: страница тянет десяток
+# поддоменов, а при отказе повторяет. Пишем не чаще раза в минуту на пару
+# «адрес + домен», иначе журнал засыпет одна открытая вкладка.
+_hit_seen = {}
+HIT_QUIET_SECONDS = 60
+
+
+def record_hit(client_ip, name, category):
+    now = time.time()
+    key = (client_ip, name)
+    if now - _hit_seen.get(key, 0) < HIT_QUIET_SECONDS:
+        return
+    _hit_seen[key] = now
+    if len(_hit_seen) > 4096:                       # не растим память бесконечно
+        for k in sorted(_hit_seen, key=_hit_seen.get)[:2048]:
+            del _hit_seen[k]
+    try:
+        if os.path.exists(HITS_FILE) and os.path.getsize(HITS_FILE) > HITS_MAX_BYTES:
+            # Половину старых отбрасываем: журнал — для разбора недавнего, а не
+            # для истории на годы. История живёт у бота, в базе.
+            with open(HITS_FILE, encoding="utf-8", errors="ignore") as f:
+                lines = f.readlines()
+            with open(HITS_FILE, "w", encoding="utf-8") as f:
+                f.writelines(lines[len(lines) // 2:])
+        with open(HITS_FILE, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"ts": int(now), "ip": client_ip,
+                                "domain": name, "category": category},
+                               ensure_ascii=False) + chr(10))
+    except OSError as e:
+        print(f"Журнал попыток: {e}", flush=True)
+
+
+def read_hits(since=0, limit=500):
+    """Записи новее указанного времени. Бот забирает их и переносит к себе."""
+    out = []
+    try:
+        with open(HITS_FILE, encoding="utf-8", errors="ignore") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    row = json.loads(line)
+                except ValueError:
+                    continue
+                if row.get("ts", 0) > since:
+                    out.append(row)
+    except OSError:
+        return []
+    return out[-limit:]
+
 
 class DnsProtocol(asyncio.DatagramProtocol):
     def connection_made(self, transport):
@@ -350,6 +407,7 @@ class DnsProtocol(asyncio.DatagramProtocol):
                 return
             cat = FILTERS.blocked(addr[0], name)
             if cat:
+                record_hit(addr[0], name, cat)
                 self.transport.sendto(build_block_response(data, qend, qtype), addr)
                 return
         try:
@@ -376,6 +434,15 @@ async def forward(data, timeout=3.0, upstream=None):
         sock.close()
 
 
+def _tcp_blocked(ip, name):
+    """То же, что и по UDP, но с записью в журнал: запросы приходят обоими
+    путями, и попытка по TCP ничем не отличается от попытки по UDP."""
+    cat = FILTERS.blocked(ip, name)
+    if cat:
+        record_hit(ip, name, cat)
+    return cat
+
+
 async def handle_tcp(reader, writer):
     """DNS поверх TCP. Нужен не ради объёмных ответов, а чтобы фильтр нельзя было
     обойти, просто перейдя на TCP: заворачиваются оба порта."""
@@ -393,7 +460,7 @@ async def handle_tcp(reader, writer):
             own = NAMES.lookup(name)
             if own:
                 answer = build_a_response(data, qend, qtype, own)
-            elif FILTERS.blocked(ip, name):
+            elif _tcp_blocked(ip, name):
                 answer = build_block_response(data, qend, qtype)
         if answer is None:
             try:
