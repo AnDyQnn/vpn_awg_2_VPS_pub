@@ -602,16 +602,54 @@ def apps_markdown(apps=None):
     return "\n".join(lines)
 
 
-async def qr_file(uuid_val):
-    """QR с самой ссылкой — его сканируют приложением на телефоне.
+# Сколько байт согласны положить в картинку. Предел QR при низкой коррекции —
+# около 2950 байт, но чем плотнее код, тем хуже он читается с экрана телефоном.
+# Не влезло — в картинке остаются только сервера, профиль человек вставит
+# текстом: лучше так, чем нечитаемый QR.
+QR_LIMIT = 1800
 
-    Именно ссылка, а не адрес подписки: приложение понимает её сразу и заводит
-    подключение без лишних шагов, как AmneziaWG понимает файл конфига.
+
+async def bundle_lines(uuid_val):
+    """Всё, что нужно приложению: сервера и профиль маршрутизации.
+
+    Одним куском, потому что вставлять человек должен один раз. Профиль идёт
+    последней строкой: приложение, которое такую строку не знает, пропустит её,
+    уже разобрав сервера.
     """
-    link = await profile_link(uuid_val)
-    if not link:
+    links = await profile_links(uuid_val)
+    if not links:
+        return []
+    try:
+        import happ_routing
+        routing = await happ_routing.link(uuid_val=uuid_val)
+        if routing:
+            links = links + [routing]
+    except Exception as e:
+        # Без профиля подключение всё равно соберётся — просто без сплита.
+        print(f"Сплит: профиль не собрался для {uuid_val}: {e}")
+    return links
+
+
+async def bundle_text(uuid_val):
+    return "\n".join(await bundle_lines(uuid_val))
+
+
+async def qr_file(uuid_val):
+    """QR с тем же, что уходит текстом: сервера и сплит.
+
+    Раньше кодировалась одна ссылка, и телефон получал подключение без
+    раздельного туннелирования, а компьютер — с ним. Один и тот же ключ вёл
+    себя по-разному в зависимости от того, как его заводили.
+    """
+    lines = await bundle_lines(uuid_val)
+    if not lines:
         return None
+    payload = "\n".join(lines)
+    if len(payload.encode()) > QR_LIMIT:
+        # Профиль в картинку не влез. Сервера важнее: без них не будет вообще
+        # ничего, а сплит доедет текстом.
+        payload = "\n".join(l for l in lines if not l.startswith("happ://"))
     import qrcode
     path = f"/tmp/xray_{uuid_val}.png"
-    qrcode.make(link, error_correction=qrcode.constants.ERROR_CORRECT_L).save(path)
+    qrcode.make(payload, error_correction=qrcode.constants.ERROR_CORRECT_L).save(path)
     return path
