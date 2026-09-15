@@ -14,12 +14,28 @@ mkdir -p "$CACHE_DIR"
 
 MIN_LINES=200        # меньше — это страница ошибки, а не список
 
+# Откуда качать — спрашиваем у самого узла, а не держим вторую копию.
+#
+# Копия здесь и была: в коде узла категорий стало четырнадцать, а в этом
+# файле осталось пять. Девять новых не качались, а выглядели рабочими.
+SOURCES_RAW="$(python3 - <<'PYLIST' 2>/dev/null
+import sys
+sys.path.insert(0, '/app')
+from dnsfilter import CATEGORIES
+for key, meta in CATEGORIES.items():
+    print(key, ' '.join(meta.get('urls') or []))
+PYLIST
+)"
+
 declare -A SOURCES
-SOURCES[ads]="https://raw.githubusercontent.com/blocklistproject/Lists/master/ads.txt"
-SOURCES[adult]="https://raw.githubusercontent.com/blocklistproject/Lists/master/porn.txt"
-SOURCES[gambling]="https://raw.githubusercontent.com/blocklistproject/Lists/master/gambling.txt"
-SOURCES[malware]="https://raw.githubusercontent.com/blocklistproject/Lists/master/malware.txt https://raw.githubusercontent.com/blocklistproject/Lists/master/phishing.txt"
-SOURCES[social]="https://raw.githubusercontent.com/blocklistproject/Lists/master/facebook.txt https://raw.githubusercontent.com/blocklistproject/Lists/master/tiktok.txt"
+while read -r key urls; do
+    [ -n "$key" ] && SOURCES[$key]="$urls"
+done <<< "$SOURCES_RAW"
+
+if [ ${#SOURCES[@]} -eq 0 ]; then
+    echo "[dns-lists] перечень категорий из dnsfilter.py не прочитался"
+    exit 1
+fi
 
 CATS="$1"
 if [ -z "$CATS" ]; then

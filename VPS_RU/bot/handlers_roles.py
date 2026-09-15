@@ -97,11 +97,29 @@ async def role_screen(update: Update, context: ContextTypes.DEFAULT_TYPE, role_i
     grants = await db.get_role_grants(role_id)
     members = await db.get_role_members(role_id)
 
+    # Карта «адрес → имя в туннеле». Имена заводятся позже правил, и когда у
+    # адреса имя появляется, правило должно начать называть его: владелец
+    # читает «склад.vpn», а не вспоминает, чей это 10.13.13.30.
+    names = {}
+    try:
+        for row in await db.list_dns_names():
+            ip = row.get("target_ip")
+            if ip:
+                names[str(ip).split("/")[0]] = row["name"]
+            elif row.get("target_uuid"):
+                # Имя привязано к человеку — адрес подставляется живым.
+                # Карта отдаёт один адрес строкой, а не список: у пира он один.
+                addr = (await peer_ip_map()).get(row["target_uuid"])
+                if addr:
+                    names[addr] = row["name"]
+    except Exception:
+        names = {}
+
     lines = [f"🛡 **Роль: {escape_md(role['name'])}**", "", "*Что входит*"]
     if grants:
         for g in grants:
             note = f" — {escape_md(g['note'])}" if g.get("note") else ""
-            lines.append(f"• `{grant_text(g)}`{note}")
+            lines.append(f"• `{grant_text(g, names)}`{note}")
     else:
         lines.append("_пусто — роль не открывает ничего_")
         # «Закрыт весь туннель» звучало страшнее, чем есть: интернет, выход
@@ -126,7 +144,7 @@ async def role_screen(update: Update, context: ContextTypes.DEFAULT_TYPE, role_i
 
     kb = []
     for g in grants:
-        kb.append([InlineKeyboardButton(f"➖ {grant_text(g)}",
+        kb.append([InlineKeyboardButton(f"➖ {grant_text(g, names)}",
                                         callback_data=f"role_gdel_{role_id}_{g['id']}")])
     kb.append([InlineKeyboardButton("➕ Открыть доступ", callback_data=f"role_gadd_{role_id}")])
     for m in members:

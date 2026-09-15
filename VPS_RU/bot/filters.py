@@ -43,9 +43,7 @@ CATEGORIES = [
     ("scam", "Мошенничество"),
     ("tracking", "Слежка и телеметрия"),
     ("drugs", "Наркотики и алкоголь"),
-    ("games", "Игры"),
     ("streaming", "Видео и стриминг"),
-    ("dating", "Знакомства"),
     ("ransomware", "Шифровальщики"),
 ]
 TITLES = dict(CATEGORIES)

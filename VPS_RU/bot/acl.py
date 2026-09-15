@@ -172,16 +172,32 @@ async def apply_access_rules(reason: str = ""):
     return True, msg
 
 
-def grant_text(grant) -> str:
+def grant_text(grant, names=None) -> str:
     """Человеческая запись правила: «дом.vpn», «10.13.13.7 · tcp 443».
 
     Имя показываем как есть, а не разрешённый адрес: правило написано про имя,
-    и подстановка цифр только запутала бы — завтра они будут другие."""
+    и подстановка цифр только запутала бы — завтра они будут другие.
+
+    `names` — карта «адрес → имя в туннеле». Имена заводятся позже правил, и
+    когда у адреса имя появляется, правило начинает называть его: владелец
+    читает «склад.vpn», а не вспоминает, чей это 10.13.13.30.
+    """
     # У правила-на-человека имени туннеля нет — там подпись с его именем.
     if grant.get("target_uuid"):
         target = grant.get("note") or "человек"
+    elif grant.get("name"):
+        target = grant["name"]
+    elif grant.get("cidr"):
+        target = grant["cidr"]
+        known = (names or {}).get(str(target).split("/")[0])
+        if known:
+            # Имя первым: оно и есть ответ на вопрос «что это». Адрес рядом —
+            # чтобы правило оставалось проверяемым.
+            target = f"{known} ({target})"
     else:
-        target = grant.get("name") or grant.get("cidr") or "?"
+        # Ни адреса, ни имени, ни человека — такого не бывает, но если
+        # случится, пусть будет видно, что запись испорчена, а не «?».
+        target = "правило без цели"
     proto = (grant.get("proto") or "any").lower()
     port = grant.get("port")
     if proto in ("tcp", "udp"):

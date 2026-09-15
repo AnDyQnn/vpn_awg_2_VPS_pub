@@ -1054,8 +1054,11 @@ class Database:
 
     async def get_role_grants(self, role_id):
         rows = await self.fetch_all(
-            "SELECT id, kind, name, cidr, proto, port, note FROM role_grants "
-            "WHERE role_id=$1 ORDER BY id", role_id)
+            # target_uuid обязателен: по нему правило-на-человека и отличается
+            # от правила-на-адрес. Без него оно выглядело безымянным и
+            # показывалось как «?».
+            "SELECT id, kind, name, cidr, proto, port, note, target_uuid "
+            "FROM role_grants WHERE role_id=$1 ORDER BY id", role_id)
         return [dict(r) for r in rows]
 
     async def add_role_grant(self, role_id, cidr=None, proto="any", port=None,
