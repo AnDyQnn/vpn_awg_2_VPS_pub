@@ -847,12 +847,12 @@ async def client_regen_action(update: Update, context: ContextTypes.DEFAULT_TYPE
                 "проверьте экран «Протоколы → Xray».",
                 reply_markup=exit_kb(to_client=True))
             return
+        # Без кнопок: выход уже есть на последнем сообщении, которое отправила
+        # выдача. Раньше здесь шло ещё одно сообщение — «Что дальше?» с кнопкой
+        # в меню: оно появилось, когда у выдачи выхода не было. Теперь это
+        # пятое сообщение подряд, которое ничего не говорит.
         await query.edit_message_text("✅ Готово. Новая ссылка выше, прежняя "
                                       "больше не работает.")
-        await context.bot.send_message(
-            chat_id=chat_id, text="Что дальше?",
-            reply_markup=InlineKeyboardMarkup(
-                [[InlineKeyboardButton("🔙 В меню", callback_data="client_menu")]]))
         return
 
 
