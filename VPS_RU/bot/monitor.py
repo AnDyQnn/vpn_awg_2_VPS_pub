@@ -1424,10 +1424,59 @@ async def bypass_list_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     else:
         lines.append("_Список пуст._")
 
+    # Про Xray — отдельной строкой: там перевыпуск не нужен вовсе, и без этого
+    # владелец каждый раз гадает, дошёл ли до тех людей новый список.
+    try:
+        import happ_routing
+        info = await happ_routing.summary()
+        lines.append("")
+        lines.append(f"📱 *Людям на Xray* тот же список уезжает подпиской сам — "
+                     f"доменов {info['domains']}, сетей {info['nets']}. "
+                     f"Перевыпуск им не нужен.")
+    except Exception:
+        pass
+
     kb.append([InlineKeyboardButton("➕ Добавить вручную", callback_data="bypass_add_manual")])
+    kb.append([InlineKeyboardButton("📱 Профиль для Xray", callback_data="bypass_happ")])
     kb.append([InlineKeyboardButton("📨 Напомнить о перевыпуске", callback_data="bypass_notify_now")])
     kb.append([InlineKeyboardButton("🔙 Назад", callback_data="back_to_main")])
     await query.edit_message_text("\n".join(lines), parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(kb))
+
+async def bypass_happ_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Готовый профиль маршрутизации — чтобы проверить его на своём устройстве.
+
+    Людям он приезжает подпиской и сам, эта кнопка нужна для другого: увидеть
+    своими глазами, что именно уезжает, и взять профиль за основу, если хочется
+    дописать к нему что-то своё.
+    """
+    import happ_routing
+    query = update.callback_query
+    await query.answer()
+    info = await happ_routing.summary()
+    link = await happ_routing.link()
+
+    lines = [
+        "📱 **Сплит для Xray**", "",
+        f"Мимо туннеля идут: доменов **{info['domains']}**, "
+        f"сетей **{info['nets']}**, плюс {info['always']} служебных "
+        "(домашняя сеть, link-local, multicast).",
+        "",
+        "Людям это уезжает подпиской само: профиль называется одинаково, и "
+        "приложение обновляет его, а не кладёт рядом второй.",
+        "",
+        "Ссылка ниже — тот же профиль. Нажмите, чтобы скопировать, и "
+        "откройте на устройстве с приложением:",
+        f"`{link}`",
+        "",
+        "_Дописать своё можно на routing.happ.su: вставить туда эту ссылку, "
+        "добавить нужное и забрать новую._",
+    ]
+    kb = [[InlineKeyboardButton("🔙 К исключениям", callback_data="bypass_list")]]
+    await query.edit_message_text("\n".join(lines),
+                                  parse_mode=ParseMode.MARKDOWN,
+                                  reply_markup=InlineKeyboardMarkup(kb),
+                                  disable_web_page_preview=True)
+
 
 async def bypass_del_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, exid: str):
     query = update.callback_query
