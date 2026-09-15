@@ -134,7 +134,12 @@ echo "[Deploy] Версия проекта: $APP_VERSION (тег образов)
 
 # 4. СБОРКА новых образов, пока старые контейнеры ещё работают (даунтайм = 0)
 echo "[Deploy] Шаг 3: Сборка новых образов (старые контейнеры продолжают работать)..."
-if ! docker compose build; then
+# Сборка пишет полосу прогресса псевдографикой и перерисовывает её
+# десятки раз в секунду. В терминале это одна строка, а в журнале —
+# отдельная запись на каждую перерисовку: на узле выхода за один деплой
+# так набежало 2,5 миллиона строк и полгигабайта syslog при диске в 10 ГБ.
+# `--progress plain` пишет по строке на шаг, а не на кадр.
+if ! docker compose build --progress plain; then
     echo "[Deploy] ❌ Сборка не удалась — работающие контейнеры НЕ трогаю."
     echo "[Deploy] Деплой отменён, VPN продолжает работать на старой версии."
     exit 1
@@ -165,7 +170,7 @@ if [ -n "$problem" ] && [ -n "$PREV_HASH" ]; then
     cd "$PROJECT_ROOT" && git reset --hard "$PREV_HASH"
     [ ! -f "$NODE_DIR/.env" ] && [ -f "$ENV_BAK" ] && cp -f "$ENV_BAK" "$NODE_DIR/.env"
     cd "$NODE_DIR"
-    docker compose up -d --build --remove-orphans
+    docker compose up -d --build --progress plain --remove-orphans
     echo "${PREV_HASH:0:7}" > "$NODE_DIR/volumes/VERSION"
     docker image prune -f
     echo "[Deploy] ✅ Откат выполнен — DE снова на рабочей версии ${PREV_HASH:0:7}."
