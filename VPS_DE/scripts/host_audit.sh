@@ -195,8 +195,29 @@ sleep 1
 # ---------------- БЕЗОПАСНОСТЬ ----------------
 echo "security" > "$STATUS_FILE"
 
-ROOT_SSH=$(grep "^PermitRootLogin yes" /etc/ssh/sshd_config 2>/dev/null)
-[ -n "$ROOT_SSH" ] && add_check CAT_SEC "SSH Root Login" "warning" "Разрешён (рекомендуется отключить)" || add_check CAT_SEC "SSH Root Login" "ok" "Защищён"
+# Спрашиваем у самого sshd: настройки живут ещё и в /etc/ssh/sshd_config.d/,
+# куда их кладёт хостинг. Проверка, читающая один файл, рапортует о защите,
+# которой нет.
+SSHD_EFF=$(sshd -T 2>/dev/null)
+if [ -z "$SSHD_EFF" ]; then
+    add_check CAT_SEC "SSH Root Login" "warning" "Не удалось прочитать настройки sshd"
+    add_check CAT_SEC "Вход по паролю (SSH)" "warning" "Не удалось прочитать настройки sshd"
+else
+    ROOT_SSH=$(echo "$SSHD_EFF" | grep -i "^permitrootlogin " | awk '{print $2}')
+    case "$ROOT_SSH" in
+        yes) add_check CAT_SEC "SSH Root Login" "warning" "Разрешён (рекомендуется отключить)" ;;
+        prohibit-password|without-password) add_check CAT_SEC "SSH Root Login" "ok" "Только по ключу" ;;
+        *) add_check CAT_SEC "SSH Root Login" "ok" "Защищён" ;;
+    esac
+
+    SSH_PASS=$(echo "$SSHD_EFF" | grep -i "^passwordauthentication " | awk '{print $2}')
+    SSH_KBD=$(echo "$SSHD_EFF" | grep -i "^kbdinteractiveauthentication " | awk '{print $2}')
+    if [ "$SSH_PASS" = "yes" ] || [ "$SSH_KBD" = "yes" ]; then
+        add_check CAT_SEC "Вход по паролю (SSH)" "warning" "Разрешён (уязвимо к брутфорсу)"
+    else
+        add_check CAT_SEC "Вход по паролю (SSH)" "ok" "Отключён (по ключам)"
+    fi
+fi
 
 UFW_STAT=$(ufw status 2>/dev/null | grep -i "active")
 IPT_STAT=$(iptables -L -n 2>/dev/null | grep "Chain INPUT" | wc -l)

@@ -134,7 +134,9 @@ for LOG in /var/log/syslog /var/log/messages /var/log/kern.log; do
     [ -f "$LOG" ] || continue
     SZ=$(du -m "$LOG" 2>/dev/null | cut -f1)
     [ -z "$SZ" ] && continue
-    if [ "$SZ" -gt 100 ]; then
+    # Порог низкий намеренно: уборка идёт в конце КАЖДОГО обновления, и ждать,
+    # пока файл дорастёт до сотни мегабайт, незачем — он и так растёт рывками.
+    if [ "$SZ" -gt 50 ]; then
         say "журнал $(basename "$LOG"): ${SZ} МБ — подрезаю"
         if [ "$DRY" = "0" ]; then
             # Оставляем хвост: свежие записи — единственное, ради чего в этот

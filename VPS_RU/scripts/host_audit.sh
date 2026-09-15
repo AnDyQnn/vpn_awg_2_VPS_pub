@@ -267,10 +267,17 @@ BK_COUNT=$(ls -1 "$APP_DIR/volumes/backups"/*.sql.gz "$APP_DIR/volumes/backups"/
 
 [ -d "$APP_DIR/volumes/backups" ] && add_check CAT_STORAGE "Директория резервных копий" "ok" "Существует" || add_check CAT_STORAGE "Директория резервных копий" "warning" "Отсутствует"
 
-BACKUP_FILE_PATH="$APP_DIR/volumes/backups/backup_latest.tar.gz"
-if [ -f "$BACKUP_FILE_PATH" ]; then
-    AGE=$(find "$BACKUP_FILE_PATH" -mtime -2)
-    [ -n "$AGE" ] && add_check CAT_STORAGE "Актуальность Бэкапа" "ok" "Свежий (< 48ч)" || add_check CAT_STORAGE "Актуальность Бэкапа" "warning" "Устарел (> 48ч)"
+# Ищем самый свежий архив, а не файл с одним заданным именем. Рядом лежали
+# шесть штук, а проверка говорила «не найден» — сразу под строкой, где сама же
+# показывала их количество.
+BACKUP_DIR="$APP_DIR/volumes/backups"
+NEWEST_BACKUP=$(ls -t "$BACKUP_DIR"/*.tar.gz "$BACKUP_DIR"/*.tar.gz.gpg 2>/dev/null | head -1)
+if [ -n "$NEWEST_BACKUP" ]; then
+    if [ -n "$(find "$NEWEST_BACKUP" -mtime -2 2>/dev/null)" ]; then
+        add_check CAT_STORAGE "Актуальность Бэкапа" "ok" "Свежий (< 48ч): $(basename "$NEWEST_BACKUP")"
+    else
+        add_check CAT_STORAGE "Актуальность Бэкапа" "warning" "Устарел (> 48ч): $(basename "$NEWEST_BACKUP")"
+    fi
 else
     add_check CAT_STORAGE "Актуальность Бэкапа" "warning" "Бэкап не найден"
 fi
@@ -289,13 +296,41 @@ sleep 1
 
 echo "security" > "$STATUS_FILE"
 
-ROOT_SSH=$(grep "^PermitRootLogin yes" /etc/ssh/sshd_config 2>/dev/null)
-[ -n "$ROOT_SSH" ] && add_check CAT_SEC "SSH Root Login" "warning" "Разрешен (Рекомендуется отключить)" || add_check CAT_SEC "SSH Root Login" "ok" "Защищен"
+# Спрашиваем у самого sshd, а не грепаем файл. Настройки живут ещё и в
+# /etc/ssh/sshd_config.d/ — туда их кладёт хостинг при выдаче машины, и там у
+# нас стояли `PasswordAuthentication yes` и `PermitRootLogin yes`, пока аудит
+# рапортовал «Защищён» и «по ключам». Проверка защиты, которая не видит
+# половину настроек, хуже отсутствующей: она успокаивает.
+SSHD_EFF=$(sshd -T 2>/dev/null)
+if [ -z "$SSHD_EFF" ]; then
+    # sshd -T требует root и корректного конфига. Не ответил — так и говорим,
+    # а не додумываем за него.
+    add_check CAT_SEC "SSH Root Login" "warning" "Не удалось прочитать настройки sshd"
+    add_check CAT_SEC "Вход по паролю (SSH)" "warning" "Не удалось прочитать настройки sshd"
+    SSH_PORT=$(grep -iE "^Port\s+" /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}')
+else
+    ROOT_SSH=$(echo "$SSHD_EFF" | grep -i "^permitrootlogin " | awk '{print $2}')
+    case "$ROOT_SSH" in
+        yes)
+            add_check CAT_SEC "SSH Root Login" "warning" "Разрешен (Рекомендуется отключить)" ;;
+        prohibit-password|without-password)
+            add_check CAT_SEC "SSH Root Login" "ok" "Только по ключу" ;;
+        *)
+            add_check CAT_SEC "SSH Root Login" "ok" "Защищен" ;;
+    esac
 
-SSH_PASS=$(grep -iE "^PasswordAuthentication\s+yes" /etc/ssh/sshd_config 2>/dev/null)
-[ -z "$SSH_PASS" ] && add_check CAT_SEC "Вход по паролю (SSH)" "ok" "Отключен (по ключам)" || add_check CAT_SEC "Вход по паролю (SSH)" "warning" "Разрешен (Уязвимо к брутфорсу)"
+    SSH_PASS=$(echo "$SSHD_EFF" | grep -i "^passwordauthentication " | awk '{print $2}')
+    SSH_KBD=$(echo "$SSHD_EFF" | grep -i "^kbdinteractiveauthentication " | awk '{print $2}')
+    if [ "$SSH_PASS" = "yes" ] || [ "$SSH_KBD" = "yes" ]; then
+        # Проверяем обе: клавиатурный вход — это тот же пароль, просто спрошенный
+        # иначе, и отключив только первую, защиты не получаешь.
+        add_check CAT_SEC "Вход по паролю (SSH)" "warning" "Разрешен (Уязвимо к брутфорсу)"
+    else
+        add_check CAT_SEC "Вход по паролю (SSH)" "ok" "Отключен (по ключам)"
+    fi
 
-SSH_PORT=$(grep -iE "^Port\s+" /etc/ssh/sshd_config | awk '{print $2}' 2>/dev/null)
+    SSH_PORT=$(echo "$SSHD_EFF" | grep -i "^port " | awk '{print $2}' | head -1)
+fi
 [ "${SSH_PORT:-22}" = "22" ] && add_check CAT_SEC "Порт SSH" "warning" "Стандартный 22 (Риск)" || add_check CAT_SEC "Порт SSH" "ok" "Нестандартный (${SSH_PORT:-22})"
 
 UFW_STAT=$(ufw status 2>/dev/null | grep -i "active")
