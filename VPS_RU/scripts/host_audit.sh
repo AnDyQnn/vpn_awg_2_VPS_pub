@@ -267,19 +267,39 @@ BK_COUNT=$(ls -1 "$APP_DIR/volumes/backups"/*.sql.gz "$APP_DIR/volumes/backups"/
 
 [ -d "$APP_DIR/volumes/backups" ] && add_check CAT_STORAGE "Директория резервных копий" "ok" "Существует" || add_check CAT_STORAGE "Директория резервных копий" "warning" "Отсутствует"
 
-# Ищем самый свежий архив, а не файл с одним заданным именем. Рядом лежали
-# шесть штук, а проверка говорила «не найден» — сразу под строкой, где сама же
-# показывала их количество.
+# Проверка искала `backup_latest.tar.gz` — имя БЕЗ расширения шифрования. А
+# когда пароль архива задан (как и положено), файл называется
+# `backup_latest.tar.gz.gpg`, и проверка не находила его никогда. То есть она
+# ломалась ровно в том случае, когда всё настроено правильно.
+#
+# На живом узле так и было: свежий шифрованный архив лежал на месте, а отчёт
+# писал «Бэкап не найден» — строкой ниже собственного «Файлов бэкапов: 6».
 BACKUP_DIR="$APP_DIR/volumes/backups"
-NEWEST_BACKUP=$(ls -t "$BACKUP_DIR"/*.tar.gz "$BACKUP_DIR"/*.tar.gz.gpg 2>/dev/null | head -1)
-if [ -n "$NEWEST_BACKUP" ]; then
-    if [ -n "$(find "$NEWEST_BACKUP" -mtime -2 2>/dev/null)" ]; then
-        add_check CAT_STORAGE "Актуальность Бэкапа" "ok" "Свежий (< 48ч): $(basename "$NEWEST_BACKUP")"
-    else
-        add_check CAT_STORAGE "Актуальность Бэкапа" "warning" "Устарел (> 48ч): $(basename "$NEWEST_BACKUP")"
-    fi
-else
+NEWEST_BACKUP=""
+for CAND in "$BACKUP_DIR/backup_latest.tar.gz.gpg" "$BACKUP_DIR/backup_latest.tar.gz"; do
+    [ -f "$CAND" ] && { NEWEST_BACKUP="$CAND"; break; }
+done
+# Копии под привычным именем нет — смотрим историю: она пишется теми же
+# сборками и годится не хуже.
+[ -z "$NEWEST_BACKUP" ] && NEWEST_BACKUP=$(ls -t "$BACKUP_DIR"/archive/*.tar.gz* 2>/dev/null | head -1)
+
+if [ -z "$NEWEST_BACKUP" ]; then
     add_check CAT_STORAGE "Актуальность Бэкапа" "warning" "Бэкап не найден"
+else
+    case "$NEWEST_BACKUP" in
+        *.gpg) BK_KIND="шифрованный" ;;
+        *)     BK_KIND="БЕЗ ШИФРОВАНИЯ" ;;
+    esac
+    if [ -n "$(find "$NEWEST_BACKUP" -mtime -2 2>/dev/null)" ]; then
+        # Незашифрованный архив — это ключ сервера и конфиги всех людей
+        # открытым текстом, и «ок» тут ставить нельзя.
+        case "$NEWEST_BACKUP" in
+            *.gpg) add_check CAT_STORAGE "Актуальность Бэкапа" "ok" "Свежий (< 48ч), $BK_KIND" ;;
+            *)     add_check CAT_STORAGE "Актуальность Бэкапа" "warning" "Свежий, но $BK_KIND" ;;
+        esac
+    else
+        add_check CAT_STORAGE "Актуальность Бэкапа" "warning" "Устарел (> 48ч), $BK_KIND"
+    fi
 fi
 
 [ -d "$APP_DIR/volumes/configs" ] && add_check CAT_STORAGE "Хранилище конфигов" "ok" "Доступно" || add_check CAT_STORAGE "Хранилище конфигов" "error" "Удалено"
@@ -369,8 +389,24 @@ echo "services" > "$STATUS_FILE"
 systemctl is-active --quiet vpn-updater
 [ $? -eq 0 ] && add_check CAT_LOGS "Демон vpn-updater" "ok" "Active" || add_check CAT_LOGS "Демон vpn-updater" "error" "Остановлен"
 
+# Расписание в проекте держится на таймерах systemd: уборка, обновления,
+# проверка хоста. Cron нам не нужен вовсе, и ругаться на его отсутствие значит
+# каждую неделю показывать предупреждение, на которое нечего ответить.
+#
+# Проверяем то, что действительно важно: живы ли НАШИ таймеры.
+TIMERS_DEAD=""
+for T in vpn-cleanup.timer apt-daily-upgrade.timer; do
+    systemctl list-unit-files "$T" >/dev/null 2>&1 || continue
+    [ "$(systemctl is-active "$T" 2>/dev/null)" = "active" ] || TIMERS_DEAD="$TIMERS_DEAD $T"
+done
+if [ -n "$TIMERS_DEAD" ]; then
+    add_check CAT_LOGS "Таймеры обслуживания" "warning" "Не запущены:$TIMERS_DEAD"
+else
+    add_check CAT_LOGS "Таймеры обслуживания" "ok" "Уборка и обновления по расписанию"
+fi
+
 CRON_STAT=$(systemctl is-active cron 2>/dev/null || systemctl is-active crond 2>/dev/null)
-[ "$CRON_STAT" = "active" ] && add_check CAT_LOGS "Планировщик (Cron)" "ok" "Работает" || add_check CAT_LOGS "Планировщик (Cron)" "warning" "Остановлен"
+[ "$CRON_STAT" = "active" ] && add_check CAT_LOGS "Планировщик (Cron)" "ok" "Работает" || add_check CAT_LOGS "Планировщик (Cron)" "ok" "Не используется (расписание на таймерах systemd)"
 
 JOURNAL_STAT=$(systemctl is-active systemd-journald 2>/dev/null)
 [ "$JOURNAL_STAT" = "active" ] && add_check CAT_LOGS "Системный Журнал (Journald)" "ok" "Работает" || add_check CAT_LOGS "Системный Журнал (Journald)" "error" "Остановлен"
