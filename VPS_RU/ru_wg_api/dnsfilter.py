@@ -22,6 +22,9 @@ cloudflare-dns.com, и на уровне DNS его не видно. Фильт�
 import asyncio
 import json
 import os
+import array
+import bisect
+import hashlib
 import re
 import socket
 import struct
@@ -36,7 +39,10 @@ BLOCK_IP = os.getenv("DNS_BLOCK_IP", "10.13.13.1")   # адрес страниц
 LISTEN_PORT = int(os.getenv("DNS_PORT", "53"))
 STATE_POLL_SECONDS = 5
 BLOCK_TTL = 60
-MAX_DOMAINS_PER_CATEGORY = 150000
+# Потолок на категорию. Держим не строки, а отпечатки — восемь байт на домен,
+# поэтому миллион помещается в восемь мегабайт и упирается не в память, а в
+# здравый смысл: списки длиннее миллиона в природе не встречаются.
+MAX_DOMAINS_PER_CATEGORY = 2000000
 
 # Категории и откуда берутся списки. Источники — публичные, в формате «домен в строке»
 # или hosts. Если источник недоступен, категория остаётся с прошлым кэшем, а не пустой:
@@ -136,9 +142,24 @@ def build_servfail(query):
 
 # --- списки категорий ------------------------------------------------------
 
+def _fingerprint(domain):
+    """Восемь байт от имени. Хранить миллион строк в контейнере на 512 МБ
+    нельзя, а миллион чисел — восемь мегабайт.
+
+    Берём устойчивый хеш, а не встроенный: встроенный меняется от запуска к
+    запуску, и кэш, собранный до перезапуска, перестал бы совпадать сам с собой.
+    """
+    return int.from_bytes(hashlib.blake2b(domain.encode(), digest_size=8).digest(),
+                          "big", signed=True)
+
+
 def _parse_list(text):
-    """Понимает и hosts-формат, и просто домены в строку."""
-    out = set()
+    """Понимает и hosts-формат, и просто домены в строку.
+
+    Возвращает упорядоченный массив отпечатков: проверка бинарным поиском,
+    память — восемь байт на домен.
+    """
+    seen = array.array("q")
     for line in text.splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
@@ -150,10 +171,20 @@ def _parse_list(text):
             continue
         if " " in domain or "/" in domain:
             continue
-        out.add(domain)
-        if len(out) >= MAX_DOMAINS_PER_CATEGORY:
+        seen.append(_fingerprint(domain))
+        if len(seen) >= MAX_DOMAINS_PER_CATEGORY:
             break
+    out = array.array("q", sorted(set(seen)))
     return out
+
+
+def _has(domains, name):
+    """Есть ли имя в категории. Массив упорядочен, поэтому бинарным поиском."""
+    if not domains:
+        return False
+    mark = _fingerprint(name)
+    i = bisect.bisect_left(domains, mark)
+    return i < len(domains) and domains[i] == mark
 
 
 class Filters:
@@ -236,8 +267,10 @@ class Filters:
             domains = self.domains.get(cat)
             if not domains:
                 continue
+            # Проверяем и сам домен, и родительские: в списке example.com, а
+            # спрашивают ads.example.com.
             for i in range(len(parts) - 1):
-                if ".".join(parts[i:]) in domains:
+                if _has(domains, ".".join(parts[i:])):
                     return cat
         return None
 

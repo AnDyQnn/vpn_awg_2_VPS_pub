@@ -254,7 +254,9 @@ async def service_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🛡 Доступы · роли", callback_data="roles_menu"),
          InlineKeyboardButton("🧹 Фильтры", callback_data="flt_menu")],
         [InlineKeyboardButton("🏷 Имена в туннеле", callback_data="dnm_menu"),
-         InlineKeyboardButton("💳 Поддержка", callback_data="don_menu")],
+         # Не «Поддержка»: ниже есть «🆘 Поддержка» про обращения, и две кнопки
+         # с одним словом читаются как одна и та же.
+         InlineKeyboardButton("💳 Донаты", callback_data="don_menu")],
         [InlineKeyboardButton(
             "📋 Ждут решения" + (f" · {len(decisions)}" if decisions else ""),
             callback_data="kd_list"),
