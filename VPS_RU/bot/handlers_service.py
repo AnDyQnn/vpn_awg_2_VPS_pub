@@ -225,6 +225,12 @@ async def service_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         lines.append("🔀 *Протоколы:* узел не ответил")
 
+    try:
+        import handlers_pubsub
+        lines.append(handlers_pubsub.status_line())
+    except Exception:
+        pass
+
     lines.append("")
     try:
         import donate
@@ -259,7 +265,8 @@ async def service_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton(main_label, callback_data="svc_mode_toggle")],
         [InlineKeyboardButton("📊 Нагрузка", callback_data="svc_load"),
          InlineKeyboardButton("⚖️ Лимиты", callback_data="svc_limits")],
-        [InlineKeyboardButton("🔀 Протоколы", callback_data="proto_menu")],
+        [InlineKeyboardButton("🔀 Протоколы", callback_data="proto_menu"),
+         InlineKeyboardButton("🌐 Подписка наружу", callback_data="psub_menu")],
         [InlineKeyboardButton("🛡 Доступы · роли", callback_data="roles_menu"),
          InlineKeyboardButton("🧹 Фильтры", callback_data="flt_menu")],
         [InlineKeyboardButton(

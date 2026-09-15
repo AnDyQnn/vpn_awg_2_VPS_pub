@@ -883,6 +883,16 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "svc_tok_now": await token_now(update, context); return
     if data == "svc_tok_back": await token_rollback(update, context); return
     if data == "svc_tfix": await traffic_fix_screen(update, context); return
+    # Подписка наружу: открыть, закрыть, продлить. Работу делает хост, здесь
+    # только просьба и показ того, что вышло.
+    if data.startswith("psub_"):
+        import handlers_pubsub as hps
+        if data == "psub_menu":
+            context.user_data.pop("psub_sure", None)
+            await hps.screen(update, context); return
+        if data == "psub_on": await hps.turn_on(update, context); return
+        if data == "psub_off": await hps.turn_off(update, context); return
+        if data == "psub_renew": await hps.renew_now(update, context); return
     if data == "svc_tfix_go": await traffic_fix_apply(update, context); return
     if data == "svc_load": await load_screen(update, context); return
     if data.startswith("svc_ev_del_"):

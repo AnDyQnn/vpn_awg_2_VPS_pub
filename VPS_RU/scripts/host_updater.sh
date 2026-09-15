@@ -12,6 +12,10 @@ REBOOT_FLAG="$FLAGS_DIR/do_reboot"
 AUDIT_FLAG="$FLAGS_DIR/do_audit"
 RESTART_WG_FLAG="$FLAGS_DIR/do_restart_wg"
 CLEANUP_FLAG="$FLAGS_DIR/do_cleanup"
+# Подписка наружу. В файле одно слово: on или off. Скрипту нужны права хоста —
+# он берёт сертификат, правит iptables и ставит таймер, и ничего из этого бот
+# из контейнера сделать не может.
+PUBSUB_FLAG="$FLAGS_DIR/do_public_sub"
 
 echo "[Updater] Демон запущен для ноды: $(basename "$NODE_DIR")"
 echo "[Updater] Ожидание флагов в директории: $FLAGS_DIR"
@@ -91,6 +95,25 @@ while true; do
         # Переменная доезжает до контейнеров только при пересоздании.
         cd "$NODE_DIR" && docker compose up -d >/dev/null 2>&1
         echo "[Updater] .env обновлён, контейнеры пересозданы."
+    fi
+
+    # 4.6 ПОДПИСКА НАРУЖУ
+    #     Открыть её значит выдать сертификат на IP-адрес, поставить охрану
+    #     порта и завести таймер продления. Всё это — работа хоста: у бота нет
+    #     ни iptables, ни systemd, ни доступа к letsencrypt.
+    if [ -f "$PUBSUB_FLAG" ]; then
+        MODE=$(head -1 "$PUBSUB_FLAG" | tr -d '[:space:]')
+        rm -f "$PUBSUB_FLAG"
+        case "$MODE" in
+            on|off)
+                echo "[Updater] Подписка наружу: $MODE"
+                bash "$(dirname "$SCRIPT_DIR")/../scripts/public_sub.sh"                     "$MODE" "$NODE_DIR" > "$FLAGS_DIR/public_sub.log" 2>&1
+                echo "[Updater] Готово, отчёт в public_sub.json"
+                ;;
+            *)
+                echo "[Updater] Подписка наружу: непонятная команда '$MODE'"
+                ;;
+        esac
     fi
 
     # 5. ОЧИСТКА МУСОРА

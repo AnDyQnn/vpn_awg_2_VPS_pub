@@ -105,6 +105,8 @@ async def main():
 
     class Bad:
         match_info = {"token": "нет-такого"}
+        # Промахи считаются по адресу: с него берут, кого закрывать на час.
+        remote = "198.51.100.5"
 
     check("чужой токен не обслуживается",
           (await S.handle_routing(Bad())).status == 404)
