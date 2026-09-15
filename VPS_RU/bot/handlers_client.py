@@ -1105,21 +1105,33 @@ async def client_report_site_handler(update: Update, context: ContextTypes.DEFAU
     )
 
 async def client_whats_new(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Человеку — только накопленное с той версии, которую он видел в прошлый раз,
-    и только из раздела «Для пользователей»: технические подробности ему ни к чему."""
+    """Что изменилось — накопленное с прошлого раза, а если всё прочитано, то
+    последнее, что для людей писалось.
+
+    Пустого экрана здесь быть не должно. Раньше прочитавший человек получал
+    окошко «Нового пока нет» — то есть раздел «Что нового» в половине случаев
+    не показывал ничего, хотя у владельца последняя запись видна всегда.
+
+    Только раздел «Для пользователей»: про образы и миграции таблиц человеку
+    читать незачем.
+    """
     query = update.callback_query
     tg_id = query.from_user.id
-    from changelog import user_text, parse_releases
+    from changelog import user_text, last_user_text, parse_releases
 
     seen = await db.get_seen_version(tg_id)
     text = user_text(since_version=seen)
+    if text:
+        releases = parse_releases(1)
+        if releases:
+            await db.set_seen_version(tg_id, releases[0][0])
+    else:
+        text = last_user_text()
     if not text:
-        await query.answer("Нового пока нет", show_alert=True)
-        return
-
-    releases = parse_releases(1)
-    if releases:
-        await db.set_seen_version(tg_id, releases[0][0])
+        # Записей для людей не было вовсе — это про совсем новую установку.
+        text = ("📄 **Что нового**\n\n"
+                "Пока рассказывать нечего: с момента запуска ничего, что "
+                "касалось бы вас, не менялось.")
 
     kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 В личный кабинет",
                                                     callback_data="client_menu")]])

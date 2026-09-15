@@ -243,6 +243,28 @@ def user_text(since_version=None):
     return "\n".join(lines)
 
 
+def last_user_text():
+    """Последнее, что писалось для людей, — сколько бы с тех пор ни вышло
+    технических версий.
+
+    Ищем с самой свежей записи вниз до первой, где есть раздел «Для
+    пользователей». Версии без него человека не касаются вовсе, и упираться в
+    них нельзя: иначе экран пустеет после любой правки, которая людей не
+    затронула.
+    """
+    for ver, _when, body in parse_releases(limit=200):
+        items = _bullets(body, only_section="Для пользователей")
+        if not items:
+            continue
+        lines = ["📄 **Последнее обновление**", ""]
+        for item in items[:20]:
+            lines.append(f"• {_short(item, 120)}")
+        lines.append("")
+        lines.append(f"Версия: {ver}")
+        return "\n".join(lines)
+    return None
+
+
 def _cmp(a, b):
     """Сравнение версий по трём числам, с поправкой на суффикс.
 
