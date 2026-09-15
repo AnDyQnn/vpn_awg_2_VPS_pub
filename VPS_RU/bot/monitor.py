@@ -1268,6 +1268,47 @@ async def bypass_reresolve_loop(app):
             print(f"bypass_reresolve_loop error: {e}")
         await asyncio.sleep(3600)
 
+async def _send_xray_split_notice(app, key, domains):
+    """Человеку на Xray — готовый кусок, а не предложение перевыпустить ключ.
+
+    Перевыпуск его случая не касается: он выдаёт новую ссылку, а профиль
+    маршрутизации остаётся прежним. Нужен именно новый кусок — сервера плюс
+    профиль, — и вставляется он так же, как при первой выдаче.
+    """
+    import xray
+    from utils import send_copyable
+
+    blob = await xray.bundle_text(key["uuid"])
+    if not blob:
+        return 0
+
+    text = ("🔔 **Список исключений изменился**\n\n"
+            "Мимо VPN теперь идут:\n"
+            f"{domains}\n\n"
+            "Ниже — обновлённое подключение. Скопируйте текст целиком и "
+            "вставьте в приложение: оно заменит настройки само, ключ у вас "
+            "остаётся прежним.")
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🌐 Список исключений", callback_data="client_bypass_info")],
+        [InlineKeyboardButton("🔕 Не напоминать", callback_data="client_notify_off")],
+        [InlineKeyboardButton("🏠 Личный кабинет", callback_data="client_menu")],
+    ])
+
+    sent = 0
+    for tid in key.get("tg_ids", []):
+        try:
+            if not await db.get_routing_notify(tid):
+                continue
+            await app.bot.send_message(chat_id=tid, text=text,
+                                       parse_mode=ParseMode.MARKDOWN)
+            # Кусок — отдельным сообщением и кодом: копируется одним касанием.
+            await send_copyable(app.bot, tid, blob, reply_markup=kb)
+            sent += 1
+        except Exception as e:
+            print(f"Сплит для Xray: {tid} не получил: {e}")
+    return sent
+
+
 async def _send_upgrade_notices(app):
     current_version = await db.get_routing_version()
     outdated = await db.get_outdated_keys(current_version)
@@ -1275,6 +1316,19 @@ async def _send_upgrade_notices(app):
     domains = ", ".join(f"`{escape_md(r['domain'])}`" for r in rows) if rows else "—"
     sent = 0
     for k in outdated:
+        # У человека на Xray сплит живёт в профиле, а не в конфиге: ему нужен
+        # новый кусок, а не перевыпуск. Предлагать перевыпуск значит советовать
+        # действие, которое его случая не касается.
+        try:
+            if await db.get_xray_user(k["uuid"]):
+                sent += await _send_xray_split_notice(app, k, domains)
+                await db.execute(
+                    "UPDATE users SET routing_version=$1 WHERE uuid=$2",
+                    current_version, k["uuid"])
+                continue
+        except Exception as e:
+            print(f"Сплит для Xray: {k.get('name')} — {e}")
+
         name = escape_md(k['name'])
         text = (
             f"🔔 **Обновите конфиг ключа «{name}»**\n\n"
