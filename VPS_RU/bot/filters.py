@@ -174,7 +174,8 @@ async def filters_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     common = await db.get_common_filters()
     custom = await db.get_custom_blocks()
 
-    lines = ["🧹 **Фильтрация сайтов**", ""]
+    lines = ["🧹 **Фильтрация сайтов**", "",
+             "_🚫 — закрыто, 🟢 — разрешено вопреки запрету._", ""]
     if common or custom:
         parts = []
         if common:
@@ -207,7 +208,8 @@ async def filters_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
                   "уходит внутри HTTPS и на уровне DNS его не видно._"]
 
     kb = [[InlineKeyboardButton("🌍 Общие правила", callback_data="flt_common")],
-          [InlineKeyboardButton("✅ Общие исключения", callback_data="flt_alw_all")],
+          [InlineKeyboardButton("🟢 Исключения из запретов",
+                                callback_data="flt_alw_all")],
           [InlineKeyboardButton("👤 Выбрать человека", callback_data="flt_pick_0")]]
     if by_uuid:
         kb.append([InlineKeyboardButton("🔄 Применить на узле", callback_data="flt_apply")])
@@ -233,13 +235,13 @@ async def allow_screen(update: Update, context: ContextTypes.DEFAULT_TYPE,
     if uuid_val:
         user = await db.get_user_by_uuid(uuid_val)
         who = escape_md((user or {}).get("name") or uuid_val[:8])
-        head = f"✅ **Исключения · {who}**"
+        head = f"🟢 **Исключения из запретов · {who}**"
         back = f"flt_user_{uuid_val}"
         add = f"flt_alw_add_{uuid_val}"
         scope = ("Эти сайты открыты **только этому ключу**, даже если категория "
                  "закрыта ему или всем.")
     else:
-        head = "✅ **Общие исключения**"
+        head = "🟢 **Общие исключения из запретов**"
         back = "flt_common"
         add = "flt_alw_add_all"
         scope = ("Эти сайты открыты **всем**, даже если закрыта категория, "
@@ -250,7 +252,7 @@ async def allow_screen(update: Update, context: ContextTypes.DEFAULT_TYPE,
         lines.append("_Пока пусто._")
     else:
         for row in rows:
-            lines.append(f"  • `{escape_md(row['domain'])}`")
+            lines.append(f"  🟢 `{escape_md(row['domain'])}`")
     lines += ["", "_Разрешение сильнее запрета, а личное сильнее общего: "
                   "правило про конкретного человека заведомо осознаннее._"]
 
@@ -308,7 +310,7 @@ async def allow_add_entered(update, context):
 
     back = f"flt_alw_{uuid_val}" if uuid_val else "flt_alw_all"
     kb = InlineKeyboardMarkup(
-        [[InlineKeyboardButton("✅ К исключениям", callback_data=back)]])
+        [[InlineKeyboardButton("🟢 К исключениям", callback_data=back)]])
     if not added:
         await context.bot.send_message(
             chat_id=update.message.chat_id, reply_markup=kb,
@@ -317,7 +319,7 @@ async def allow_add_entered(update, context):
         return True
 
     ok, msg = await apply_filters("добавлено исключение")
-    text = "✅ Разрешено: " + ", ".join(f"`{a}`" for a in added)
+    text = "🟢 Разрешено вопреки запрету: " + ", ".join(f"`{a}`" for a in added)
     if bad:
         text += "\n\n⚠️ Не понял: " + ", ".join(bad)
     text += "\n\n" + ("Применено на узле." if ok else f"⚠️ Узел: {msg}")
@@ -380,14 +382,16 @@ async def user_filters_screen(update: Update, context: ContextTypes.DEFAULT_TYPE
     lines += ["", "_Закрытый сайт не просто не открывается: человек попадает "
                   "на страницу с объяснением._"]
 
-    kb = [[InlineKeyboardButton(("✅ " if key in mine else "➖ ") + title,
+    # 🚫 — закрыто, ➖ — открыто. Галочку здесь использовать нельзя: ею же
+    # помечены исключения, и один знак означал бы и запрет, и разрешение.
+    kb = [[InlineKeyboardButton(("🚫 " if key in mine else "➖ ") + title,
                                 callback_data=f"flt_set_{key}_{uuid_val}")]
           for key, title in CATEGORIES]
     kb.append([InlineKeyboardButton("🔙 К человеку",
                                     callback_data=f"user_detail_{uuid_val}")])
     # Исключения — рядом с категориями: закрыл «соцсети», тут же оставил рабочий
     # чат. Разносить это по разным экранам значит ломать один жест на два.
-    kb.append([InlineKeyboardButton("✅ Исключения",
+    kb.append([InlineKeyboardButton("🟢 Исключения из запретов",
                                     callback_data=f"flt_alw_{uuid_val}")])
     kb.append([InlineKeyboardButton("🧹 К списку фильтров", callback_data="flt_pick_0")])
 
@@ -442,7 +446,8 @@ async def common_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                         callback_data=f"flt_ctog_{key}")])
     kb.append([InlineKeyboardButton("➕ Закрыть сайт", callback_data="flt_cadd")])
     if custom:
-        kb.append([InlineKeyboardButton("📋 Свой список", callback_data="flt_clist")])
+        kb.append([InlineKeyboardButton("🚫 Свой список запретов",
+                                        callback_data="flt_clist")])
     kb.append([InlineKeyboardButton("🔙 Фильтры", callback_data="flt_menu")])
 
     await show_screen(query, context, "\n".join(lines),
@@ -499,7 +504,7 @@ async def custom_list(update: Update, context: ContextTypes.DEFAULT_TYPE, page=0
     per = 8
     chunk = items[page * per:(page + 1) * per]
 
-    lines = ["📋 **Свой список**", "",
+    lines = ["🚫 **Свой список запретов**", "",
              f"Закрыто сайтов: {len(items)}. Нажмите, чтобы снять запрет."]
     kb = [[InlineKeyboardButton(f"🗑 {d}", callback_data=f"flt_cdel_{d}")]
           for d in chunk]
