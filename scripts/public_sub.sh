@@ -108,11 +108,39 @@ ensure_certbot() {
     # Своё окружение, а не apt: в apt версия старше нужной на годы, а ставить
     # системный python из pip — верный способ однажды сломать систему.
     say "ставлю certbot $NEED_MAJOR.$NEED_MINOR и новее в $VENV" >&2
-    DEBIAN_FRONTEND=noninteractive apt-get update -qq >/dev/null 2>&1
-    DEBIAN_FRONTEND=noninteractive apt-get install -y python3-venv >/dev/null 2>&1
-    python3 -m venv "$VENV" >/dev/null 2>&1
-    "$VENV/bin/pip" install -q --upgrade pip certbot >/dev/null 2>&1
-    certbot_bin
+    LOG=/tmp/certbot-install.log
+    : > "$LOG"
+
+    # Ждём замок dpkg, а не падаем об него. На узле работают ночные
+    # автообновления, и попасть в их минуту — обычное дело: без ожидания
+    # установка проваливалась мгновенно и молча, а шаг выглядел как «не
+    # получилось», хотя пакет ставится прекрасно.
+    APT_OPTS="-o DPkg::Lock::Timeout=180"
+    DEBIAN_FRONTEND=noninteractive apt-get $APT_OPTS update -qq >>"$LOG" 2>&1
+    DEBIAN_FRONTEND=noninteractive apt-get $APT_OPTS install -y python3-venv >>"$LOG" 2>&1
+
+    if ! python3 -m venv "$VENV" >>"$LOG" 2>&1; then
+        # Пакета нет и не будет (бывает на урезанных образах). Тогда делаем
+        # окружение без pip и приносим pip отдельно — это работает без apt
+        # вовсе и ничего системного не трогает.
+        say "python3-venv недоступен, беру pip напрямую" >&2
+        rm -rf "$VENV"
+        python3 -m venv --without-pip "$VENV" >>"$LOG" 2>&1 || {
+            say "окружение не создалось, подробности в $LOG" >&2
+            return 1
+        }
+        curl -fsSL https://bootstrap.pypa.io/get-pip.py -o /tmp/get-pip.py >>"$LOG" 2>&1 &&
+            "$VENV/bin/python" /tmp/get-pip.py -q >>"$LOG" 2>&1
+        rm -f /tmp/get-pip.py
+    fi
+
+    "$VENV/bin/pip" install -q --upgrade pip certbot >>"$LOG" 2>&1
+    C="$(certbot_bin)" || {
+        say "certbot не встал, подробности в $LOG" >&2
+        tail -5 "$LOG" | sed 's/^/[подписка]   /' >&2
+        return 1
+    }
+    echo "$C"
 }
 
 port80_free() {
