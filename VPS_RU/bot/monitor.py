@@ -1157,7 +1157,13 @@ async def weekly_health_loop(app):
                 else:
                     lines.append(f"✅ Сверка: всё сошлось ({n_ok} проверок)")
                 if n_warn:
+                    # Не только число: «предупреждений 3» не говорит ничего, а
+                    # разбираться потом приходится по журналу вручную.
                     lines.append(f"_предупреждений: {n_warn}_")
+                    for row in contract.get("lines") or []:
+                        if row.get("status") == "warning":
+                            lines.append(f"     • {row.get('name')} — "
+                                         f"{row.get('msg')}")
                 snap["contract_err"] = n_err
             elif contract is not None:
                 lines.append("⚠️ Сверка базы с узлом не дала ответа")
