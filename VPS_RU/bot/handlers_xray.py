@@ -550,9 +550,8 @@ async def handout(update, context, uuid_val, name, tg_id=None):
         await context.bot.send_photo(chat_id=chat_id, photo=open(qr, "rb"))
     # Ссылка отдельным сообщением и без разметки: подчёркивания в ней Telegram
     # принимает за курсив и ломает ссылку.
-    await context.bot.send_message(
-        chat_id=chat_id, text=link,
-        reply_markup=xray.link_keyboard(link, ("👥 Люди", "list_users")))
+    # Без кнопки: Telegram не принимает схему `vless://` в кнопке.
+    await context.bot.send_message(chat_id=chat_id, text=link)
 
     if tg_id:
         from delivery import track_send
@@ -572,8 +571,7 @@ async def handout(update, context, uuid_val, name, tg_id=None):
             # у него такого экрана нет вовсе.
             await context.bot.send_message(
                 chat_id=tg_id, text=link,
-                reply_markup=xray.link_keyboard(
-                    link, ("🏠 Личный кабинет", "client_menu")))
+                reply_markup=exit_kb(to_client=True))
 
         sent, err = await track_send(uuid_val, tg_id, _send)
         await context.bot.send_message(
