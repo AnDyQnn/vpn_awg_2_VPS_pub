@@ -146,6 +146,20 @@ systemctl enable de-agent-updater.service
 systemctl restart de-agent-updater.service
 
 echo "--> Сборка и запуск контейнера de_vpn_agent..."
+# Тег образов — версия проекта, а не «dev». Установщик собирал образы без неё,
+# и свежая нода целиком оставалась на `vpn-ru-bot:dev`: по `docker images` было
+# не понять, что на ней стоит, а после первого же обновления рядом повисал
+# осиротевший `:dev`. Источник версии тот же, что у деплоя, — корневой файл.
+if [ -f "$APP_DIR/../VERSION" ]; then
+    APP_VERSION="$(tr -d '[:space:]' < "$APP_DIR/../VERSION")"
+elif [ -f "$APP_DIR/VERSION" ]; then
+    APP_VERSION="$(tr -d '[:space:]' < "$APP_DIR/VERSION")"
+else
+    APP_VERSION="dev"
+fi
+export APP_VERSION
+echo "🏷  Версия проекта: $APP_VERSION (тег образов)"
+
 docker compose up -d --build
 
 echo "✅ УСТАНОВКА DE AGENT ЗАВЕРШЕНА!"

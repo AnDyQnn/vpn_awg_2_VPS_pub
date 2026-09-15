@@ -206,6 +206,20 @@ fi
 chmod 600 "$APP_DIR/.env"
 
 echo "🚀 Запуск контейнеров..."
+# Тег образов — версия проекта, а не «dev». Установщик собирал образы без неё,
+# и свежая нода целиком оставалась на `vpn-ru-bot:dev`: по `docker images` было
+# не понять, что на ней стоит, а после первого же обновления рядом повисал
+# осиротевший `:dev`. Источник версии тот же, что у деплоя, — корневой файл.
+if [ -f "$APP_DIR/../VERSION" ]; then
+    APP_VERSION="$(tr -d '[:space:]' < "$APP_DIR/../VERSION")"
+elif [ -f "$APP_DIR/VERSION" ]; then
+    APP_VERSION="$(tr -d '[:space:]' < "$APP_DIR/VERSION")"
+else
+    APP_VERSION="dev"
+fi
+export APP_VERSION
+echo "🏷  Версия проекта: $APP_VERSION (тег образов)"
+
 docker compose up -d --build --remove-orphans
 
 echo "⏳ Ожидание инициализации базы данных и API (15 секунд)..."
