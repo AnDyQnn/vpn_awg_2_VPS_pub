@@ -9,6 +9,7 @@ from telegram.constants import ParseMode
 from utils import (
     exit_kb,
     api_session,
+    send_copyable,
     escape_md, WG_API_URL, state_data, check_admin, CONFIGS_DIR, dt_to_moscow,
     ts_to_moscow, safe_delete, GOSUSLUGI_APP_WARNING
 )
@@ -201,6 +202,16 @@ async def send_client_menu(context: ContextTypes.DEFAULT_TYPE, user_id: int, fir
         [InlineKeyboardButton("📱 Приложения", callback_data="client_apps")],
         [InlineKeyboardButton("🆘 Сообщить о проблеме", callback_data="support_start")],
     ]
+    # Кнопка поддержки — только когда за ней что-то есть: владелец её включил и
+    # реквизиты заведены. Кнопка, ведущая на пустой экран, хуже отсутствующей.
+    try:
+        import donate
+        if await donate.visible():
+            keyboard.insert(len(keyboard) - 1,
+                            [InlineKeyboardButton("❤️ Поддержать проект",
+                                                  callback_data="client_donate")])
+    except Exception:
+        pass
     # Кнопка стоит всегда. Раньше она появлялась только при непрочитанном —
     # «чтобы не мозолила», — но человек видит это меню каждый день и привыкает,
     # где что лежит. Кнопка, которая то есть, то нет, читается как поломка, а
@@ -324,6 +335,13 @@ async def client_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await db.delivery_opened(user_id)
     except Exception:
         pass
+    # Человек здесь — значит, его логин пришёл вместе с обновлением. Запоминаем
+    # молча: в карточке владелец увидит, кому принадлежит ключ, без поисков по
+    # числовому id.
+    try:
+        await db.set_tg_username(user_id, update.effective_user.username)
+    except Exception:
+        pass
 
     keys, live, limits, common, mode = await _client_context(user_id)
 
@@ -393,6 +411,16 @@ async def client_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("📱 Приложения", callback_data="client_apps")],
         [InlineKeyboardButton("🆘 Сообщить о проблеме", callback_data="support_start")],
     ]
+    # Кнопка поддержки — только когда за ней что-то есть: владелец её включил и
+    # реквизиты заведены. Кнопка, ведущая на пустой экран, хуже отсутствующей.
+    try:
+        import donate
+        if await donate.visible():
+            keyboard.insert(len(keyboard) - 1,
+                            [InlineKeyboardButton("❤️ Поддержать проект",
+                                                  callback_data="client_donate")])
+    except Exception:
+        pass
     # Место кнопки не зависит от того, есть ли непрочитанное: человек видит это
     # меню каждый день и запоминает, где что лежит. Кнопка, которая то есть, то
     # нет, читается как поломка. Непрочитанное показываем значком.
@@ -680,10 +708,10 @@ async def send_xray_profile(context, chat_id, uuid_val):
             chat_id=chat_id, photo=open(qr, "rb"),
             caption="🔑 Ваше подключение. Ссылка личная — не передавайте её никому.")
 
-    # Ссылка — отдельным сообщением и без разметки: так её можно выделить
-    # целиком одним касанием. Поэтому подсказка идёт следующим сообщением, а
-    # не приклеивается к ней.
-    await context.bot.send_message(chat_id=chat_id, text=link)
+    # Ссылка — отдельным сообщением и кодом: по коду достаточно нажать, и он
+    # копируется целиком. Поэтому подсказка идёт следующим сообщением, а не
+    # приклеивается к ссылке — иначе скопировалось бы и её.
+    await send_copyable(context.bot, chat_id, link)
 
     # Подсказка — она же первое знакомство. Человек, которому только что
     # выдали доступ, ниоткуда не знает, что нужно приложение и где его брать:

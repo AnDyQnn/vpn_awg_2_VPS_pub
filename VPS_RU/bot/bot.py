@@ -84,6 +84,11 @@ from handlers_xray import (
     connections_screen, issue_xray, send_link, drop_awg, why_locked,
     mask_screen, mask_set,
 )
+from handlers_donate import (
+    donate_menu, donate_toggle, donate_reminder_toggle, donate_preview,
+    donate_ask, donate_open, donate_delete, handle_donate_input,
+    client_donate, client_donate_qr,
+)
 from handlers_dnsnames import (
     names_menu, add_request as dnm_add, name_entered as dnm_name_entered,
     target_page as dnm_page, target_person as dnm_person,
@@ -221,6 +226,20 @@ async def notify_users_whats_new(app):
                                        parse_mode=ParseMode.MARKDOWN)
             await db.set_seen_version(tg_id, version)
             sent += 1
+            # Напоминание о поддержке — отдельным сообщением и не каждому:
+            # внутри списка изменений просьба о деньгах читается как ещё один
+            # пункт списка, а несколько раз за день — как попрошайничество.
+            try:
+                import donate
+                if await donate.should_remind(tg_id):
+                    await app.bot.send_message(
+                        chat_id=tg_id, text=donate.REMINDER_TEXT,
+                        reply_markup=InlineKeyboardMarkup(
+                            [[InlineKeyboardButton("❤️ Поддержать проект",
+                                                   callback_data="client_donate")]]))
+                    await db.set_donate_reminded_at(tg_id)
+            except Exception as e:
+                print(f"Напоминание о поддержке: {tg_id} не получил: {e}")
         except Exception as e:
             # Заблокировал бота или закрыл личку — не повод останавливать рассылку
             # и не повод считать, что он прочитал.
@@ -402,6 +421,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data["state"] = None
             return
         if await handle_role_text(update, context, state):
+            return
+
+    # Реквизиты и текст обращения — только от владельца: это его деньги и его
+    # слова, и подменить их не должен никто.
+    if state and state.startswith("awaiting_donate_"):
+        if not check_admin(update.effective_user.id):
+            context.user_data["state"] = None
+            return
+        if await handle_donate_input(update, context, state):
             return
 
     # Пароль архива бэкапа: записываем в .env через демон на хосте и сразу удаляем
@@ -754,6 +782,8 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "client_bypass_info": await client_bypass_info_handler(update, context); return
     if data == "client_report_site": await client_report_site_handler(update, context); return
     if data == "client_apps": await client_apps_handler(update, context); return
+    if data == "client_donate": await client_donate(update, context); return
+    if data == "client_donate_qr": await client_donate_qr(update, context); return
     if data == "client_whats_new": await client_whats_new(update, context); return
     if data == "client_notify_toggle": await client_notify_toggle_handler(update, context); return
     if data == "client_notify_off": await client_notify_off_handler(update, context); return
@@ -856,6 +886,18 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # --- Имена внутри туннеля ---
     # Порядок важен: длинные префиксы проверяются раньше коротких, иначе
     # короткий перехватит чужое нажатие.
+    if data == "don_menu": await donate_menu(update, context); return
+    if data == "don_toggle": await donate_toggle(update, context); return
+    if data == "don_rem_toggle": await donate_reminder_toggle(update, context); return
+    if data == "don_preview": await donate_preview(update, context); return
+    if data == "don_text": await donate_ask(update, context, "text"); return
+    if data.startswith("don_add_"):
+        await donate_ask(update, context, data.split("don_add_")[1]); return
+    if data.startswith("don_open_"):
+        await donate_open(update, context, data.split("don_open_")[1]); return
+    if data.startswith("don_del_"):
+        await donate_delete(update, context, data.split("don_del_")[1]); return
+
     if data == "dnm_menu": await names_menu(update, context); return
     if data == "dnm_add": await dnm_add(update, context); return
     if data == "dnm_apply": await dnm_apply(update, context); return

@@ -77,6 +77,37 @@ async def users_list_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, pa
     else:
         await context.bot.send_message(chat_id=ADMIN_ID, text=text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
 
+async def _tg_line(context, tg_ids):
+    """Привязки человека: логин и числовой id.
+
+    Логин — то, по чему владелец узнаёт человека; id — то, по чему его находит
+    бот. Поэтому оба, а не вместо.
+
+    Если логин ещё не известен, спрашиваем Telegram — но только в этом случае:
+    иначе карточка ходила бы в сеть при каждом открытии. Узнав, запоминаем.
+    """
+    if not tg_ids:
+        return "Не привязан"
+    try:
+        known = await db.get_tg_usernames(tg_ids)
+    except Exception:
+        known = {}
+
+    parts = []
+    for tid in tg_ids:
+        login = known.get(tid)
+        if not login and context is not None:
+            try:
+                chat = await context.bot.get_chat(tid)
+                login = chat.username
+                if login:
+                    await db.set_tg_username(tid, login)
+            except Exception:
+                login = None
+        parts.append(f"@{escape_md(login)} · `{tid}`" if login else f"`{tid}`")
+    return ", ".join(parts)
+
+
 async def render_user_detail(context, chat_id, message_id, uuid):
     user = await db.get_user_by_uuid(uuid)
     if not user: return
@@ -151,7 +182,7 @@ async def render_user_detail(context, chat_id, message_id, uuid):
 
     safe_name = escape_md(user['name'])
     tg_ids = user.get('tg_ids',[])
-    tg_status = ", ".join([f"`{tid}`" for tid in tg_ids]) if tg_ids else "Не привязан"
+    tg_status = await _tg_line(context, tg_ids)
     
     exp_str = dt_to_moscow(user['expires_at']).strftime('%d.%m.%Y %H:%M') if user.get('expires_at') else "Навсегда"
     created_str = dt_to_moscow(user['created_at']).strftime('%d.%m.%Y')
