@@ -687,6 +687,31 @@ DNS_STATE_FILE = f"{CONF_DIR}/dns_filter.json"
 DNS_LOCAL_IP = "10.13.13.1"
 
 
+def ensure_block_page_reachable():
+    """Заворот 443 → 8443 для самого узла.
+
+    Резолвер отвечает на закрытый домен адресом узла. По 80 браузер попадает на
+    страницу отказа, а по 443 — во вход Xray: 443 на узле занят им, и это не
+    прихоть, трафик Xray должен быть неотличим от обычного HTTPS.
+
+    Раньше этот заворот жил в цепочке доступов и строился по людям с ролями.
+    У остальных — то есть у всех, кому включены только фильтры, — запрос уходил
+    в Xray, тот пересылал рукопожатие на маскировочный сайт, и человек получал
+    ошибку сертификата вместо объяснения, почему сайт закрыт.
+
+    Правило безопасно: на 10.13.13.1:443 нет ничего, кроме страницы отказа.
+    Клиенты Xray приходят на внешний адрес, а не на туннельный.
+    """
+    for chain in ("PREROUTING", "OUTPUT"):
+        rule = (f"-d {BLOCK_PAGE_IP} -p tcp --dport 443 "
+                f"-j REDIRECT --to-ports 8443")
+        check = subprocess.run(f"iptables -t nat -C {chain} {rule}", shell=True,
+                               stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+        if check.returncode != 0:
+            subprocess.run(f"iptables -t nat -A {chain} {rule}", shell=True,
+                           stderr=subprocess.DEVNULL)
+
+
 def _dns_ensure_chain():
     subprocess.run(f"iptables -t nat -N {DNS_CHAIN}", shell=True, stderr=subprocess.DEVNULL)
     subprocess.run(f"iptables -t nat -F {DNS_CHAIN}", shell=True, stderr=subprocess.DEVNULL)
@@ -696,6 +721,8 @@ def _dns_ensure_chain():
     if check.returncode != 0:
         subprocess.run(f"iptables -t nat -I PREROUTING 1 {hook}", shell=True,
                        stderr=subprocess.DEVNULL)
+    # Заворот страницы — рядом: он нужен ровно тем же людям и по тому же поводу.
+    ensure_block_page_reachable()
 
 
 def read_dns_full_state():

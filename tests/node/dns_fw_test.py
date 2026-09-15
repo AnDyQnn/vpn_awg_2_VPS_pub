@@ -9,11 +9,14 @@ import time
 
 SRC = "/app/api.py"
 NEED = {"_dns_ensure_chain", "apply_dns_filters", "save_dns_state",
-        "read_dns_full_state",
+        "read_dns_full_state", "ensure_block_page_reachable",
         "rebuild_dns_chain", "read_dns_clients", "read_dns_names", "apply_dns_names",
         "read_dns_state", "rebuild_dns_filters", "refresh_dns_lists"}
 CONSTS = {"DNS_CHAIN", "DNS_STATE_FILE", "DNS_LOCAL_IP", "CONF_DIR",
-          "DNS_NAMES_FILE", "VPN_SUBNET"}
+          "DNS_NAMES_FILE", "VPN_SUBNET",
+          # Адрес страницы отказа: на него заворачивается 443, иначе запрос
+          # уходит во вход Xray.
+          "BLOCK_PAGE_IP"}
 
 tree = ast.parse(io.open(SRC, encoding="utf-8").read())
 picked = []
@@ -82,5 +85,27 @@ print("состояние сохраняется и восстанавливае
 ns["apply_dns_filters"]({})
 assert not [r for r in chain() if "DNAT" in r], "снятие фильтров должно убирать заворот"
 print("снятие всех фильтров убирает заворот: ок")
+
+print("\n=== страница отказа достижима по HTTPS ===")
+# Резолвер отвечает адресом узла. По 80 браузер попадает на страницу, а
+# 443 на узле занят входом Xray: без заворота человек получает ошибку
+# сертификата вместо объяснения, почему сайт закрыт.
+ns["ensure_block_page_reachable"]()
+nat = subprocess.run("iptables -t nat -S", shell=True,
+                     capture_output=True, text=True).stdout
+redirects = [l for l in nat.splitlines()
+             if "--dport 443" in l and "8443" in l]
+assert redirects, "заворот 443 на страницу отказа не встал"
+print("  заворотов:", len(redirects))
+
+# Повторный вызов не должен плодить правила: он идёт при каждой
+# раскладке фильтров.
+ns["ensure_block_page_reachable"]()
+nat2 = subprocess.run("iptables -t nat -S", shell=True,
+                      capture_output=True, text=True).stdout
+again = [l for l in nat2.splitlines()
+         if "--dport 443" in l and "8443" in l]
+assert len(again) == len(redirects), "правило задвоилось при повторе"
+print("повтор не плодит правил: ок")
 
 print("\nВСЁ ПРОШЛО")
