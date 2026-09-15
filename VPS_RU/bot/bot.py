@@ -51,6 +51,7 @@ from handlers_service import (
     change_limit, set_peer_rule, load_chart, whats_new,
     ensure_api_token, watch_api_token, rotate_loop, charts_screen,
     token_screen, token_toggle, token_now, token_rollback,
+    traffic_fix_screen, traffic_fix_apply,
     pick_peer_screen, graphs_menu,
     event_delete,
     peer_limit_screen
@@ -871,6 +872,8 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "svc_tok_toggle": await token_toggle(update, context); return
     if data == "svc_tok_now": await token_now(update, context); return
     if data == "svc_tok_back": await token_rollback(update, context); return
+    if data == "svc_tfix": await traffic_fix_screen(update, context); return
+    if data == "svc_tfix_go": await traffic_fix_apply(update, context); return
     if data == "svc_load": await load_screen(update, context); return
     if data.startswith("svc_ev_del_"):
         await event_delete(update, context, data.split("svc_ev_del_")[1]); return
@@ -1356,6 +1359,11 @@ async def wait_for_node(timeout=90):
 
 async def post_init(application):
     state_data.setdefault("bg_tasks", set())
+    # Момент запуска этой сборки. Нужен там, где надо отделить записанное
+    # текущим кодом от записанного прежним, — например, разворачивая историю
+    # трафика, которую старый сборщик писал зеркально.
+    from datetime import datetime
+    state_data.setdefault("bot_started_at", datetime.utcnow())
 
     await setup_bot_ui(application)
 

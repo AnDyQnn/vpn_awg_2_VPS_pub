@@ -1172,6 +1172,25 @@ class Database:
         await self.execute("DELETE FROM pps_events WHERE id=$1", int(event_id))
 
     # ------------------------ ЧАСОВЫЕ СРЕЗЫ ------------------------
+    async def count_hourly_before(self, before):
+        """Сколько часовых строк старше указанного момента."""
+        return await self.fetch_val(
+            "SELECT COUNT(*) FROM traffic_hourly WHERE hour < $1", before) or 0
+
+    async def swap_hourly_directions(self, before):
+        """Меняет местами отдачу и приём в строках старше указанного момента.
+
+        Одним запросом и без промежуточной колонки: SQL присваивает из
+        значений, какими они были до начала запроса, поэтому обмен работает
+        напрямую. Цикл по строкам здесь оставил бы историю наполовину
+        перевёрнутой, если оборвётся посередине.
+        """
+        await self.execute(
+            """UPDATE traffic_hourly
+               SET bytes_in = bytes_out, bytes_out = bytes_in,
+                   packets_in = packets_out, packets_out = packets_in
+               WHERE hour < $1""", before)
+
     async def add_hourly(self, uuid, hour, b_in, b_out, p_in, p_out, peak_pps):
         await self.execute(
             """INSERT INTO traffic_hourly (user_uuid, hour, bytes_in, bytes_out,

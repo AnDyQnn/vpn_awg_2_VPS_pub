@@ -382,7 +382,8 @@ async def load_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
         when = dt_to_moscow(e["ended_at"] or e["started_at"]).strftime("%d.%m %H:%M")
         kb.append([InlineKeyboardButton(f"🗑 Снять: {who} · {when}",
                                         callback_data=f"svc_ev_del_{e['id']}")])
-    kb += [[InlineKeyboardButton("📈 График нагрузки", callback_data="svc_chart")],
+    kb += [[InlineKeyboardButton("🔀 Развернуть историю", callback_data="svc_tfix")],
+           [InlineKeyboardButton("📈 График нагрузки", callback_data="svc_chart")],
            [InlineKeyboardButton("⚖️ Лимиты", callback_data="svc_limits")],
            [InlineKeyboardButton("🔙 Назад", callback_data="svc_menu")]]
     await show_screen(query, context, text, reply_markup=InlineKeyboardMarkup(kb),
@@ -395,6 +396,60 @@ async def event_delete(update: Update, context: ContextTypes.DEFAULT_TYPE, event
     await update.callback_query.answer("Снято")
     await load_screen(update, context)
 
+
+
+async def traffic_fix_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Развернуть историю трафика, записанную с перепутанными направлениями."""
+    from datetime import datetime
+    query = update.callback_query
+
+    # Граница — момент, когда поднялся бот с исправленным сборщиком. Дальше
+    # этого часа всё записано правильно, и трогать его нельзя.
+    started = state_data.get("bot_started_at") or datetime.utcnow()
+    border = started.replace(minute=0, second=0, microsecond=0)
+    try:
+        rows = await db.count_hourly_before(border)
+    except Exception:
+        rows = 0
+
+    lines = [
+        "🔀 **Развернуть историю трафика**", "",
+        "До исправления сборщик писал отдачу в колонку приёма и наоборот: "
+        "любой качающий выглядел раздающим.",
+        "",
+        f"Строк старше {border.strftime('%d.%m %H:%M')} UTC: **{rows}**",
+        "",
+        "Перестановка меняет местами отдачу и приём в этих строках. "
+        "Свежие часы не трогает — они записаны верно.",
+        "",
+        "_Действие обратимо: второй запуск вернёт как было. Именно поэтому "
+        "оно и кнопкой, а не само при обновлении._",
+    ]
+    kb = [[InlineKeyboardButton("🔀 Развернуть", callback_data="svc_tfix_go")],
+          [InlineKeyboardButton("🔙 Назад", callback_data="svc_load")]]
+    await show_screen(query, context, "\n".join(lines),
+                      reply_markup=InlineKeyboardMarkup(kb),
+                      parse_mode=ParseMode.MARKDOWN)
+
+
+async def traffic_fix_apply(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    from datetime import datetime
+    query = update.callback_query
+    started = state_data.get("bot_started_at") or datetime.utcnow()
+    border = started.replace(minute=0, second=0, microsecond=0)
+    try:
+        rows = await db.count_hourly_before(border)
+        await db.swap_hourly_directions(border)
+        await db.log_event("Трафик", f"История развёрнута: строк {rows}")
+        text = f"✅ Развёрнуто строк: **{rows}**."
+    except Exception as e:
+        text = f"⚠️ Не вышло: {e}"
+    await query.answer()
+    await show_screen(query, context, text,
+                      reply_markup=InlineKeyboardMarkup(
+                          [[InlineKeyboardButton("🔙 К нагрузке",
+                                                 callback_data="svc_load")]]),
+                      parse_mode=ParseMode.MARKDOWN)
 
 async def limits_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Общий порог и персональные правила. В списке только те, у кого правило

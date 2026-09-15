@@ -115,6 +115,16 @@ async def routes_show(update: Update, context: ContextTypes.DEFAULT_TYPE, uuid_v
     await query.answer()
     link = await happ_routing.link(uuid_val=uuid_val)
     info = await happ_routing.summary(uuid_val)
+    sub = ""
+    try:
+        import xray
+        rec = await db.get_xray_user(uuid_val)
+        if rec:
+            base = await xray.subscription_base()
+            sub = f"{base}/routing/{rec['sub_token']}"
+    except Exception:
+        sub = ""
+
     lines = [
         "📱 **Профиль этого ключа**", "",
         f"Мимо туннеля: доменов **{info['domains']}**, сетей **{info['nets']}** "
@@ -124,6 +134,16 @@ async def routes_show(update: Update, context: ContextTypes.DEFAULT_TYPE, uuid_v
         "нажмите, чтобы скопировать:",
         f"`{link}`",
     ]
+    if sub:
+        lines += [
+            "",
+            "Скрипту нужен не она, а сам JSON — он лежит по адресу внутри "
+            "туннеля:",
+            f"`{sub}`",
+            "",
+            "_Тот же личный токен, что и у подписки: второй секрет с той же "
+            "силой заводить незачем._",
+        ]
     kb = [[InlineKeyboardButton("🔙 К исключениям",
                                 callback_data=f"rt_menu_{uuid_val}")]]
     await query.edit_message_text("\n".join(lines),
