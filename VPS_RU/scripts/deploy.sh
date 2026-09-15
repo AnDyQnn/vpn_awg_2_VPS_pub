@@ -141,6 +141,10 @@ fi
 echo "[Deploy] Шаг 2: Выдача прав на скрипты в папке $NODE_DIR..."
 cd "$NODE_DIR" || exit 1
 find . -type f -name "*.sh" -exec chmod +x {} \;
+# Общие скрипты лежат вне папки ноды, а запускают их и systemd-юниты, и сам
+# деплой. Без бита запуска они молча упираются в «Permission denied» — так и
+# вышло с настройкой подписки: шаг отработал за секунду и ничего не сделал.
+find "$PROJECT_ROOT/scripts" -type f -name "*.sh" -exec chmod +x {} \; 2>/dev/null
 
 # 3b. Гарантируем swap И ПРИ ОБНОВЛЕНИИ (а не только при install.sh): если на ноде
 # его ещё нет — подтянется сам. Идемпотентно, прод не трогает.
@@ -310,7 +314,14 @@ fi
 # докер здесь перезапускается каждый раз.
 if [ -f "$PROJECT_ROOT/scripts/public_sub.sh" ]; then
     echo "[Deploy] Подписка наружу..."
-    bash "$PROJECT_ROOT/scripts/public_sub.sh" ensure "$NODE_DIR" || true
+    # Ошибку не глотаем молча: подписка не обязана подняться (может не быть
+    # свободного порта 80, может не ответить удостоверяющий центр), но знать об
+    # этом надо — иначе люди останутся без автообновления, а в журнале будет
+    # ровно ничего.
+    if ! bash "$PROJECT_ROOT/scripts/public_sub.sh" ensure "$NODE_DIR"; then
+        echo "[Deploy] ⚠️  Подписка наружу не поднялась — см. строки выше."
+        echo "[Deploy]     Внутри туннеля она работает, обновление в силе."
+    fi
 fi
 
 if [ -f "$PROJECT_ROOT/scripts/gc.sh" ]; then
