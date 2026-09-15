@@ -373,9 +373,9 @@ def check_public_sub():
         import socket
         s = socket.socket()
         s.settimeout(3)
-        s.connect(("127.0.0.1", 8443))
+        s.connect(("127.0.0.1", 2096))
         s.close()
-        say("ok", "Подписка наружу · внешний вход", "порт 8443 отвечает")
+        say("ok", "Подписка наружу · внешний вход", "порт 2096 отвечает")
     except Exception as e:
         say("error", "Подписка наружу · внешний вход",
             "сертификат есть, а порт молчит: %s" % e)

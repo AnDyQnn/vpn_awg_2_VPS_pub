@@ -85,7 +85,7 @@ async def screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lines = ["🌐 **Подписка наружу**", ""]
     if on:
         left = cert_days_left()
-        port = st.get("port", 8443)
+        port = st.get("port", 2096)
         lines.append(f"Состояние: **открыта**, порт `{port}`")
         if left is not None:
             lines.append("Сертификат: осталось **%.1f сут.**" % left)
