@@ -238,6 +238,18 @@ if [ -f "$PROJECT_ROOT/scripts/contract_check.sh" ]; then
     bash "$PROJECT_ROOT/scripts/contract_check.sh" "$NODE_DIR" || true
 fi
 
+# Подписка наружу. Идёт при каждой выкладке и ничего не перевыпускает, пока
+# сертификат свеж, — это проверка, а не действие. Нужна она потому, что
+# сертификат на IP живёт неделю: узел, простоявший выключенным восемь дней,
+# поднялся бы с мёртвым сертификатом и молчащим входом.
+#
+# Заодно возвращаются правила охраны порта: их снимает перезапуск докера, а
+# докер здесь перезапускается каждый раз.
+if [ -f "$PROJECT_ROOT/scripts/public_sub.sh" ]; then
+    echo "[Deploy] Подписка наружу..."
+    bash "$PROJECT_ROOT/scripts/public_sub.sh" on "$NODE_DIR" || true
+fi
+
 if [ -f "$PROJECT_ROOT/scripts/gc.sh" ]; then
     GC_FLAGS_DIR="$NODE_DIR/volumes/flags" bash "$PROJECT_ROOT/scripts/gc.sh" || true
 else

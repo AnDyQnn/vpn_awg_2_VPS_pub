@@ -970,9 +970,20 @@ async def rotation_days():
 
 
 async def rotation_enabled():
-    """По умолчанию выключено. Смена роняет связь на несколько секунд, и
-    включать такое за владельца нельзя."""
-    return (await db.get_setting("api_token_rotate") or "") == "1"
+    """Смена идёт всегда, выключателя нет.
+
+    Раньше это был выбор, и по умолчанию выбор стоял в «не менять» — из
+    осторожности: смена роняет связь на несколько секунд. Но ключ, который не
+    меняется, со временем оседает в бэкапах, в истории терминала и в переписке,
+    и однажды перестаёт быть секретом, никого об этом не предупредив. Несколько
+    секунд раз в неделю дешевле.
+
+    Разрыв приходится на воскресное утро — то же окно, где уже стоят
+    обновление и плановый ребут, так что отдельного разрыва не добавляется.
+
+    Функция оставлена, чтобы не переписывать её вызовы; менять ей теперь
+    нечего."""
+    return True
 
 
 async def rotate_api_token(app, reason="по расписанию"):
@@ -1066,32 +1077,26 @@ async def token_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Смена токена панелей: состояние и переключатель."""
     from utils import API_TOKEN
     query = update.callback_query
-    on = await rotation_enabled()
     days = await rotation_days()
     last = await db.get_setting("api_token_rotated_at")
 
     lines = ["🔑 **Панель токенов**", ""]
     lines.append("Состояние: " + ("**задан**" if API_TOKEN else "**пуст**"))
-    lines.append("Смена по расписанию: " + (f"**раз в {days} дн.**" if on
-                                            else "выключена"))
-    if not on:
-        lines.append("     _Сам ключ при этом есть и работает — выключена "
-                     "только автоматическая смена._")
+    lines.append(f"Смена: **раз в {days} дн.**, автоматически")
     if last:
         lines.append(f"Последняя смена: {last[:16].replace('T', ' ')} UTC")
     lines += ["",
               "Токен закрывает панели узлов вторым рубежом поверх файрвола. "
-              "Секрет, который не меняется, со временем оседает в бэкапах и в "
-              "истории терминала.",
+              "Секрет, который не меняется, со временем оседает в бэкапах, в "
+              "истории терминала и в переписке — и однажды перестаёт быть "
+              "секретом, никого об этом не предупредив.",
               "",
-              "_Смена пересоздаёт контейнеры: связь прерывается на несколько "
-              "секунд. Поэтому она идёт в воскресенье утром — в то же окно, где "
-              "уже стоят обновление и плановый ребут._"]
+              "_Выключателя у этого нет намеренно: несколько секунд разрыва раз "
+              "в неделю дешевле. Разрыв приходится на воскресное утро — то же "
+              "окно, где уже стоят обновление и плановый ребут, так что "
+              "отдельного он не добавляет._"]
 
-    kb = [[InlineKeyboardButton("🔕 Не менять по расписанию" if on
-                                else f"🔄 Менять раз в {days} дн.",
-                                callback_data="svc_tok_toggle")],
-          [InlineKeyboardButton("🔁 Сменить сейчас", callback_data="svc_tok_now")]]
+    kb = [[InlineKeyboardButton("🔁 Сменить сейчас", callback_data="svc_tok_now")]]
     if await db.get_setting("api_token_prev"):
         kb.append([InlineKeyboardButton("↩️ Вернуть прошлый ключ",
                                         callback_data="svc_tok_back")])
@@ -1103,10 +1108,12 @@ async def token_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def token_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    on = await rotation_enabled()
-    await db.set_setting("api_token_rotate", "0" if on else "1")
+    """Выключателя больше нет — смена идёт всегда.
+
+    Обработчик оставлен на случай, если у кого-то открыт старый экран с этой
+    кнопкой: нажатие должно объяснить, а не промолчать в пустоту."""
     await update.callback_query.answer(
-        "Больше не меняем" if on else "Будем менять по расписанию")
+        "Смена ключа теперь обязательная — это безопасность", show_alert=True)
     await token_screen(update, context)
 
 
