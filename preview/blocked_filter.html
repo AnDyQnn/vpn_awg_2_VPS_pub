@@ -226,6 +226,20 @@
     line-height:1.9;
     word-break:break-all;
   }
+  /* Плашка категории: единственное конкретное на странице, и строкой текста
+     она терялась. */
+  .chip{
+    display:inline-block;
+    margin-top:12px;
+    padding:5px 11px;
+    border:1px solid var(--border);
+    border-radius:999px;
+    background:rgba(88,166,255,.08);
+    color:var(--accent);
+    font-size:12.5px;
+    letter-spacing:.02em;
+    white-space:nowrap;
+  }
   .host b{
     display:block;
     color:var(--red);
@@ -300,7 +314,7 @@
 
   <h1>Этот сайт закрыт фильтром</h1>
 
-  <p class="text">Доступ ограничен администратором<br>Категория: <b>Соцсети</b></p>
+  <p class="text">Доступ ограничен администратором<br><span class="chip">Соцсети</span></p>
   <p class="text">Если это ошибка — свяжитесь с поддержкой</p>
 
   <a class="cta" href="https://t.me/example_bot">
@@ -310,7 +324,7 @@
     Обратиться в поддержку
   </a>
 
-  <p class="host"><b>Запрошенный адрес</b><span>vk.com</span></p>
+  <p class="host"><b>Запрошенный адрес</b><span>vk.com</span><b style="margin-top:14px">Номер инцидента</b><span>9395-570A</span></p>
 </main>
 
 <script>

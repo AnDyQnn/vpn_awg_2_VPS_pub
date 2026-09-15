@@ -337,6 +337,16 @@ class Database:
             """)
             await self.execute(
                 "CREATE INDEX IF NOT EXISTS idx_hits_time ON filter_hits(happened_at DESC);")
+            # Номер инцидента: его человек копирует со страницы отказа, а
+            # владелец ищет по нему. Считает его узел из самой попытки, поэтому
+            # обе стороны приходят к одному значению без общей базы.
+            res_ref = await self.fetch_all(
+                "SELECT column_name FROM information_schema.columns WHERE table_schema='public' "
+                "AND table_name='filter_hits' AND column_name='ref';")
+            if not res_ref:
+                await self.execute("ALTER TABLE filter_hits ADD COLUMN ref TEXT;")
+            await self.execute(
+                "CREATE INDEX IF NOT EXISTS idx_hits_ref ON filter_hits(ref);")
 
             # --- СВОИ ИСКЛЮЧЕНИЯ НА КЛЮЧ ---
             # Ситуационное: рабочая подсеть, домашний сервис, конкретный сайт.
@@ -677,16 +687,29 @@ class Database:
         return await self.fetch_val("SELECT COUNT(*) FROM filter_allow") or 0
 
     # --- ПОПЫТКИ НА ЗАКРЫТОЕ ---------------------------------------------
+    async def find_filter_hit(self, ref):
+        """Поиск по номеру со страницы отказа. Регистр и дефис не важны:
+        человек перепишет его как получится."""
+        clean = (ref or "").strip().upper().replace("-", "")
+        if not clean:
+            return None
+        rows = await self.fetch_all(
+            "SELECT * FROM filter_hits WHERE REPLACE(UPPER(ref),'-','')=$1 "
+            "ORDER BY happened_at DESC LIMIT 1", clean)
+        return dict(rows[0]) if rows else None
+
     async def add_filter_hit(self, happened_at, uuid_val, name, tunnel_ip,
-                             public_ip, domain, category):
+                             public_ip, domain, category, ref=None):
         """Повтор одного и того же события не плодит записей: узел отдаёт
         историю целиком, и при повторном заборе мы просто ничего не добавляем."""
         await self.execute(
             """INSERT INTO filter_hits
-                   (happened_at, user_uuid, name, tunnel_ip, public_ip, domain, category)
-               VALUES ($1,$2,$3,$4,$5,$6,$7)
+                   (happened_at, user_uuid, name, tunnel_ip, public_ip,
+                    domain, category, ref)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
                ON CONFLICT (happened_at, tunnel_ip, domain) DO NOTHING""",
-            happened_at, uuid_val, name, tunnel_ip, public_ip, domain, category)
+            happened_at, uuid_val, name, tunnel_ip, public_ip, domain,
+            category, ref)
 
     async def last_filter_hit_ts(self):
         row = await self.fetch_val(

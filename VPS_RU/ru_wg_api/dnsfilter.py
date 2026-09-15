@@ -431,6 +431,18 @@ _hit_seen = {}
 HIT_QUIET_SECONDS = 60
 
 
+def hit_ref(client_ip, name, ts):
+    """Номер инцидента: короткий, читаемый вслух, одинаковый у узла и у бота.
+
+    Считается из самой попытки — адрес, домен и минута, — поэтому обе стороны
+    приходят к нему независимо. Минута, а не секунда: человек открывает страницу
+    не в тот же миг, когда браузер спросил адрес.
+    """
+    raw = "%s|%s|%d" % (client_ip, name, int(ts) // 60)
+    digest = hashlib.blake2b(raw.encode(), digest_size=4).hexdigest().upper()
+    return digest[:4] + "-" + digest[4:]
+
+
 def record_hit(client_ip, name, category):
     now = time.time()
     key = (client_ip, name)
@@ -450,7 +462,8 @@ def record_hit(client_ip, name, category):
                 f.writelines(lines[len(lines) // 2:])
         with open(HITS_FILE, "a", encoding="utf-8") as f:
             f.write(json.dumps({"ts": int(now), "ip": client_ip,
-                                "domain": name, "category": category},
+                                "domain": name, "category": category,
+                                "ref": hit_ref(client_ip, name, now)},
                                ensure_ascii=False) + chr(10))
     except OSError as e:
         print(f"Журнал попыток: {e}", flush=True)
@@ -607,7 +620,7 @@ CATEGORY_TITLES = {"ads": "реклама и трекеры", "adult": "для �
                    "social": "соцсети"}
 
 
-def _render_block_page(host, category):
+def _render_block_page(host, category, ref=""):
     """Причин отказа две, и путать их нельзя.
 
     Фильтр — про внешний сайт из закрытой категории. Роль — про домашний сервис,
@@ -635,8 +648,9 @@ def _render_block_page(host, category):
     # его уточняет, а не заменяет.
     if category:
         head = "Этот сайт закрыт фильтром"
-        why = ("Доступ ограничен администратором<br>"
-               "Категория: <b>%s</b>" % CATEGORY_TITLES.get(category, category))
+        why = ('Доступ ограничен администратором'
+               '<br><span class="chip">%s</span>'
+               % CATEGORY_TITLES.get(category, category))
         note = "Если это ошибка — свяжитесь с поддержкой"
         icon = ICON_FILTER
     else:
@@ -644,6 +658,11 @@ def _render_block_page(host, category):
         why = "Доступ ограничен администратором"
         note = "Если это ошибка — свяжитесь с поддержкой"
         icon = ICON_ACCESS
+    # Номер показываем только когда он есть: пустая строка «Инцидент —» хуже
+    # отсутствующей.
+    ref_block = ('<b style="margin-top:14px">Номер инцидента</b><span>%s</span>'
+                 % ref) if ref else ""
+
     page = _page_cache
     # Кнопка «обратиться» — только когда есть куда. Без адреса убираем её
     # целиком: мёртвая кнопка хуже отсутствующей, по ней жмут впустую.
@@ -653,6 +672,7 @@ def _render_block_page(host, category):
         page = re.sub(r'<a class="cta".*?</a>', "", page, flags=re.S)
 
     return (page
+            .replace("__REF__", ref_block)
             .replace("__DOMAIN__", safe_host)
             .replace("__HEAD__", head)
             .replace("__WHY__", why)
@@ -675,7 +695,17 @@ async def handle_http(reader, writer):
         ip = writer.get_extra_info("peername")
         if ip and host:
             category = FILTERS.blocked(ip[0], host.lower()) or ""
-        body = _render_block_page(host, category).encode("utf-8")
+        # Номер берём тот же, что записан в журнале: человек копирует его со
+        # страницы, владелец ищет по нему инцидент.
+        ref = ""
+        if ip and host:
+            # Запись делаем и здесь: закрытый доступ к своему сервису режется
+            # не фильтром, а правилами, и в журнал он до сих пор не попадал —
+            # инцидента с этим номером просто не существовало бы. Повтора не
+            # будет: на пару «адрес + домен» стоит минута тишины.
+            record_hit(ip[0], host.lower(), category or "доступы")
+            ref = hit_ref(ip[0], host.lower(), time.time())
+        body = _render_block_page(host, category, ref).encode("utf-8")
         writer.write(b"HTTP/1.1 200 OK\r\n"
                      b"Content-Type: text/html; charset=utf-8\r\n"
                      b"Cache-Control: no-store\r\n"
