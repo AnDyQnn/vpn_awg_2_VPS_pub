@@ -253,7 +253,7 @@ fi
 # снаружи он просто промолчит. Подписка внутри туннеля работает в любом случае.
 if [ -f "$(dirname "$APP_DIR")/scripts/public_sub.sh" ]; then
     echo "🌐 Подписка наружу..."
-    bash "$(dirname "$APP_DIR")/scripts/public_sub.sh" on "$APP_DIR" || true
+    bash "$(dirname "$APP_DIR")/scripts/public_sub.sh" ensure "$APP_DIR" || true
 fi
 
 echo "✅ УСТАНОВКА И НАСТРОЙКА ЗАВЕРШЕНА!"

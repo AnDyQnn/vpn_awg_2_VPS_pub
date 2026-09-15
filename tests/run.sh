@@ -117,7 +117,8 @@ run_node() {
     for t in "$@"; do
         out=$(docker run --rm --privileged --entrypoint sh \
             -v "$(dpath "$TESTS_DIR")/node/$t:/t.py" \
-            -v "$(dpath "$ROOT")/scripts:/scripts:ro" vpn-wg-test \
+            -v "$(dpath "$ROOT")/scripts:/scripts:ro" \
+            -v "$(dpath "$ROOT")/VPS_RU/scripts:/nodescripts:ro" vpn-wg-test \
             -c "apk add --no-cache -q curl >/dev/null 2>&1;                 PY=/opt/venv/bin/python3; [ -x \$PY ] || PY=python3;                 \$PY /t.py" 2>&1) || true
         report "$t" "$out"
     done

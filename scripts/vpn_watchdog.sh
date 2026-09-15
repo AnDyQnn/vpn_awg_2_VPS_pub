@@ -91,6 +91,23 @@ check_routing() {
         exit 0' >/dev/null 2>&1
 }
 
+# Охрана порта подписки. Не «проблема», а восстановление: правила живут в
+# цепочке DOCKER-USER, а её стирает любой перезапуск демона докера — в том
+# числе тот, который делает этот же сторож третьей ступенью лечения. Без этой
+# проверки порт остался бы открытым настежь до следующего тика таймера
+# продления, то есть до полусуток.
+#
+# Возвращаем молча и сразу: ступени лечения тут ни при чём, чинится это одной
+# командой и никого не трогает.
+ensure_subguard() {
+    [ "$IS_MASTER" = "1" ] || return 0
+    # Нет сертификата — подписка наружу не открыта, и охранять нечего.
+    [ -s "$NODE_DIR/volumes/certs/fullchain.pem" ] || return 0
+    iptables -C DOCKER-USER -j VPN_SUB 2>/dev/null && return 0
+    log "Охрана порта подписки пропала из DOCKER-USER — возвращаю"
+    bash "$SCRIPT_DIR/public_sub.sh" firewall "$NODE_DIR" >/dev/null 2>&1
+}
+
 check_ipsets() {
     [ "$IS_MASTER" = "1" ] || return 0
     local n
@@ -192,6 +209,8 @@ while true; do
         fi
         write_state false "$problem" "$fails" "$level" "$last_action"
     fi
+
+    ensure_subguard
 
     trim_log
     sleep "$INTERVAL"
