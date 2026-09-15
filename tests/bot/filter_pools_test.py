@@ -148,6 +148,29 @@ async def main():
           str(sent.get("clients")))
 
     print()
+    print("=== группу можно запретить всем ===")
+    shown = {}
+
+    class Q:
+        async def edit_message_text(self, text=None, reply_markup=None, **kw):
+            shown["text"] = text
+            shown["buttons"] = [b.callback_data
+                                for row in (reply_markup.inline_keyboard
+                                            if reply_markup else [])
+                                for b in row]
+
+        async def answer(self, *a, **k):
+            return None
+
+    class U:
+        callback_query = Q()
+
+    await F.common_screen(U(), Ctx())
+    check("группа есть в общих правилах",
+          ("flt_ctog_" + pool["key"]) in (shown.get("buttons") or []),
+          "иначе её не найти там, где она нужнее всего")
+
+    print()
     print("=== дописывание ===")
     ctx2 = Ctx()
     ctx2.user_data["pool_key"] = pool["key"]
