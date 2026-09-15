@@ -448,6 +448,16 @@ async def subscription_base() -> str:
     base = (await db.get_setting("xray_sub_base") or "").strip().rstrip("/")
     if base:
         return base
+    # Подписка открыта наружу — значит адрес у неё публичный, и знать об этом
+    # человеку незачем: ссылка меняется сама вместе с тумблером. Иначе после
+    # включения все получали бы адрес внутри туннеля, который снаружи молчит.
+    try:
+        import handlers_pubsub
+        st = handlers_pubsub.state()
+        if handlers_pubsub.is_on() and st.get("ip"):
+            return f"https://{st['ip']}:{st.get('port', 8443)}"
+    except Exception:
+        pass
     return f"http://{TUNNEL_SELF}:{SUB_PORT_DEFAULT}"
 
 

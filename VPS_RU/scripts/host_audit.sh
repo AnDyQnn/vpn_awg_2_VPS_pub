@@ -436,6 +436,47 @@ check_logs "vpn_db"
 UPDATES=$(apt-get -s upgrade 2>/dev/null | grep -Po "^Inst \K[^ ]+" | wc -l)
 [ "${UPDATES:-0}" -eq 0 ] && add_check CAT_LOGS "Системные обновления ОС" "ok" "Все установлено" || add_check CAT_LOGS "Системные обновления ОС" "warning" "Доступно $UPDATES пакетов"
 
+# --- Подписка наружу ------------------------------------------------------
+# Единственный порт, который мы открываем в интернет сами. Проверяем не «вклю-
+# чена ли», а живо ли то, на чём она держится: сертификат живёт неделю, правила
+# охраны снимаются перезапуском докера, а без таймера продления всё это тихо
+# кончится через шесть дней, и узнают об этом все сразу.
+PSUB_CERT="$APP_DIR/volumes/certs/fullchain.pem"
+if [ -s "$PSUB_CERT" ]; then
+    PSUB_UNTIL=$(openssl x509 -in "$PSUB_CERT" -noout -enddate 2>/dev/null | cut -d= -f2)
+    PSUB_TS=$(date -d "$PSUB_UNTIL" +%s 2>/dev/null || echo 0)
+    PSUB_LEFT=$(( (PSUB_TS - $(date +%s)) / 86400 ))
+    if [ "$PSUB_TS" -eq 0 ]; then
+        add_check CAT_SEC "Подписка наружу · сертификат" "warning" "срок не читается"
+    elif [ "$PSUB_LEFT" -lt 1 ]; then
+        add_check CAT_SEC "Подписка наружу · сертификат" "error" "истекает меньше чем через сутки"
+    elif [ "$PSUB_LEFT" -lt 3 ]; then
+        add_check CAT_SEC "Подписка наружу · сертификат" "warning" "осталось $PSUB_LEFT сут."
+    else
+        add_check CAT_SEC "Подписка наружу · сертификат" "ok" "осталось $PSUB_LEFT сут."
+    fi
+
+    # Правила охраны. Их снимает перезапуск докера, и без этой проверки порт
+    # остался бы открытым настежь, а выглядело бы всё по-прежнему.
+    PSUB_RULES=$(iptables -S VPN_SUB 2>/dev/null | grep -c -- "-j DROP")
+    PSUB_HOOK=$(iptables -S DOCKER-USER 2>/dev/null | grep -c -- "-j VPN_SUB")
+    if [ "${PSUB_RULES:-0}" -ge 3 ] && [ "${PSUB_HOOK:-0}" -ge 1 ]; then
+        add_check CAT_SEC "Подписка наружу · охрана порта" "ok" "правил $PSUB_RULES, зацеплены в DOCKER-USER"
+    elif [ "${PSUB_HOOK:-0}" -lt 1 ]; then
+        add_check CAT_SEC "Подписка наружу · охрана порта" "error" "цепочка не зацеплена в DOCKER-USER — порт без охраны"
+    else
+        add_check CAT_SEC "Подписка наружу · охрана порта" "error" "правил $PSUB_RULES вместо 3"
+    fi
+
+    if systemctl is-active --quiet vpn-subcert.timer 2>/dev/null; then
+        add_check CAT_SEC "Подписка наружу · продление" "ok" "таймер работает"
+    else
+        add_check CAT_SEC "Подписка наружу · продление" "error" "таймер не запущен, сертификат кончится за неделю"
+    fi
+else
+    add_check CAT_SEC "Подписка наружу" "ok" "закрыта, видно только изнутри"
+fi
+
 # --- Сверка базы с тем, что реально стоит ---------------------------------
 # Проверки выше отвечают на «живо ли». Эта — на «то ли живо, что мы думаем»:
 # есть ли на узле все пиры из базы и нет ли лишних, разложены ли имена, стоят

@@ -18,6 +18,8 @@ import asyncio
 import base64
 import json
 import os
+import re
+import ssl
 import time
 
 from aiohttp import web
@@ -28,6 +30,145 @@ import xray
 # Порт внутри контейнера. Наружу он выставляется в docker-compose — и только
 # если владелец решил включить подписки.
 SUB_PORT = int(os.getenv("SUB_PORT", "8080"))
+
+# Сертификат на IP-адрес: лежит рядом, кладёт его scripts/public_sub.sh. Пока
+# файлов нет, сервер работает как раньше — открытым текстом на localhost, куда
+# снаружи не достучаться.
+CERT_DIR = os.getenv("SUB_CERT_DIR", "/volumes/certs")
+
+
+# --- Защита открытого порта -------------------------------------------------
+#
+# Пока подписка слушала localhost, защищать её было не от кого. Открыв порт
+# наружу, мы отдаём процессу бота чужой трафик: теперь любой сканер интернета
+# может занять его собой. Поэтому здесь три разных рубежа, и каждый держит своё.
+#
+# Первый рубеж — не наш: правила файрвола на хосте (см. scripts/public_sub.sh).
+# Они режут поток до того, как он доедет до питона, и это единственное место,
+# где можно пережить настоящий поток мусора.
+#
+# Ниже — то, что можно сделать изнутри.
+
+# Токен подписки — 32 знака из secrets.token_urlsafe(24), то есть 192 бита.
+# Перебрать его нельзя, и проверка формы нужна не для этого: она отсекает мусор
+# до обращения к базе. Чужой запрос не должен стоить нам похода в postgres.
+TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
+
+# Живой клиент читает подписку раз в двенадцать часов. Тридцать запросов в
+# минуту с одного адреса — это уже не клиент.
+RATE_WINDOW = 60
+RATE_LIMIT = 30
+
+# Промахи с одного адреса. Десять неверных токенов — это перебор или скан, и
+# дальше с этим адресом разговаривать незачем: час он получает отказ, не
+# доходя до базы.
+MISS_LIMIT = 10
+BAN_SECONDS = 3600
+
+# Сколько запросов обрабатываем одновременно. Сервер подписок живёт в одном
+# процессе с ботом: заняв этот процесс целиком, бота можно уронить, не тронув
+# самого бота. Тридцать человек с обновлением раз в полсуток — шестнадцать
+# одновременных с большим запасом.
+MAX_INFLIGHT = 16
+
+# Сколько адресов помним. Без потолка счётчики сами становятся дырой: скан с
+# тысяч адресов набьёт словарь до отказа памяти. Память — такой же ресурс, как
+# процессор, и защищать её нужно так же.
+TRACK_MAX = 4096
+
+_rate = {}    # адрес -> [когда началось окно, сколько запросов]
+_miss = {}    # адрес -> [когда начали считать, до какого времени отказ, промахов]
+_inflight = None
+
+
+def _prune(now):
+    """Забываем тех, чей след истёк. Зовётся, когда словари разрослись."""
+    for store, alive in ((_rate, RATE_WINDOW), (_miss, BAN_SECONDS)):
+        for ip in [k for k, v in store.items() if now - v[0] > alive]:
+            store.pop(ip, None)
+    # Если и после чистки тесно — значит идёт распределённый скан, и поимённо
+    # его уже не удержать. Бросаем счётчики целиком: настоящая стена здесь не
+    # мы, а файрвол, а память нужнее.
+    if len(_rate) > TRACK_MAX:
+        _rate.clear()
+    if len(_miss) > TRACK_MAX:
+        _miss.clear()
+
+
+def _too_fast(ip, now):
+    """Частит ли этот адрес."""
+    slot = _rate.get(ip)
+    if not slot or now - slot[0] > RATE_WINDOW:
+        _rate[ip] = [now, 1]
+        return False
+    slot[1] += 1
+    return slot[1] > RATE_LIMIT
+
+
+def _banned(ip, now):
+    slot = _miss.get(ip)
+    return bool(slot) and slot[1] > now
+
+
+def _note_miss(ip, now):
+    """Промах по токену. Возвращает True, когда адрес только что закрыли."""
+    slot = _miss.get(ip)
+    if not slot or now - slot[0] > BAN_SECONDS:
+        _miss[ip] = [now, 0.0, 1]
+        return False
+    slot[2] += 1
+    if slot[2] >= MISS_LIMIT and slot[1] <= now:
+        slot[1] = now + BAN_SECONDS
+        return True
+    return False
+
+
+def blocked_now():
+    """Сколько адресов сейчас закрыто — для экрана в боте."""
+    now = time.time()
+    return sum(1 for v in _miss.values() if v[1] > now)
+
+
+@web.middleware
+async def guard(request, handler):
+    """Общий рубеж: всё, что можно отклонить не думая, отклоняется здесь.
+
+    Отказ всегда один и тот же — 404 и слово. По ответу нельзя отличить
+    «слишком часто», «закрыт» и «нет такого токена»: чужому эта разница
+    подсказывает, куда давить, а свой всё равно спросит у бота."""
+    now = time.time()
+    ip = request.remote or "?"
+
+    if len(_rate) > TRACK_MAX or len(_miss) > TRACK_MAX:
+        _prune(now)
+
+    # Метод. Ничего, кроме чтения, здесь не бывает, и знать о существовании
+    # других методов чужому незачем.
+    if request.method not in ("GET", "HEAD"):
+        return web.Response(status=404, text="not found")
+
+    if _banned(ip, now) or _too_fast(ip, now):
+        return web.Response(status=404, text="not found")
+
+    token = request.match_info.get("token", "")
+    if token and not TOKEN_RE.match(token):
+        # Форма не та — в базу не идём вовсе.
+        _note_miss(ip, now)
+        return web.Response(status=404, text="not found")
+
+    global _inflight
+    if _inflight is None:
+        _inflight = asyncio.Semaphore(MAX_INFLIGHT)
+    if _inflight.locked():
+        # Очередь занята. Ждать нельзя: ожидание — это и есть то, чем кладут
+        # процесс. Отказываем сразу, свой клиент придёт снова.
+        return web.Response(status=503, text="busy")
+    async with _inflight:
+        resp = await handler(request)
+
+    # Своё имя не называем: сканер по нему выбирает, чем бить.
+    resp.headers["Server"] = "-"
+    return resp
 
 # Как часто клиенту предлагается перечитывать ссылку (часы). Двенадцать —
 # компромисс: изменения доезжают за полдня, а сервер не дёргают попусту.
@@ -71,11 +212,17 @@ async def handle_sub(request):
     if not rec or not rec["is_active"]:
         _miss_count += 1
         now = time.time()
-        if _miss_count >= 5 and now - _miss_reported > 3600:
+        # Считаем промахи и по адресу тоже: когда их с одного места много, это
+        # уже не опечатка, и такому адресу мы перестаём отвечать на час.
+        shut = _note_miss(request.remote or "?", now)
+        if shut or (_miss_count >= 5 and now - _miss_reported > 3600):
             _miss_reported = now
             try:
-                await db.log_event("Подписки",
-                                   f"Неизвестных обращений к подпискам: {_miss_count}")
+                where = f" ({request.remote})" if shut else ""
+                what = ("адрес закрыт на час, промахов подряд: %d" % MISS_LIMIT
+                        if shut else
+                        "неизвестных обращений: %d" % _miss_count)
+                await db.log_event("Подписки", what + where)
             except Exception:
                 pass
             _miss_count = 0
@@ -132,6 +279,7 @@ async def handle_routing(request):
     token = request.match_info.get("token", "")
     rec = await db.get_xray_by_token(token) if token else None
     if not rec or not rec["is_active"]:
+        _note_miss(request.remote or "?", time.time())
         return web.Response(status=404, text="not found")
     try:
         import happ_routing
@@ -154,18 +302,94 @@ async def handle_root(request):
     return web.Response(status=404, text="not found")
 
 
+# --- Сертификат -------------------------------------------------------------
+
+_ssl_ctx = None
+_cert_seen = (0, 0)
+
+
+def cert_paths():
+    return (os.path.join(CERT_DIR, "fullchain.pem"),
+            os.path.join(CERT_DIR, "privkey.pem"))
+
+
+def cert_stamp():
+    """Метка файлов сертификата — по ней видно, что его подменили."""
+    out = []
+    for f in cert_paths():
+        try:
+            out.append(int(os.stat(f).st_mtime))
+        except OSError:
+            out.append(0)
+    return tuple(out)
+
+
+def build_ssl():
+    """Готовит TLS, если сертификат положили. Нет файлов — нет и TLS.
+
+    Так подписка остаётся рабочей в обоих случаях: пока она слушает только сам
+    сервер, шифровать нечего; как только её открыли наружу, сертификат уже
+    лежит рядом."""
+    global _ssl_ctx, _cert_seen
+    cert, key = cert_paths()
+    if not (os.path.exists(cert) and os.path.exists(key)):
+        return None
+    ctx = _ssl_ctx or ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+    ctx.load_cert_chain(cert, key)
+    # Старые версии протокола держать незачем: приложения-клиенты все умеют
+    # TLS 1.2, а старьё нужно только тем, кто ищет слабое место.
+    ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+    _ssl_ctx, _cert_seen = ctx, cert_stamp()
+    return ctx
+
+
+async def cert_watch():
+    """Сертификат на IP живёт 160 часов и меняется раз в несколько суток.
+
+    Перечитываем его на месте, а не перезапуском бота: SSLContext разрешает
+    подменить цепочку, и новые соединения берут уже новый сертификат. Иначе
+    продление стоило бы обрыва всех разговоров в Telegram."""
+    while True:
+        await asyncio.sleep(600)
+        try:
+            if _ssl_ctx is not None and cert_stamp() != _cert_seen:
+                build_ssl()
+                print("Подписка: сертификат перечитан")
+        except Exception as e:
+            print(f"Подписка: сертификат не перечитался: {e}")
+
+
 async def start_server():
     """Поднимает сервер подписок. Вызывается один раз при старте бота."""
-    app = web.Application()
+    # client_max_size — тело запроса. У нас его не бывает вовсе, и четырёх
+    # килобайт хватит, чтобы отказ пришёл раньше, чем что-то прочитается.
+    app = web.Application(middlewares=[guard], client_max_size=4096)
     app.router.add_get("/sub/{token}", handle_sub)
     # Тот же профиль, но голым JSON: скрипту нужен он, а не ссылка для
     # приложения.
     app.router.add_get("/routing/{token}", handle_routing)
     app.router.add_get("/", handle_root)
+    # Всё остальное — тоже молчание, и через тот же рубеж: без этого чужой путь
+    # отвечал бы иначе, чем чужой токен, и по разнице ответов читалась бы карта.
+    app.router.add_route("*", "/{tail:.*}", handle_root)
 
-    runner = web.AppRunner(app, access_log=None)
+    runner = web.AppRunner(
+        app, access_log=None,
+        # Держать соединение открытым дольше пятнадцати секунд незачем:
+        # клиент читает подписку и уходит. Длинные висящие соединения — это
+        # не клиент, а способ занять процесс ничем.
+        keepalive_timeout=15,
+        # Потолки на строку запроса и на заголовок. Без них длинную строку
+        # читают до конца, и её длину выбирает не наша сторона.
+        max_line_size=4096, max_field_size=4096)
     await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", SUB_PORT)
+
+    ctx = build_ssl()
+    site = web.TCPSite(runner, "0.0.0.0", SUB_PORT, ssl_context=ctx,
+                       backlog=64)
     await site.start()
-    print(f"Сервер подписок слушает порт {SUB_PORT}")
+    if ctx:
+        asyncio.create_task(cert_watch())
+    print("Сервер подписок слушает порт %d (%s)"
+          % (SUB_PORT, "https" if ctx else "http, только изнутри"))
     return runner
