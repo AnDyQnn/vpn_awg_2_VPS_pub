@@ -50,7 +50,7 @@ from handlers_service import (
     service_menu, toggle_mode, set_mode, load_screen, limits_screen,
     change_limit, set_peer_rule, load_chart, whats_new,
     ensure_api_token, watch_api_token, rotate_loop, charts_screen,
-    token_screen, token_toggle, token_now,
+    token_screen, token_toggle, token_now, token_rollback,
     pick_peer_screen, graphs_menu,
     event_delete,
     peer_limit_screen
@@ -870,6 +870,7 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "svc_token": await token_screen(update, context); return
     if data == "svc_tok_toggle": await token_toggle(update, context); return
     if data == "svc_tok_now": await token_now(update, context); return
+    if data == "svc_tok_back": await token_rollback(update, context); return
     if data == "svc_load": await load_screen(update, context); return
     if data.startswith("svc_ev_del_"):
         await event_delete(update, context, data.split("svc_ev_del_")[1]); return

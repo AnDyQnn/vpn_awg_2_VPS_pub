@@ -19,6 +19,8 @@ from pydantic import BaseModel
 # работать как раньше, но пишет предупреждение. Ломать прод обновлением нельзя, а дыру
 # в этом случае всё равно закрывает файрвол.
 API_TOKEN = os.getenv("API_TOKEN", "").strip()
+# Прошлый ключ действует, пока новый не разошёлся: см. агент узла выхода.
+API_TOKEN_PREV = os.getenv("API_TOKEN_PREV", "").strip()
 OPEN_PATHS = {"/api/health"}          # health дёргает deploy.sh, секретов не отдаёт
 
 
