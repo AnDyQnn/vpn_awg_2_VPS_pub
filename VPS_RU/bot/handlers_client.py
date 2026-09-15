@@ -657,65 +657,43 @@ async def client_check_all_handler(update: Update, context: ContextTypes.DEFAULT
 # --- ОБРАБОТЧИКИ (ОСТАЛЬНЫЕ) ---
 
 async def send_xray_profile(context, chat_id, uuid_val):
-    """Отдаёт человеку его профиль Xray: QR и ссылку.
+    """Отдаёт человеку подключение: QR и один адрес подписки.
 
-    Ссылка уходит отдельным сообщением и без разметки: подчёркивания в ней
-    Telegram принимает за курсив и ссылку ломает."""
+    Раньше отсюда уходило семь сообщений и три разных адреса: разовая ссылка,
+    подписка, подписка с исключениями и объяснения ко всем трём. Человеку нужно
+    одно — добавить в приложение и забыть, как с конфигом AmneziaWG.
+
+    Адрес отдаём кодом, а не текстом: иначе телеграм делает из него ссылку,
+    человек жмёт и попадает в браузер, где видит набор символов вместо
+    приложения. Кодом его можно нажать и скопировать.
+    """
     import xray
-    link = await xray.profile_link(uuid_val)
-    if not link:
-        return False
-    qr = await xray.qr_file(uuid_val)
-    if qr:
-        await context.bot.send_photo(chat_id=chat_id, photo=open(qr, "rb"),
-                                     caption="📱 Отсканируйте в приложении")
-    # Только текст, без кнопки: схему `vless://` Telegram в кнопке не
-    # принимает — отвечает «unsupported url protocol», и тогда сообщение со
-    # ссылкой не уходит вовсе. Человек остаётся с одним QR.
-    await context.bot.send_message(chat_id=chat_id, text=link,
-                                   reply_markup=exit_kb(to_client=True))
-    # Подписка — то, ради чего всё делалось: изменения доезжают сами, и
-    # перевыпускать ничего не нужно. Отдаём её вместе с разовой ссылкой и
-    # объясняем разницу, иначе человек добавит первое попавшееся.
     rec = await db.get_xray_user(uuid_val)
     sub = await xray.subscription_url(rec["sub_token"]) if rec else ""
-    if sub:
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text=("🔄 **Постоянная подписка**\n\n"
-                  "Добавьте её в приложение вместо ссылки выше — тогда "
-                  "настройки будут обновляться сами, и перевыпускать ничего "
-                  "не придётся.\n\n"
-                  "_Обновляется, пока VPN включён._"),
-            parse_mode=ParseMode.MARKDOWN,
-            reply_markup=exit_kb(to_client=True))
-        await context.bot.send_message(chat_id=chat_id, text=sub,
-                                       disable_web_page_preview=True)
+    if not sub:
+        # Без подписки остаётся разовая ссылка — на случай, если адрес
+        # подписок почему-то не собрался. Пустоту человеку слать нельзя.
+        sub = await xray.profile_link(uuid_val)
+    if not sub:
+        return False
 
-        # Профиль с исключениями. Нужен не всем: обычная подписка проще и
-        # понимается любым приложением. Но у кого не открываются Госуслуги или
-        # банк — это ровно их случай, и упомянуть надо, иначе они будут искать
-        # поломку там, где её нет.
-        try:
-            has_bypass = bool(await db.get_all_bypass_cidrs())
-        except Exception:
-            has_bypass = False
-        if has_bypass:
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=("🏦 **Если не открываются Госуслуги или банк**\n\n"
-                      "Такие сайты не любят, когда к ним приходят через VPN. "
-                      "Добавьте вместо обычной подписки вот эту — она пускает "
-                      "их мимо VPN, напрямую:"),
-                parse_mode=ParseMode.MARKDOWN,
-                reply_markup=exit_kb(to_client=True))
-            await context.bot.send_message(chat_id=chat_id, text=sub + "/full",
-                                           disable_web_page_preview=True)
+    qr = await xray.qr_file(uuid_val)
+    if qr:
+        await context.bot.send_photo(
+            chat_id=chat_id, photo=open(qr, "rb"),
+            caption="📱 Отсканируйте в приложении — или скопируйте адрес ниже")
 
     await context.bot.send_message(
         chat_id=chat_id,
-        text="⚠️ Ссылка личная — не передавайте её никому.",
+        text=("🔑 **Ваше подключение**\n\n"
+              f"`{sub}`\n\n"
+              "Нажмите на адрес, чтобы скопировать, и добавьте его в приложение "
+              "как подписку. Настройки дальше обновляются сами — перевыпускать "
+              "ничего не придётся.\n\n"
+              "⚠️ Адрес личный, не передавайте его никому."),
+        parse_mode=ParseMode.MARKDOWN,
         reply_markup=exit_kb(to_client=True))
+
     try:
         await db.delivery_downloaded(uuid_val)
     except Exception:

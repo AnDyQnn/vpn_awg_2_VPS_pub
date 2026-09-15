@@ -100,40 +100,9 @@ async def handle_root(request):
     return web.Response(status=404, text="not found")
 
 
-async def handle_sub_full(request):
-    """Профиль с исключениями: то же самое плюс маршруты мимо туннеля.
-
-    Нужен тем, у кого не открываются Госуслуги или банк: на AmneziaWG такие
-    адреса не входят в туннель и идут с домашнего, а на Xray без этих правил
-    всё идёт через узел, то есть с адреса хостинга.
-
-    Отказ выглядит так же, как у обычной подписки: 404 без пояснений.
-    """
-    token = request.match_info.get("token", "")
-    rec = await db.get_xray_by_token(token) if token else None
-    if not rec or not rec["is_active"]:
-        return web.Response(status=404, text="not found")
-
-    body = await xray.subscription_config(token)
-    if not body:
-        return web.Response(status=404, text="not found")
-
-    name = base64.b64encode((rec.get("name") or "VPN").encode()).decode()
-    return web.Response(
-        body=body.encode(),
-        content_type="application/json",
-        charset="utf-8",
-        headers={
-            "profile-update-interval": str(UPDATE_INTERVAL_HOURS),
-            "profile-title": f"base64:{name}",
-        },
-    )
-
-
 async def start_server():
     """Поднимает сервер подписок. Вызывается один раз при старте бота."""
     app = web.Application()
-    app.router.add_get("/sub/{token}/full", handle_sub_full)
     app.router.add_get("/sub/{token}", handle_sub)
     app.router.add_get("/", handle_root)
 

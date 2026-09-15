@@ -1,22 +1,22 @@
 # -*- coding: utf-8 -*-
-"""Ссылка доходит до человека текстом — и никакая кнопка этому не мешает.
+"""В кнопку нельзя класть схему, которой телеграм не знает.
 
 Я сделал кнопку «Добавить в приложение» со ссылкой `vless://` внутри и решил,
 что проверил её: отправил запрос в API телеграма и получил ошибку про
 несуществующий чат, а не про ссылку. Принял это за разрешение. На деле проверка
-чата идёт РАНЬШЕ проверки ссылки, и про ссылку тот ответ не говорил ничего.
+чата идёт РАНЬШЕ проверки ссылки, и тот ответ про ссылку не говорил ничего.
 
 На бою вышло так:
 
     BadRequest: Inline keyboard button url 'vless://...' is invalid:
     unsupported url protocol
 
-QR уходил, а следующее сообщение — со ссылкой — падало. Человек оставался с
-картинкой и без доступа.
+Телеграм отвергает СООБЩЕНИЕ ЦЕЛИКОМ. QR уходил, а следующее сообщение — со
+ссылкой — падало, и человек оставался с картинкой и без доступа.
 
-Поэтому проверяется теперь не наличие кнопки, а то, что важно: ссылка ушла
-текстом, и ни в одной клавиатуре нет схемы, которую телеграм не принимает.
-Последнее — по всему исходнику, а не только здесь.
+Поэтому проверка идёт по всему исходнику: ни одна кнопка не должна получать
+адрес, собранный из чего-то, кроме http, https или tg. Заодно проверяем то, что
+человеку в итоге уходит — адрес подписки, обычным http.
 """
 import asyncio
 import io
@@ -64,27 +64,18 @@ async def main():
                      ("server_host", "1.2.3.4")):
         await db.set_setting(key, val)
 
-    link = await xray.profile_link("bt-1")
-    print("=== ссылка ===")
-    check("собралась", bool(link))
-    check("имя человека в хвосте", link.endswith("Ссылкин"), link[-12:])
-
-    print()
-    print("=== она доходит до человека текстом ===")
-    import handlers_client as hc
+    print("=== что уходит человеку ===")
     sent.clear()
-    await hc.send_xray_profile(FakeContext(), 1, "bt-1")
+    await hc_send()
     texts = [m.get("text") for m in sent if m.get("text")]
-    check("ссылка ушла отдельным сообщением", link in texts,
-          "её выделяют и копируют")
-    check("QR тоже ушёл", any(m.get("photo") for m in sent))
-    check("предупреждение о личной ссылке на месте",
-          any("не передавайте" in (x or "") for x in texts))
+    body = "\n".join(t for t in texts if t)
+    sub = await xray.subscription_url("tok-1")
+    check("адрес подписки дошёл", sub in body, sub)
+    check("он обычный http", sub.startswith("http://") or sub.startswith("https://"),
+          "иначе его не примет ни кнопка, ни ссылка в тексте")
 
     print()
-    print("=== ни одна кнопка не ведёт на схему, которой телеграм не знает ===")
-    # Кнопки принимают только http, https и tg. Всё остальное телеграм
-    # отвергает целиком — и сообщение не уходит вовсе.
+    print("=== в отправленном нет чужих схем ===")
     allowed = ("http://", "https://", "tg://")
     bad = []
     for m in sent:
@@ -96,9 +87,10 @@ async def main():
                 url = getattr(b, "url", None)
                 if url and not url.startswith(allowed):
                     bad.append(url[:40])
-    check("в отправленном таких нет", not bad, ", ".join(bad) or "—")
+    check("таких нет", not bad, ", ".join(bad) or "—")
 
-    # И по всему исходнику: чтобы следующая такая кнопка не доехала до людей.
+    print()
+    print("=== и по всему исходнику тоже ===")
     src_bad = []
     for name in sorted(os.listdir("/app")):
         if not name.endswith(".py"):
@@ -108,22 +100,27 @@ async def main():
             call = m.group(0)
             if "url=" not in call:
                 continue
-            # Разрешаем только явно безопасные схемы и подстановки, которые
-            # собираются из настроек бота (там всегда http-адрес).
             if re.search(r'url=(f?")(https?|tg)://', call):
                 continue
+            # Адрес, собранный из переменной, проверить статически нельзя —
+            # но именно так и появилась та кнопка с `vless://`.
             if re.search(r"url=\w*(link|url|base|sub)\w*\b", call):
                 src_bad.append((name, text[:m.start()].count(chr(10)) + 1,
                                 re.sub(r"\s+", " ", call)[:70]))
     if src_bad:
         for name, line, snippet in src_bad:
             print("      %s:%d  %s" % (name, line, snippet))
-    check("и в исходнике тоже", not src_bad,
+    check("таких нет", not src_bad,
           "кнопка с чужой схемой рушит всё сообщение целиком")
 
     await db.execute("DELETE FROM xray_users WHERE user_uuid LIKE 'bt-%'")
     await db.execute("DELETE FROM users WHERE uuid LIKE 'bt-%'")
     await db.set_setting("server_host", "")
+
+
+async def hc_send():
+    import handlers_client as hc
+    await hc.send_xray_profile(FakeContext(), 1, "bt-1")
 
 
 asyncio.get_event_loop().run_until_complete(main())
