@@ -196,6 +196,9 @@ class DnsFilters(BaseModel):
     clients: dict = {}          # адрес пира -> список категорий
     common: list = []           # категории, включённые сразу всем
     custom: list = []           # свой список доменов владельца
+    # Исключения: разрешено вопреки категории. Общие — всем, личные — адресу.
+    allow_common: list = []
+    allow_clients: dict = {}
     bot_link: str = ""          # куда человеку идти с вопросом «почему закрыто»
 
 class DnsNames(BaseModel):
@@ -784,11 +787,17 @@ def read_dns_names():
         return {}
 
 
-def save_dns_state(clients, bot_link="", common=None, custom=None):
+def save_dns_state(clients, bot_link="", common=None, custom=None,
+                   allow_common=None, allow_clients=None):
     try:
         with open(DNS_STATE_FILE, "w") as f:
             json.dump({"clients": clients, "bot_link": bot_link,
                        "common": list(common or []), "custom": list(custom or []),
+                       # Разрешения проверяются раньше запретов: исключение,
+                       # которое смотрят после, исключением не является.
+                       "allow_common": list(allow_common or []),
+                       "allow_clients": {k: list(v) for k, v in
+                                         (allow_clients or {}).items()},
                        "saved_at": int(time.time())}, f)
     except Exception as e:
         print(f"DNS state save warning: {e}")
@@ -1634,7 +1643,12 @@ def set_dns_filters(req: DnsFilters):
         # прочитает старое и сотрёт только что поставленные правила.
         common = [str(c) for c in (req.common or [])]
         custom = [str(d).lower().strip().strip(".") for d in (req.custom or []) if d]
-        save_dns_state(clients, req.bot_link or "", common, custom)
+        allow_common = [str(d).lower().strip().strip(".")
+                        for d in (req.allow_common or []) if d]
+        allow_clients = {str(k): [str(d).lower().strip().strip(".") for d in v if d]
+                         for k, v in (req.allow_clients or {}).items()}
+        save_dns_state(clients, req.bot_link or "", common, custom,
+                       allow_common, allow_clients)
         # Общие правила и свой список действуют на всех, поэтому заворачивать
         # DNS надо всем, а не только тем, у кого включены личные категории.
         count = apply_dns_filters(clients, everyone=bool(common or custom))

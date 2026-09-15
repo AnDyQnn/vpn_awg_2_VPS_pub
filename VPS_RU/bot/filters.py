@@ -38,6 +38,15 @@ CATEGORIES = [
     ("gambling", "Азартные игры"),
     ("malware", "Вредоносное и фишинг"),
     ("social", "Соцсети"),
+    ("torrent", "Торренты и пиратство"),
+    ("crypto", "Криптовалюты и майнинг"),
+    ("scam", "Мошенничество"),
+    ("tracking", "Слежка и телеметрия"),
+    ("drugs", "Наркотики и алкоголь"),
+    ("games", "Игры"),
+    ("streaming", "Видео и стриминг"),
+    ("dating", "Знакомства"),
+    ("ransomware", "Шифровальщики"),
 ]
 TITLES = dict(CATEGORIES)
 
@@ -101,12 +110,25 @@ async def apply_filters(reason: str = ""):
     except Exception:
         common, custom = [], []
 
+    # Исключения — вопреки категории. Личные привязаны к ключу, а узел знает
+    # только адреса, поэтому здесь же переводим одно в другое.
+    try:
+        allow_common, allow_by_uuid = await db.get_all_filter_allow()
+    except Exception:
+        allow_common, allow_by_uuid = [], {}
+    allow_clients = {}
+    for uuid_val, domains in allow_by_uuid.items():
+        for ip in ips.get(uuid_val, []):
+            allow_clients[ip] = domains
+
     try:
         async with api_session() as session:
             async with session.post(f"{WG_API_URL}/dns/filters",
                                     json={"clients": clients,
                                           "common": common,
                                           "custom": custom,
+                                          "allow_common": allow_common,
+                                          "allow_clients": allow_clients,
                                           "bot_link": BOT_LINK["url"]}, timeout=10) as resp:
                 if resp.status != 200:
                     return False, f"узел отклонил фильтры: {await resp.text()}"
@@ -115,6 +137,9 @@ async def apply_filters(reason: str = ""):
         return False, f"узел недоступен: {e}"
 
     msg = f"Фильтры применены: под фильтром {data.get('filtered', 0)} чел."
+    if allow_common or allow_clients:
+        msg += (f" · исключений: {len(allow_common)} общих, "
+                f"{sum(len(v) for v in allow_clients.values())} личных")
     if common:
         msg += f" · общих правил: {len(common)}"
     if custom:
@@ -182,6 +207,7 @@ async def filters_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
                   "уходит внутри HTTPS и на уровне DNS его не видно._"]
 
     kb = [[InlineKeyboardButton("🌍 Общие правила", callback_data="flt_common")],
+          [InlineKeyboardButton("✅ Общие исключения", callback_data="flt_alw_all")],
           [InlineKeyboardButton("👤 Выбрать человека", callback_data="flt_pick_0")]]
     if by_uuid:
         kb.append([InlineKeyboardButton("🔄 Применить на узле", callback_data="flt_apply")])
@@ -191,6 +217,121 @@ async def filters_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                   reply_markup=InlineKeyboardMarkup(kb),
                                   parse_mode=ParseMode.MARKDOWN)
 
+
+
+# --- ИСКЛЮЧЕНИЯ ------------------------------------------------------------
+# Категория закрывает пачку сайтов скопом, и почти всегда в этой пачке есть
+# что-то нужное. Исключение разрешает такой сайт вопреки категории — всем или
+# одному человеку. Проверяется раньше запретов, иначе смысла бы не имело.
+
+async def allow_screen(update: Update, context: ContextTypes.DEFAULT_TYPE,
+                       uuid_val=None):
+    """Список исключений: общих или одного ключа."""
+    query = update.callback_query
+    rows = await db.list_filter_allow(uuid_val=uuid_val, common=uuid_val is None)
+
+    if uuid_val:
+        user = await db.get_user_by_uuid(uuid_val)
+        who = escape_md((user or {}).get("name") or uuid_val[:8])
+        head = f"✅ **Исключения · {who}**"
+        back = f"flt_user_{uuid_val}"
+        add = f"flt_alw_add_{uuid_val}"
+        scope = ("Эти сайты открыты **только этому ключу**, даже если категория "
+                 "закрыта ему или всем.")
+    else:
+        head = "✅ **Общие исключения**"
+        back = "flt_common"
+        add = "flt_alw_add_all"
+        scope = ("Эти сайты открыты **всем**, даже если закрыта категория, "
+                 "в которую они входят.")
+
+    lines = [head, "", scope, ""]
+    if not rows:
+        lines.append("_Пока пусто._")
+    else:
+        for row in rows:
+            lines.append(f"  • `{escape_md(row['domain'])}`")
+    lines += ["", "_Разрешение сильнее запрета, а личное сильнее общего: "
+                  "правило про конкретного человека заведомо осознаннее._"]
+
+    kb = [[InlineKeyboardButton("➕ Разрешить сайт", callback_data=add)]]
+    for row in rows:
+        kb.append([InlineKeyboardButton(f"🗑 {row['domain'][:28]}",
+                                        callback_data=f"flt_alw_del_{row['id']}"
+                                                      f"_{uuid_val or 'all'}")])
+    kb.append([InlineKeyboardButton("🔙 Назад", callback_data=back)])
+
+    await show_screen(query, context, "\n".join(lines),
+                      reply_markup=InlineKeyboardMarkup(kb),
+                      parse_mode=ParseMode.MARKDOWN)
+
+
+async def allow_add_request(update: Update, context: ContextTypes.DEFAULT_TYPE,
+                            uuid_val=None):
+    query = update.callback_query
+    context.user_data["state"] = "awaiting_filter_allow"
+    context.user_data["allow_uuid"] = uuid_val
+    who = "всем" if not uuid_val else "этому ключу"
+    await show_screen(
+        query, context,
+        f"➕ **Разрешить сайт {who}**\n\n"
+        "Пришлите домен или несколько — по одному в строке:\n"
+        "`vk.com`\n`work-chat.example`\n\n"
+        "Поддомены попадают под правило сами: разрешили `vk.com` — откроется и "
+        "`login.vk.com`, иначе сайт всё равно не заработает.",
+        reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton("✖️ Отмена",
+                                   callback_data=(f"flt_alw_{uuid_val}" if uuid_val
+                                                  else "flt_alw_all"))]]),
+        parse_mode=ParseMode.MARKDOWN)
+
+
+async def allow_add_entered(update, context):
+    """Разбирает присланное. Возвращает True, если сообщение было для нас."""
+    uuid_val = context.user_data.get("allow_uuid")
+    context.user_data["state"] = None
+    raw = (update.message.text or "").strip()
+
+    added, bad = [], []
+    for part in raw.replace(",", "\n").split("\n"):
+        value = part.strip().lower()
+        if not value:
+            continue
+        if "://" in value:
+            value = value.split("://", 1)[1]
+        value = value.split("/")[0].strip(".")
+        if not value or " " in value or "." not in value:
+            bad.append(part.strip()[:30])
+            continue
+        await db.add_filter_allow(value, uuid_val)
+        added.append(value)
+
+    back = f"flt_alw_{uuid_val}" if uuid_val else "flt_alw_all"
+    kb = InlineKeyboardMarkup(
+        [[InlineKeyboardButton("✅ К исключениям", callback_data=back)]])
+    if not added:
+        await context.bot.send_message(
+            chat_id=update.message.chat_id, reply_markup=kb,
+            text="⚠️ Ничего не разобрал. Нужен домен — например, `vk.com`.",
+            parse_mode=ParseMode.MARKDOWN)
+        return True
+
+    ok, msg = await apply_filters("добавлено исключение")
+    text = "✅ Разрешено: " + ", ".join(f"`{a}`" for a in added)
+    if bad:
+        text += "\n\n⚠️ Не понял: " + ", ".join(bad)
+    text += "\n\n" + ("Применено на узле." if ok else f"⚠️ Узел: {msg}")
+    await context.bot.send_message(chat_id=update.message.chat_id, text=text,
+                                   reply_markup=kb, parse_mode=ParseMode.MARKDOWN)
+    return True
+
+
+async def allow_remove(update: Update, context: ContextTypes.DEFAULT_TYPE,
+                       allow_id, uuid_val=None):
+    await db.delete_filter_allow(allow_id)
+    await apply_filters("снято исключение")
+    await update.callback_query.answer("Убрано")
+    await allow_screen(update, context, uuid_val)
 
 async def pick_user(update: Update, context: ContextTypes.DEFAULT_TYPE, page: int = 0):
     query = update.callback_query
@@ -244,6 +385,10 @@ async def user_filters_screen(update: Update, context: ContextTypes.DEFAULT_TYPE
           for key, title in CATEGORIES]
     kb.append([InlineKeyboardButton("🔙 К человеку",
                                     callback_data=f"user_detail_{uuid_val}")])
+    # Исключения — рядом с категориями: закрыл «соцсети», тут же оставил рабочий
+    # чат. Разносить это по разным экранам значит ломать один жест на два.
+    kb.append([InlineKeyboardButton("✅ Исключения",
+                                    callback_data=f"flt_alw_{uuid_val}")])
     kb.append([InlineKeyboardButton("🧹 К списку фильтров", callback_data="flt_pick_0")])
 
     await show_screen(query, context, "\n".join(lines),

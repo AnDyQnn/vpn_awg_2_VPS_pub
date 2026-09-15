@@ -47,6 +47,32 @@ MAX_DOMAINS_PER_CATEGORY = 2000000
 # Категории и откуда берутся списки. Источники — публичные, в формате «домен в строке»
 # или hosts. Если источник недоступен, категория остаётся с прошлым кэшем, а не пустой:
 # молча перестать фильтровать хуже, чем фильтровать по вчерашнему списку.
+# Значки в одном стиле, но разные: случаи разные, и одинаковая картинка
+# стирает разницу ровно там, где человек пытается понять, что произошло.
+#
+# Фильтр — перечёркнутый глаз: сайт есть, его не показывают.
+# Доступы — замок: сервис свой, но закрыт ключом.
+ICON_FILTER = (
+    '<svg width="44" height="44" viewBox="0 0 24 24" fill="none" '
+    'stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    '<path class="lockbody" d="M2.5 12S5.9 5.8 12 5.8c2 0 3.7.7 5.1 1.6" fill="none"></path>'
+    '<path class="lockbody" d="M20.4 9.2c.6.9 1.1 1.9 1.1 2.8 0 0-3.4 6.2-9.5 6.2-1.3 0-2.5-.3-3.6-.8" fill="none"></path>'
+    '<circle class="keyhole" cx="12" cy="12" r="2.6" fill="none"></circle>'
+    '<path class="shackle" d="M3.6 3.6 20.4 20.4" fill="none"></path>'
+    '</svg>')
+
+ICON_ACCESS = (
+    '<svg width="44" height="44" viewBox="0 0 24 24" fill="none" '
+    'stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    '<path class="shackle" d="M7.6 10.4V7.2a4.4 4.4 0 0 1 8.8 0v3.2" fill="none"></path>'
+    '<rect class="lockbody" x="4.2" y="10.4" width="15.6" height="10.4" rx="2.6" fill="none"></rect>'
+    '<circle class="keyhole" cx="12" cy="15.6" r="1.25"></circle>'
+    '</svg>')
+
+# Категории. Списки публичные, в формате hosts или «домен в строке». Источник
+# один и тот же проект, чтобы формат не приходилось угадывать для каждого.
+_BL = "https://raw.githubusercontent.com/blocklistproject/Lists/master/%s.txt"
+
 CATEGORIES = {
     "ads": {
         "title": "Реклама и трекеры",
@@ -67,8 +93,43 @@ CATEGORIES = {
     },
     "social": {
         "title": "Соцсети",
-        "urls": ["https://raw.githubusercontent.com/blocklistproject/Lists/master/facebook.txt",
-                 "https://raw.githubusercontent.com/blocklistproject/Lists/master/tiktok.txt"],
+        "urls": [_BL % "facebook", _BL % "tiktok"],
+    },
+    "torrent": {
+        "title": "Торренты и пиратство",
+        "urls": [_BL % "torrent", _BL % "piracy"],
+    },
+    "crypto": {
+        "title": "Криптовалюты и майнинг",
+        "urls": [_BL % "crypto"],
+    },
+    "scam": {
+        "title": "Мошенничество",
+        "urls": [_BL % "scam", _BL % "fraud"],
+    },
+    "tracking": {
+        "title": "Слежка и телеметрия",
+        "urls": [_BL % "tracking", _BL % "smart-tv"],
+    },
+    "drugs": {
+        "title": "Наркотики и алкоголь",
+        "urls": [_BL % "drugs", _BL % "abuse"],
+    },
+    "games": {
+        "title": "Игры",
+        "urls": [_BL % "gaming"],
+    },
+    "streaming": {
+        "title": "Видео и стриминг",
+        "urls": [_BL % "youtube", _BL % "twitter"],
+    },
+    "dating": {
+        "title": "Знакомства",
+        "urls": [_BL % "dating"],
+    },
+    "ransomware": {
+        "title": "Шифровальщики",
+        "urls": [_BL % "ransomware"],
     },
 }
 
@@ -195,6 +256,8 @@ class Filters:
 
     def __init__(self):
         self.clients = {}          # ip -> [категории]
+        self.allow_common = set()  # разрешено всем
+        self.allow_clients = {}    # ip -> разрешено лично
         self.domains = {}          # категория -> set(доменов)
         self.common = []           # категории, включённые сразу всем
         self.custom = set()        # свой список доменов владельца
@@ -212,6 +275,7 @@ class Filters:
         except OSError:
             if self.clients:
                 self.clients, self.domains = {}, {}
+                self.allow_common, self.allow_clients = set(), {}
             return
         if mtime == self._mtime:
             return
@@ -223,6 +287,13 @@ class Filters:
             print(f"DNS: не читается состояние фильтров: {e}", flush=True)
             return
         self.clients = {ip: list(cats) for ip, cats in (state.get("clients") or {}).items()}
+        # Разрешения: общие и на конкретный адрес. Хранятся строками — их
+        # десятки, а не миллион, и по ним удобно отвечать владельцу, что именно
+        # сработало.
+        self.allow_common = {str(d).lower().strip(".")
+                             for d in (state.get("allow_common") or []) if d}
+        self.allow_clients = {ip: {str(d).lower().strip(".") for d in doms if d}
+                              for ip, doms in (state.get("allow_clients") or {}).items()}
         # Общие категории и свой список — то же самое, но без разбора, кому
         # именно: они действуют на всех, кто ходит через узел.
         self.common = list(state.get("common") or [])
@@ -248,6 +319,15 @@ class Filters:
                 self.domains[cat] = set()
                 print(f"DNS: список категории {cat} ещё не загружен", flush=True)
 
+    @staticmethod
+    def _covers(rules, parts):
+        """Правило про домен покрывает и его поддомены: разрешили vk.com —
+        значит и login.vk.com, иначе сайт всё равно не откроется."""
+        for i in range(len(parts) - 1):
+            if ".".join(parts[i:]) in rules:
+                return True
+        return False
+
     def blocked(self, ip, name):
         """Проверяем и сам домен, и все его родительские: список содержит
         example.com, а спрашивают ads.example.com.
@@ -255,6 +335,15 @@ class Filters:
         Сначала свой список владельца — он короткий и важнее всего; потом
         общие категории; потом персональные."""
         parts = name.split(".")
+
+        # Разрешения — первыми. Исключение, которое проверяется после запрета,
+        # исключением не является.
+        own_allow = self.allow_clients.get(ip)
+        if own_allow and self._covers(own_allow, parts):
+            return None
+        if self.allow_common and self._covers(self.allow_common, parts):
+            return None
+
         if self.custom:
             for i in range(len(parts) - 1):
                 if ".".join(parts[i:]) in self.custom:
@@ -544,13 +633,14 @@ def _render_block_page(host, category):
     if category:
         head = "Этот сайт закрыт фильтром"
         why = "Категория: <b>%s</b>" % CATEGORY_TITLES.get(category, category)
-        note = ("Так настроено для вашего ключа. Сайт работает — "
-                "его не открывает фильтр, а не поломка сети.")
+        note = ("Доступ ограничен администратором.<br><br>"
+                "Если это ошибка — свяжитесь с поддержкой.")
+        icon = ICON_FILTER
     else:
         head = "Доступ к этому сервису закрыт"
-        why = "Он не входит в то, что открыто вашему ключу"
-        note = ("Сервис работает и сеть исправна — просто он не открыт для вас. "
-                "Это настройка доступов, а не поломка.")
+        why = "Доступ ограничен администратором"
+        note = "Если это ошибка — свяжитесь с поддержкой"
+        icon = ICON_ACCESS
     page = _page_cache
     # Кнопка «обратиться» — только когда есть куда. Без адреса убираем её
     # целиком: мёртвая кнопка хуже отсутствующей, по ней жмут впустую.
@@ -564,6 +654,7 @@ def _render_block_page(host, category):
             .replace("__HEAD__", head)
             .replace("__WHY__", why)
             .replace("__NOTE__", note)
+            .replace("__ICON__", icon)
             .replace("__CONTACT__", contact)
             .replace("__CATEGORY__", CATEGORY_TITLES.get(category, category or "")))
 

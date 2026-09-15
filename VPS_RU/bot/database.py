@@ -294,6 +294,28 @@ class Database:
                 );
             """)
 
+            # --- ИСКЛЮЧЕНИЯ ИЗ ФИЛЬТРА ---
+            # Категория — грубый инструмент: «соцсети» закрывают вместе с
+            # рабочим чатом. Исключение разрешает конкретный домен вопреки
+            # категории — всем сразу или одному ключу.
+            #
+            # user_uuid NULL значит «всем». Отдельной таблицы под общие не
+            # заводим: правило одно и то же, разная только область.
+            await self.execute("""
+                CREATE TABLE IF NOT EXISTS filter_allow (
+                    id SERIAL PRIMARY KEY,
+                    user_uuid TEXT REFERENCES users(uuid) ON DELETE CASCADE,
+                    domain TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT NOW()
+                );
+            """)
+            await self.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_allow_common "
+                "ON filter_allow(domain) WHERE user_uuid IS NULL;")
+            await self.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_allow_peer "
+                "ON filter_allow(user_uuid, domain) WHERE user_uuid IS NOT NULL;")
+
             # --- ПОПЫТКИ НА ЗАКРЫТОЕ ---
             # Что именно нужно для разбора: когда, кто (имя и uuid переживают
             # смену адреса), с какого адреса в туннеле и с какого внешнего.
@@ -606,6 +628,53 @@ class Database:
     async def remove_custom_block(self, domain):
         items = [d for d in await self.get_custom_blocks() if d != domain]
         await self.set_setting("filters_custom", ",".join(items))
+
+    # --- ИСКЛЮЧЕНИЯ ИЗ ФИЛЬТРА -------------------------------------------
+    async def add_filter_allow(self, domain, uuid_val=None):
+        domain = (domain or "").strip().lower().strip(".")
+        if not domain:
+            return
+        if uuid_val:
+            await self.execute(
+                "INSERT INTO filter_allow (user_uuid, domain) VALUES ($1,$2) "
+                "ON CONFLICT DO NOTHING", uuid_val, domain)
+        else:
+            await self.execute(
+                "INSERT INTO filter_allow (user_uuid, domain) VALUES (NULL,$1) "
+                "ON CONFLICT DO NOTHING", domain)
+
+    async def delete_filter_allow(self, allow_id):
+        await self.execute("DELETE FROM filter_allow WHERE id=$1", int(allow_id))
+
+    async def list_filter_allow(self, uuid_val=None, common=False):
+        """Список исключений. `common` — только общие, иначе только личные."""
+        if common:
+            rows = await self.fetch_all(
+                "SELECT id, domain FROM filter_allow WHERE user_uuid IS NULL "
+                "ORDER BY domain")
+        else:
+            rows = await self.fetch_all(
+                "SELECT id, domain FROM filter_allow WHERE user_uuid=$1 "
+                "ORDER BY domain", uuid_val)
+        return [dict(r) for r in rows]
+
+    async def get_all_filter_allow(self):
+        """Всё разом для отправки на узел: общие и по ключам."""
+        rows = await self.fetch_all(
+            "SELECT user_uuid, domain FROM filter_allow")
+        common, per_uuid = [], {}
+        for r in rows:
+            if r["user_uuid"]:
+                per_uuid.setdefault(r["user_uuid"], []).append(r["domain"])
+            else:
+                common.append(r["domain"])
+        return common, per_uuid
+
+    async def count_filter_allow(self, uuid_val=None):
+        if uuid_val:
+            return await self.fetch_val(
+                "SELECT COUNT(*) FROM filter_allow WHERE user_uuid=$1", uuid_val) or 0
+        return await self.fetch_val("SELECT COUNT(*) FROM filter_allow") or 0
 
     # --- ПОПЫТКИ НА ЗАКРЫТОЕ ---------------------------------------------
     async def add_filter_hit(self, happened_at, uuid_val, name, tunnel_ip,

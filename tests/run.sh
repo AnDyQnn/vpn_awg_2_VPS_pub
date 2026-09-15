@@ -101,7 +101,7 @@ run_bot() {
             -e DATABASE_URL=postgres://vpn:vpnpass@vpntest-db:5432/vpndb \
             -e BOT_TOKEN=test -e ADMIN_ID=1 \
             -v "$(dpath "$TESTS_DIR")/bot/$t:/app/$t" \
-            -v "$(dpath "$TESTS_DIR")/bot/api_categories.txt:/app/api_categories.txt" \
+            -v "$(dpath "$ROOT")/VPS_RU/ru_wg_api/dnsfilter.py:/app/node_dnsfilter.py" \
             -v "$(dpath "$TESTS_DIR")/out:/out" \
             -v "$(dpath "$TESTS_DIR")/contract/node_contract.py:/app/node_contract.py" \
             -v "$(dpath "$ROOT")/CHANGELOG.md:/app/CHANGELOG.md" \

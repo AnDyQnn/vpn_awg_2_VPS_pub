@@ -108,6 +108,11 @@ async def issue_xray(update: Update, context: ContextTypes.DEFAULT_TYPE, uuid_va
     query = update.callback_query
     await query.answer("Выдаю…")
     ok, res = await xray.issue(uuid_val)
+    if ok:
+        # Адрес-двойник заводится в момент выдачи: раскладка ограничений на
+        # узле про него ещё ничего не знает.
+        from restrictions import reapply
+        await reapply("выдана ссылка Xray")
     if not ok:
         await query.answer(f"Не вышло: {res}", show_alert=True)
         return
@@ -519,6 +524,11 @@ async def handout(update, context, uuid_val, name, tg_id=None):
     передать как-то иначе, и она должна быть под рукой."""
     chat_id = update.effective_chat.id
     ok, res = await xray.issue(uuid_val)
+    if ok:
+        # Адрес-двойник заводится в момент выдачи: раскладка ограничений на
+        # узле про него ещё ничего не знает.
+        from restrictions import reapply
+        await reapply("выдана ссылка Xray")
     if not ok:
         await context.bot.send_message(chat_id=chat_id,
                                        text=f"⚠️ Ключ создан, но Xray не выдан: {res}",

@@ -121,7 +121,7 @@ async def hits_screen(update: Update, context: ContextTypes.DEFAULT_TYPE, page=0
     fresh = await db.count_filter_hits(only_new=True)
     rows = await db.list_filter_hits(limit=PER_PAGE, offset=page * PER_PAGE)
 
-    lines = ["🚨 **Попытки на закрытое**", ""]
+    lines = ["🚨 **Инциденты**", ""]
     if not rows:
         lines += ["Пока никто никуда не стучался.", "",
                   "_Записываются обращения к доменам, которые закрыты фильтром "
@@ -170,7 +170,7 @@ async def hit_open(update: Update, context: ContextTypes.DEFAULT_TYPE, hit_id):
     await db.mark_filter_hit_seen(hit_id)
 
     lines = [
-        "🚨 **Попытка на закрытое**", "",
+        "🚨 **Инцидент**", "",
         f"🕒 {_when(row['happened_at'])} (МСК)",
         f"👤 {escape_md(row['name'] or 'ключ не определён')}",
         f"🌐 Домен: `{escape_md(row['domain'])}`",
