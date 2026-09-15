@@ -214,9 +214,18 @@ async def render_user_detail(context, chat_id, message_id, uuid):
             roles_text = f"\n🛡 **Роли:** {names}\n"
             allow = (await db.get_access_matrix()).get(uuid, {}).get("allow", [])
             if allow:
+                # Те же имена вместо адресов, что и на экране роли: карточка
+                # ключа — то место, где владелец чаще всего и читает доступы.
+                tunnel_names = {}
+                try:
+                    for row in await db.list_dns_names():
+                        if row.get("target_ip"):
+                            tunnel_names[str(row["target_ip"]).split("/")[0]] = row["name"]
+                except Exception:
+                    tunnel_names = {}
                 seen = set()
                 for g in allow[:6]:
-                    line = grant_text(g)
+                    line = grant_text(g, tunnel_names)
                     if line in seen:
                         continue
                     seen.add(line)

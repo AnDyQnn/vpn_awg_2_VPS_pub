@@ -226,6 +226,49 @@ async def main():
             say("warning", "Версии мастера и Германии", "не удалось сверить: %s" % e)
 
 
+def check_category_lists():
+    """Категория, у которой не загрузился список, ничего не фильтрует.
+
+    Снаружи это незаметно: она показывается владельцу как обычная, включается
+    человеку, значится включённой — и молча пропускает всё. Так и было с двумя
+    категориями, у которых источник отдавал 404.
+
+    Смотрим то же, что видит резолвер: файлы кэша. Пустой или отсутствующий
+    файл у включённой кем-то категории — ошибка, а не мелочь.
+    """
+    cache = "/etc/amnezia/amneziawg/cache/dns"
+    state = "/etc/amnezia/amneziawg/dns_filter.json"
+    try:
+        with open(state, encoding="utf-8") as f:
+            data = json.load(f) or {}
+    except Exception:
+        say("ok", "Списки категорий", "фильтры никому не включены")
+        return
+
+    used = set(data.get("common") or [])
+    for cats in (data.get("clients") or {}).values():
+        used.update(cats or [])
+    if not used:
+        say("ok", "Списки категорий", "фильтры никому не включены")
+        return
+
+    empty = []
+    for cat in sorted(used):
+        path = os.path.join(cache, "%s.txt" % cat)
+        try:
+            if os.path.getsize(path) < 100:
+                empty.append(cat)
+        except OSError:
+            empty.append(cat)
+
+    if empty:
+        say("error", "Списки категорий",
+            "не загрузились: %s — эти категории ничего не фильтруют"
+            % ", ".join(empty))
+    else:
+        say("ok", "Списки категорий", "все загружены (%d)" % len(used))
+
+
 def check_env_described():
     """Переменные, без которых узел работает молча неправильно.
 
@@ -251,5 +294,6 @@ if __name__ == "__main__":
         asyncio.run(main())
     except Exception as e:
         say("error", "Сверка базы с узлом", "не отработала: %s" % e)
+    check_category_lists()
     check_env_described()
     print("\n".join(LINES))
