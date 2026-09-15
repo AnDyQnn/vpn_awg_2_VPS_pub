@@ -633,7 +633,7 @@ def _render_block_page(host, category):
     if category:
         head = "Этот сайт закрыт фильтром"
         why = "Категория: <b>%s</b>" % CATEGORY_TITLES.get(category, category)
-        note = ("Доступ ограничен администратором.<br><br>"
+        note = ("Доступ ограничен администратором. "
                 "Если это ошибка — свяжитесь с поддержкой.")
         icon = ICON_FILTER
     else:
