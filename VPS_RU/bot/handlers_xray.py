@@ -557,21 +557,12 @@ async def handout(update, context, uuid_val, name, tg_id=None):
         from delivery import track_send
 
         async def _send():
-            await context.bot.send_message(
-                chat_id=tg_id,
-                text=("🔑 **Вам выдан доступ к VPN**\n\n"
-                      "Ссылка ниже — ваша личная. По ней подключаются к "
-                      "вашему доступу, не передавайте её никому.\n\n"
-                      "Выберите свою систему — пришлю, что делать:"),
-                reply_markup=platform_keyboard(uuid_val),
-                parse_mode=ParseMode.MARKDOWN)
-            if qr:
-                await context.bot.send_photo(chat_id=tg_id, photo=open(qr, "rb"))
-            # Человеку — его личный кабинет. Кнопка «Люди» владельческая,
-            # у него такого экрана нет вовсе.
-            await context.bot.send_message(
-                chat_id=tg_id, text=link,
-                reply_markup=exit_kb(to_client=True))
+            # Человеку — то же самое, что при перевыпуске: один адрес
+            # подписки. Два разных первых впечатления от одного и того же
+            # продукта только путают.
+            from handlers_client import send_xray_profile
+            if not await send_xray_profile(context, tg_id, uuid_val):
+                raise RuntimeError("профиль не собрался")
 
         sent, err = await track_send(uuid_val, tg_id, _send)
         await context.bot.send_message(

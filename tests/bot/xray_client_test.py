@@ -126,7 +126,9 @@ async def main():
     await hc.client_download_handler(upd, ctx, "cl-1")
     print("сообщений:", len(sent["messages"]), "· QR:", len(sent["photos"]),
           "· файлов:", len(sent["documents"]))
-    assert any("vless://" in m for m in sent["messages"]), sent["messages"]
+    # Человеку уходит один адрес — подписка. Разовая ссылка осталась у
+    # владельца: человеку нужен один способ подключиться, а не три.
+    assert any("/sub/" in m for m in sent["messages"]), sent["messages"]
     assert not sent["documents"], "человеку на Xray прислали файл конфига"
     assert any("не передавайте" in m for m in sent["messages"])
     print("ссылка, QR и предупреждение: ок")
@@ -152,7 +154,9 @@ async def main():
     rec = await db.get_xray_user("cl-1")
     assert rec["sub_token"] != token, "токен не сменился"
     assert await xray.subscription_body(token) == "", "старая ссылка ещё жива"
-    assert any("vless://" in m for m in sent["messages"])
+    # Человеку уходит один адрес — подписка. Разовая ссылка осталась
+    # у владельца: человеку нужен один способ подключиться, а не три.
+    assert any("/sub/" in m for m in sent["messages"]), sent["messages"]
     print("новая ссылка выдана, старая мертва: ок")
 
     await db.execute("DELETE FROM users WHERE uuid LIKE 'cl-%'")

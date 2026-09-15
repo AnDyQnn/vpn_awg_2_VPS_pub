@@ -153,7 +153,7 @@ async def main():
     to_user = [m for m in ctx.bot.messages if m[0] == 555]
     print("владельцу сообщений:", len(to_admin), "· человеку:", len(to_user))
     assert any("vless://" in m[1] for m in to_admin), "владельцу ссылка не ушла"
-    assert any("vless://" in m[1] for m in to_user), "человеку ссылка не ушла"
+    assert any("/sub/" in m[1] for m in to_user), "человеку адрес не ушёл"
     assert 555 in ctx.bot.photos, "QR человеку не ушёл"
     assert any("не передавайте" in m[1] for m in to_user), "нет предупреждения о личной ссылке"
     print("ссылка, QR и предупреждение доехали: ок")
