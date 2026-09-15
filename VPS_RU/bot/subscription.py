@@ -32,6 +32,11 @@ SUB_PORT = int(os.getenv("SUB_PORT", "8080"))
 # компромисс: изменения доезжают за полдня, а сервер не дёргают попусту.
 UPDATE_INTERVAL_HOURS = 12
 
+# Сколько байт профиля маршрутизации согласны положить в заголовок. Дальше —
+# в тело: длинные заголовки режут посредники, и приложение получит обрезанный
+# профиль, даже не узнав об этом.
+HEADER_LIMIT = 4096
+
 # Чужие запросы на несуществующие токены — это либо опечатка, либо скан.
 # Считаем их и сообщаем владельцу не чаще раза в час, чтобы не устроить спам.
 _miss_count = 0
@@ -75,23 +80,42 @@ async def handle_sub(request):
             _miss_count = 0
         return web.Response(status=404, text="not found")
 
-    body = await xray.subscription_body(token)
+    # Сплит едет вместе с подпиской. Профиль с тем же именем приложение
+    # обновляет, а не добавляет рядом, — поэтому изменившийся список исключений
+    # доезжает до всех сам, без перевыпуска и без действий человека.
+    routing, in_body = "", []
+    try:
+        import happ_routing
+        routing = await happ_routing.link()
+        if len(routing) > HEADER_LIMIT:
+            # Заголовок такой длины по дороге могут обрезать, и приложение
+            # получит мусор вместо профиля. Тогда — строкой в теле: чужой
+            # клиент её просто пропустит.
+            in_body = [routing]
+            routing = ""
+    except Exception as e:
+        print(f"Подписка: профиль маршрутизации не собрался: {e}")
+
+    body = await xray.subscription_body(token, extra=in_body)
     if not body:
         return web.Response(status=404, text="not found")
 
     name = base64.b64encode((rec.get("name") or "VPN").encode()).decode()
+    headers = {
+        "profile-update-interval": str(UPDATE_INTERVAL_HOURS),
+        "profile-title": f"base64:{name}",
+        "subscription-userinfo": await _userinfo(rec),
+        # Подписка — личная и всегда свежая: кэшировать её нельзя, иначе
+        # отзыв доступа не доедет до клиента.
+        "Cache-Control": "no-store",
+    }
+    if routing:
+        headers["routing"] = routing
     return web.Response(
         body=body.encode(),
         content_type="text/plain",
         charset="utf-8",
-        headers={
-            "profile-update-interval": str(UPDATE_INTERVAL_HOURS),
-            "profile-title": f"base64:{name}",
-            "subscription-userinfo": await _userinfo(rec),
-            # Подписка — личная и всегда свежая: кэшировать её нельзя, иначе
-            # отзыв доступа не доедет до клиента.
-            "Cache-Control": "no-store",
-        })
+        headers=headers)
 
 
 async def handle_root(request):

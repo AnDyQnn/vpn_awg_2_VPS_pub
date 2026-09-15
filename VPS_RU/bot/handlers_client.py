@@ -718,6 +718,20 @@ async def send_xray_profile(context, chat_id, uuid_val):
     # список есть, но лежит за кнопкой в карточке ключа, а вопрос возникает
     # прямо сейчас.
     apps = xray.apps_markdown(await xray.apps_list())
+
+    # Шаг четвёртый — подписка. Она и приносит всё, что меняется потом: список
+    # исключений, маскировку, адрес узла. Ставим её последней, а не первой,
+    # потому что живёт она внутри туннеля: чтобы прочитать, надо подключиться.
+    rec = await db.get_xray_user(uuid_val)
+    sub = await xray.subscription_url(rec["sub_token"]) if rec else ""
+    tail = ""
+    if sub:
+        tail = ("\n\n**4.** Уже подключившись, добавьте в приложении адрес "
+                "обновлений — нажмите, чтобы скопировать:\n"
+                f"`{sub}`\n"
+                "После этого настройки приезжают сами: какие сайты идут мимо "
+                "VPN, смена сервера, всё остальное. Делается один раз.")
+
     await context.bot.send_message(
         chat_id=chat_id,
         text=("**Что делать дальше**\n\n"
@@ -726,7 +740,8 @@ async def send_xray_profile(context, chat_id, uuid_val):
               "**2.** Скопируйте ссылку выше и вставьте в приложение — оно само "
               "добавит подключение. На телефоне можно вместо этого "
               "отсканировать QR.\n\n"
-              "**3.** Включите VPN в приложении."),
+              "**3.** Включите VPN в приложении."
+              f"{tail}"),
         parse_mode=ParseMode.MARKDOWN,
         disable_web_page_preview=True,
         reply_markup=exit_kb(to_client=True))

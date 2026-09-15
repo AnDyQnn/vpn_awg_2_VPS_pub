@@ -463,12 +463,17 @@ async def subscription_url(token: str) -> str:
     return f"{base}/sub/{token}"
 
 
-async def subscription_body(token: str) -> str:
+async def subscription_body(token: str, extra=None) -> str:
     """Тело подписки: список профилей в base64 — формат, который понимают
     все клиенты этого семейства.
 
     Пусто отдаём намеренно: если человек приостановлен или ссылка отозвана,
-    клиент при следующем обновлении получит пустой список и профиль исчезнет."""
+    клиент при следующем обновлении получит пустой список и профиль исчезнет.
+
+    `extra` — строки, которые надо доложить к списку (сейчас это профиль
+    маршрутизации). Кладём их в конец: клиент, который такую строку не знает,
+    пропустит её, уже разобрав всё нужное.
+    """
     rec = await db.get_xray_by_token(token)
     if not rec or not rec["is_active"]:
         return ""
@@ -478,7 +483,7 @@ async def subscription_body(token: str) -> str:
     if not links:
         return ""
     await db.mark_xray_seen(rec["user_uuid"])
-    return base64.b64encode("\n".join(links).encode()).decode()
+    return base64.b64encode("\n".join(links + list(extra or [])).encode()).decode()
 
 
 # --- КТО НА СВЯЗИ ---------------------------------------------------------

@@ -30,7 +30,8 @@ from monitor import (
     auto_reboot_loop, scheduled_update_loop, auto_update_check_loop, resource_monitor_loop,
     routing_upgrade_loop, bypass_reresolve_loop, run_bypass_check_handler, bypass_notify_now_handler,
     load_collector_loop, retire_watch_loop, notify_admin, migration_watch_loop, weekly_health_loop,
-    bypass_list_handler, bypass_del_handler, bypass_add_manual_handler, bypass_add_request_handler,
+    bypass_list_handler, bypass_happ_handler,
+    bypass_del_handler, bypass_add_manual_handler, bypass_add_request_handler,
     reconcile_routing_versions
 )
 from wireguard_manager import pause_peer, resume_peer
@@ -1045,6 +1046,7 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
         
     if data == "bypass_list": await bypass_list_handler(update, context); return
+    if data == "bypass_happ": await bypass_happ_handler(update, context); return
     if data == "bypass_add_manual": await bypass_add_manual_handler(update, context); return
     if data.startswith("bypass_del_"): await bypass_del_handler(update, context, data.split("bypass_del_")[1]); return
     if data.startswith("bypass_addreq_"): await bypass_add_request_handler(update, context, data.split("bypass_addreq_")[1], approve=True); return
