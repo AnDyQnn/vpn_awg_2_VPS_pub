@@ -460,14 +460,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 text="⚠️ Слишком короткий пароль — нужно хотя бы 8 символов. Попробуйте снова.")
             await return_to_main_menu(update, context, chat_id=chat_id)
             return
-        request_env_change("BACKUP_PASSWORD", pw)
+        flag = request_env_change("BACKUP_PASSWORD", pw)
         await context.bot.send_message(
             chat_id=chat_id,
             text="🔐 Пароль передан на сервер. Жду, пока применится…")
         # Положить просьбу — не значит применить её. Записывает переменную демон
         # на хосте; если он не запущен, просьба пролежит вечно, а бот раньше
         # рапортовал об успехе и снова требовал пароль на следующем экране.
-        if await env_change_applied():
+        if await env_change_applied(flag):
             text = ("🔐 Пароль записан в `.env` — бот сейчас перезапустится.\n\n"
                     "⚠️ Сохраните пароль отдельно: без него архивы не открыть, "
                     "а в базе его нет намеренно.")
