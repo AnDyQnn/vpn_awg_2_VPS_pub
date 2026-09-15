@@ -28,6 +28,8 @@ def main_menu(active_count=0, support_count=0, admin_count=0):
 def menu_ru_server():
     keyboard = [
         [InlineKeyboardButton("🔄 Обновить систему", callback_data="check_update")],
+        # Ключ выдаёт и меняет мастер — здесь ему и место.
+        [InlineKeyboardButton("🔑 Панель токенов", callback_data="svc_token")],
         [InlineKeyboardButton("🛠 Аудит мастера", callback_data="run_audit"),
          InlineKeyboardButton("🛡 Проверка исключений", callback_data="run_bypass_check")],
         [InlineKeyboardButton("🌐 Исключения · мимо VPN", callback_data="bypass_list")],
@@ -52,6 +54,9 @@ def menu_backups():
         [InlineKeyboardButton("💾 Копия мастера", callback_data="backup"),
          InlineKeyboardButton("♻️ Восстановить мастер", callback_data="restore")],
         [InlineKeyboardButton("💾 Копия клиента", callback_data="de_backup")],
+        # Посмотреть, что уже есть: без этого экрана понять, какие копии лежат
+        # на сервере, можно было только зайдя туда руками.
+        [InlineKeyboardButton("📦 Какие копии есть", callback_data="backup_list")],
         [InlineKeyboardButton("📊 Сводка · Excel", callback_data="download_logs"),
          InlineKeyboardButton("📊 База · Excel", callback_data="export_excel")],
         [InlineKeyboardButton("🔙 Главное меню", callback_data="back_to_main")],
