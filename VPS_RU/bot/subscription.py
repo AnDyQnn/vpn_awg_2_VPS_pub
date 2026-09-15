@@ -86,7 +86,7 @@ async def handle_sub(request):
     routing, in_body = "", []
     try:
         import happ_routing
-        routing = await happ_routing.link()
+        routing = await happ_routing.link(uuid_val=rec["user_uuid"])
         if len(routing) > HEADER_LIMIT:
             # Заголовок такой длины по дороге могут обрезать, и приложение
             # получит мусор вместо профиля. Тогда — строкой в теле: чужой

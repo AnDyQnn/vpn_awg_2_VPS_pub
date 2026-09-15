@@ -289,6 +289,15 @@ async def render_user_detail(context, chat_id, message_id, uuid):
         keyboard.append([InlineKeyboardButton(label, callback_data=f"xr_conn_{uuid}")])
     keyboard.append([InlineKeyboardButton("🛡 Доступы · роли", callback_data=f"role_u_{uuid}"),
                      InlineKeyboardButton("🧹 Фильтры", callback_data=f"flt_user_{uuid}")])
+    # Свои исключения — про это устройство, а не про всех. Число на кнопке,
+    # чтобы не заходить внутрь ради проверки, есть ли там что-нибудь.
+    try:
+        own_routes = await db.count_peer_routes(uuid)
+    except Exception:
+        own_routes = 0
+    keyboard.append([InlineKeyboardButton(
+        "🌐 Свои исключения" + (f" · {own_routes}" if own_routes else ""),
+        callback_data=f"rt_menu_{uuid}")])
     keyboard.append([InlineKeyboardButton("✏️ Переименовать ключ", callback_data=f"rename_user_{uuid}")])
     keyboard.append([InlineKeyboardButton("🔗 Привязать TG ID", callback_data=f"link_tg_{uuid}")])
     if tg_ids:

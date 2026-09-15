@@ -41,11 +41,23 @@ ALWAYS_DIRECT = [
 ]
 
 
-async def profile():
+def _is_net(value):
+    """Сеть это или имя. Различаем по первому знаку: адреса начинаются с
+    цифры, домены — нет. Точнее здесь и не нужно, а ошибиться дорого:
+    имя, записанное в сети, просто не сработает."""
+    value = (value or "").strip()
+    return bool(value) and (value[0].isdigit() or ":" in value)
+
+
+async def profile(uuid_val=None):
     """Профиль маршрутизации для приложения.
 
     `DirectSites` — домены, `DirectIp` — сети: и то и другое идёт напрямую,
     мимо туннеля. Всё остальное — через него.
+
+    `uuid_val` добавляет личные записи этого ключа. Ключ здесь и есть
+    устройство, так что «на телефоне одно, на компе другое» получается само,
+    без второго профиля: приложение всё равно держит активным только один.
     """
     try:
         rows = await db.get_bypass_exclusions()
@@ -69,7 +81,26 @@ async def profile():
         if cidr not in direct_ip:
             direct_ip.append(cidr)
 
-    return {
+    # Личные записи ключа — поверх общего списка.
+    proxy_sites, proxy_ip = [], []
+    if uuid_val:
+        try:
+            rows = await db.list_peer_routes(uuid_val)
+        except Exception:
+            rows = []
+        for row in rows:
+            value = (row["value"] or "").strip()
+            if not value:
+                continue
+            if row["direction"] == "proxy":
+                (proxy_ip if _is_net(value) else proxy_sites).append(value)
+            elif _is_net(value):
+                if value not in direct_ip:
+                    direct_ip.append(value)
+            else:
+                domains.append(value.lower())
+
+    prof = {
         "Name": PROFILE_NAME,
         "GlobalProxy": "true",
         "RemoteDNSType": "DoH",
@@ -87,22 +118,30 @@ async def profile():
         "DomainStrategy": "IPIfNonMatch",
         "FakeDNS": "false",
     }
+    # Пустые списки не кладём вовсе: профиль читает человек, и лишние поля в
+    # нём только мешают понять, что вообще настроено.
+    if proxy_sites:
+        prof["ProxySites"] = sorted(set(proxy_sites))
+    if proxy_ip:
+        prof["ProxyIp"] = proxy_ip
+    return prof
 
 
-async def link(activate=True):
+async def link(activate=True, uuid_val=None):
     """Ссылка, по которой приложение забирает профиль.
 
     `onadd` — добавить и сразу включить: профиль, который надо ещё найти и
     включить руками, до человека не доедет. `add` оставлен для показа владельцу.
     """
-    raw = json.dumps(await profile(), ensure_ascii=False, separators=(",", ":"))
+    raw = json.dumps(await profile(uuid_val), ensure_ascii=False,
+                     separators=(",", ":"))
     payload = base64.b64encode(raw.encode()).decode()
     return "happ://routing/%s/%s" % ("onadd" if activate else "add", payload)
 
 
-async def summary():
+async def summary(uuid_val=None):
     """Короткая сводка для экранов: сколько чего мимо туннеля."""
-    prof = await profile()
+    prof = await profile(uuid_val)
     return {
         "domains": len(prof["DirectSites"]),
         "nets": len(prof["DirectIp"]) - len(ALWAYS_DIRECT),
