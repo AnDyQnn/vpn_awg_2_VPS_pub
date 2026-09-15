@@ -200,6 +200,15 @@ async def service_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
                  + (f"включена у {filtered} чел." if filtered
                     else "никому не включена"))
 
+    # Попытки на закрытое: фильтр молчит по определению, и без этой строки
+    # владелец узнаёт о них только от самого человека.
+    try:
+        hits_new = await db.count_filter_hits(only_new=True)
+    except Exception:
+        hits_new = 0
+    lines.append("🚨 *Попытки на закрытое:* "
+                 + (f"не разобрано {hits_new}" if hits_new else "новых нет"))
+
     lines.append("")
     # Протоколы — про способ подключения, а не про людей, поэтому отдельной
     # строкой и отдельным разделом.
@@ -253,6 +262,9 @@ async def service_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🔀 Протоколы", callback_data="proto_menu")],
         [InlineKeyboardButton("🛡 Доступы · роли", callback_data="roles_menu"),
          InlineKeyboardButton("🧹 Фильтры", callback_data="flt_menu")],
+        [InlineKeyboardButton(
+            "🚨 Попытки на закрытое" + (f" · {hits_new}" if hits_new else ""),
+            callback_data="hit_list")],
         [InlineKeyboardButton("🏷 Имена в туннеле", callback_data="dnm_menu"),
          # Не «Поддержка»: ниже есть «🆘 Поддержка» про обращения, и две кнопки
          # с одним словом читаются как одна и та же.

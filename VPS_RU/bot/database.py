@@ -294,6 +294,28 @@ class Database:
                 );
             """)
 
+            # --- ПОПЫТКИ НА ЗАКРЫТОЕ ---
+            # Что именно нужно для разбора: когда, кто (имя и uuid переживают
+            # смену адреса), с какого адреса в туннеле и с какого внешнего.
+            # Внешний пишем тот, что был известен на момент события: он
+            # меняется, и через неделю искать будет уже негде.
+            await self.execute("""
+                CREATE TABLE IF NOT EXISTS filter_hits (
+                    id SERIAL PRIMARY KEY,
+                    happened_at TIMESTAMP NOT NULL,
+                    user_uuid TEXT,
+                    name TEXT,
+                    tunnel_ip TEXT,
+                    public_ip TEXT,
+                    domain TEXT NOT NULL,
+                    category TEXT,
+                    seen_at TIMESTAMP,
+                    UNIQUE (happened_at, tunnel_ip, domain)
+                );
+            """)
+            await self.execute(
+                "CREATE INDEX IF NOT EXISTS idx_hits_time ON filter_hits(happened_at DESC);")
+
             # --- СВОИ ИСКЛЮЧЕНИЯ НА КЛЮЧ ---
             # Ситуационное: рабочая подсеть, домашний сервис, конкретный сайт.
             # Общему списку такое не место — оно про одно устройство. Ключ
@@ -584,6 +606,50 @@ class Database:
     async def remove_custom_block(self, domain):
         items = [d for d in await self.get_custom_blocks() if d != domain]
         await self.set_setting("filters_custom", ",".join(items))
+
+    # --- ПОПЫТКИ НА ЗАКРЫТОЕ ---------------------------------------------
+    async def add_filter_hit(self, happened_at, uuid_val, name, tunnel_ip,
+                             public_ip, domain, category):
+        """Повтор одного и того же события не плодит записей: узел отдаёт
+        историю целиком, и при повторном заборе мы просто ничего не добавляем."""
+        await self.execute(
+            """INSERT INTO filter_hits
+                   (happened_at, user_uuid, name, tunnel_ip, public_ip, domain, category)
+               VALUES ($1,$2,$3,$4,$5,$6,$7)
+               ON CONFLICT (happened_at, tunnel_ip, domain) DO NOTHING""",
+            happened_at, uuid_val, name, tunnel_ip, public_ip, domain, category)
+
+    async def last_filter_hit_ts(self):
+        row = await self.fetch_val(
+            "SELECT EXTRACT(EPOCH FROM MAX(happened_at)) FROM filter_hits")
+        return int(row or 0)
+
+    async def list_filter_hits(self, limit=20, offset=0, only_new=False):
+        where = "WHERE seen_at IS NULL" if only_new else ""
+        rows = await self.fetch_all(
+            f"""SELECT id, happened_at, user_uuid, name, tunnel_ip, public_ip,
+                       domain, category, seen_at
+                FROM filter_hits {where}
+                ORDER BY happened_at DESC LIMIT $1 OFFSET $2""", limit, offset)
+        return [dict(r) for r in rows]
+
+    async def get_filter_hit(self, hit_id):
+        rows = await self.fetch_all(
+            "SELECT * FROM filter_hits WHERE id=$1", int(hit_id))
+        return dict(rows[0]) if rows else None
+
+    async def count_filter_hits(self, only_new=False):
+        where = "WHERE seen_at IS NULL" if only_new else ""
+        return await self.fetch_val(
+            f"SELECT COUNT(*) FROM filter_hits {where}") or 0
+
+    async def mark_filter_hit_seen(self, hit_id):
+        await self.execute(
+            "UPDATE filter_hits SET seen_at=NOW() WHERE id=$1", int(hit_id))
+
+    async def mark_all_filter_hits_seen(self):
+        await self.execute(
+            "UPDATE filter_hits SET seen_at=NOW() WHERE seen_at IS NULL")
 
     # --- СВОИ ИСКЛЮЧЕНИЯ НА КЛЮЧ -----------------------------------------
     async def add_peer_route(self, uuid_val, value, direction="direct", note=None):
