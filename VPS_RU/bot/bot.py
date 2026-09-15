@@ -92,6 +92,7 @@ from handlers_xray import (
 )
 from handlers_hits import (
     hits_screen, hit_open, hits_seen_all, hits_loop,
+    hit_find_request, hit_find_entered,
 )
 from handlers_routes import (
     routes_menu, routes_ask, routes_delete, routes_show, handle_route_input,
@@ -440,6 +441,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data["state"] = None
             return
         if await handle_role_text(update, context, state):
+            return
+
+    # Номер инцидента — от человека, но разбирает его владелец.
+    if state == "awaiting_hit_ref":
+        if not check_admin(update.effective_user.id):
+            context.user_data["state"] = None
+            return
+        if await hit_find_entered(update, context):
             return
 
     # Свои пулы: список доменов и название для него.
@@ -1005,6 +1014,7 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Попытки на закрытое. Длинные префиксы раньше коротких.
     if data == "hit_list": await hits_screen(update, context); return
     if data == "hit_seen_all": await hits_seen_all(update, context); return
+    if data == "hit_find": await hit_find_request(update, context); return
     if data.startswith("hit_pg_"):
         await hits_screen(update, context, int(data.split("hit_pg_")[1])); return
     if data.startswith("hit_open_"):
