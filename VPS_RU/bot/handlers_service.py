@@ -206,7 +206,7 @@ async def service_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         hits_new = await db.count_filter_hits(only_new=True)
     except Exception:
         hits_new = 0
-    lines.append("🚨 *Попытки на закрытое:* "
+    lines.append("🚨 *Инциденты:* "
                  + (f"не разобрано {hits_new}" if hits_new else "новых нет"))
 
     lines.append("")
@@ -263,7 +263,7 @@ async def service_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🛡 Доступы · роли", callback_data="roles_menu"),
          InlineKeyboardButton("🧹 Фильтры", callback_data="flt_menu")],
         [InlineKeyboardButton(
-            "🚨 Попытки на закрытое" + (f" · {hits_new}" if hits_new else ""),
+            "🚨 Инциденты" + (f" · {hits_new}" if hits_new else ""),
             callback_data="hit_list")],
         [InlineKeyboardButton("🏷 Имена в туннеле", callback_data="dnm_menu"),
          # Не «Поддержка»: ниже есть «🆘 Поддержка» про обращения, и две кнопки

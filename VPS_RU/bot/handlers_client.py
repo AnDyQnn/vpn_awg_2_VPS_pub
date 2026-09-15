@@ -54,6 +54,13 @@ async def _issue_new_config(context, chat_id, user, deliver: bool = True):
     await db.execute(
         "UPDATE users SET routing_version=$1, expires_at=$2 WHERE uuid=$3",
         rv, exp_at, uuid_val)
+
+    # Узел применяет фильтры и доступы по АДРЕСУ, а при перевыпуске адрес
+    # меняется. Без пересчёта правило остаётся на адресе, которым уже никто не
+    # пользуется, — и перевыпуск снимает ограничения. Нажать «перевыпустить»
+    # человек может сам, в своём же кабинете.
+    from restrictions import reapply
+    await reapply("перевыпуск ключа")
     await db.log_event(
         "Client Regen",
         f"Ключ перевыпущен для {name}: новая пара ключей, человек прежний "
@@ -871,6 +878,9 @@ async def client_regen_action(update: Update, context: ContextTypes.DEFAULT_TYPE
             await context.bot.send_message(chat_id=chat_id, text=f"❌ Не вышло: {res}",
         reply_markup=exit_kb(to_client=True))
             return
+        # Новый адрес-двойник — значит, раскладка на узле про старый.
+        from restrictions import reapply
+        await reapply("перевыпуск ссылки Xray")
         # Сначала отправляем ссылку и только потом объявляем об успехе.
         # Раньше бот писал «ссылка ниже», ссылка не собиралась, и человек
         # оставался с обещанием вместо доступа — а владелец узнавал об

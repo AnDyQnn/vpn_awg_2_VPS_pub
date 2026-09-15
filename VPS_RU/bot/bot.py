@@ -115,6 +115,8 @@ from filters import (
     common_screen as flt_common, common_toggle as flt_ctoggle,
     custom_add_request as flt_cadd, custom_add_entered as flt_centered,
     custom_list as flt_clist, custom_remove as flt_cremove,
+    allow_screen as flt_allow, allow_add_request as flt_allow_add,
+    allow_add_entered as flt_allow_entered, allow_remove as flt_allow_del,
     filters_menu, pick_user as filters_pick_user, user_filters_screen,
     toggle_filter, apply_now as filters_apply_now, apply_filters
 )
@@ -430,6 +432,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data["state"] = None
             return
         if await handle_role_text(update, context, state):
+            return
+
+    # Исключения из фильтра разрешают сайт вопреки запрету — только владелец.
+    if state == "awaiting_filter_allow":
+        if not check_admin(update.effective_user.id):
+            context.user_data["state"] = None
+            return
+        if await flt_allow_entered(update, context):
             return
 
     # Свои исключения меняют маршрутизацию на чужом устройстве — только владелец.
@@ -984,6 +994,19 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data.startswith("flt_cpg_"):
         await flt_clist(update, context, int(data.split("_")[-1])); return
     if data == "flt_apply": await filters_apply_now(update, context); return
+
+    # Исключения. Порядок проверок: сначала длинные и точные префиксы.
+    if data == "flt_alw_all": await flt_allow(update, context, None); return
+    if data == "flt_alw_add_all": await flt_allow_add(update, context, None); return
+    if data.startswith("flt_alw_add_"):
+        await flt_allow_add(update, context, data.split("flt_alw_add_")[1]); return
+    if data.startswith("flt_alw_del_"):
+        rest = data.split("flt_alw_del_")[1]
+        aid, _, who = rest.partition("_")
+        await flt_allow_del(update, context, aid,
+                            None if who == "all" else who); return
+    if data.startswith("flt_alw_"):
+        await flt_allow(update, context, data.split("flt_alw_")[1]); return
     if data.startswith("flt_pick_"):
         await filters_pick_user(update, context, int(data.split("_")[-1])); return
     if data.startswith("flt_user_"):

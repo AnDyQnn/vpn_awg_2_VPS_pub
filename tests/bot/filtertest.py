@@ -86,7 +86,15 @@ async def main():
 
     # категории, которые показывает бот, совпадают с теми, что знает узел
     import io, ast
-    node = io.open("/app/api_categories.txt", encoding="utf-8").read().split()
+    # Читаем НАСТОЯЩИЙ исходник узла, а не снимок рядом с тестом: снимок
+    # расходится молча, и тогда бот предлагает категорию, которой на узле нет.
+    src = ast.parse(io.open("/app/node_dnsfilter.py", encoding="utf-8").read())
+    node = []
+    for stmt in src.body:
+        if isinstance(stmt, ast.Assign) and any(
+                getattr(tgt, "id", "") == "CATEGORIES" for tgt in stmt.targets):
+            node = [k.value for k in stmt.value.keys]
+    assert node, "категории узла не разобрались"
     bot_cats = [c for c, _ in F.CATEGORIES]
     assert sorted(bot_cats) == sorted(node), (bot_cats, node)
     print("список категорий в боте и на узле совпадает: ок")

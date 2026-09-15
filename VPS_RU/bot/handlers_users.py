@@ -513,6 +513,12 @@ async def finish_key_creation(update: Update, context: ContextTypes.DEFAULT_TYPE
 
         await db.execute("INSERT INTO users (name, uuid, created_at, expires_at, routing_version) VALUES ($1, $2, NOW(), $3, $4) ON CONFLICT (uuid) DO NOTHING", name, new_uid, expires_at, rv)
         await db.log_event("Create Key", f"Created key {name}. Expiry: {exp_days} days. DNS: {dns_type}")
+
+        # Новый адрес в туннеле — новая строка в раскладке на узле. Без этого
+        # общие правила и роли начинали действовать на него не сразу, а со
+        # следующего изменения настроек.
+        from restrictions import reapply
+        await reapply("выдан ключ")
         
         if tg_id: await db.link_user_telegram(new_uid, tg_id)
 
