@@ -370,11 +370,30 @@ async def load_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines.append(f"Лимит `{limit}` пак/с на человека, узел тянет `{ceiling}`.")
         text = "\n".join(lines)
 
-    kb = [[InlineKeyboardButton("📈 График нагрузки", callback_data="svc_chart")],
-          [InlineKeyboardButton("⚖️ Лимиты", callback_data="svc_limits")],
-          [InlineKeyboardButton("🔙 Назад", callback_data="svc_menu")]]
+    kb = []
+    # Снять вердикт руками. Данных для пересчёта нет — в базе лежит только
+    # вывод, — поэтому ошибочный можно только убрать. Такое случается: события,
+    # посчитанные до исправления направлений трафика, показывали качающего
+    # человека раздающим и висели сутки.
+    for e in (events or [])[:8]:
+        if not e.get("id"):
+            continue
+        who = (e["name"] or "без имени")[:16]
+        when = dt_to_moscow(e["ended_at"] or e["started_at"]).strftime("%d.%m %H:%M")
+        kb.append([InlineKeyboardButton(f"🗑 Снять: {who} · {when}",
+                                        callback_data=f"svc_ev_del_{e['id']}")])
+    kb += [[InlineKeyboardButton("📈 График нагрузки", callback_data="svc_chart")],
+           [InlineKeyboardButton("⚖️ Лимиты", callback_data="svc_limits")],
+           [InlineKeyboardButton("🔙 Назад", callback_data="svc_menu")]]
     await show_screen(query, context, text, reply_markup=InlineKeyboardMarkup(kb),
                                   parse_mode=ParseMode.MARKDOWN)
+
+
+async def event_delete(update: Update, context: ContextTypes.DEFAULT_TYPE, event_id):
+    await db.delete_pps_event(event_id)
+    await db.log_event("Нагрузка", f"Вердикт снят вручную (событие {event_id})")
+    await update.callback_query.answer("Снято")
+    await load_screen(update, context)
 
 
 async def limits_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):

@@ -294,6 +294,19 @@ class Database:
                 );
             """)
 
+            # --- СВОИ ПУЛЫ ФИЛЬТРОВ ---
+            # Пул — это категория, собранная владельцем: название и список
+            # доменов. Ведёт себя как встроенная, поэтому и ключ у него такой
+            # же — короткий идентификатор, по которому его знает узел.
+            await self.execute("""
+                CREATE TABLE IF NOT EXISTS filter_pools (
+                    key TEXT PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    domains TEXT NOT NULL DEFAULT '',
+                    created_at TIMESTAMP DEFAULT NOW()
+                );
+            """)
+
             # --- ИСКЛЮЧЕНИЯ ИЗ ФИЛЬТРА ---
             # Категория — грубый инструмент: «соцсети» закрывают вместе с
             # рабочим чатом. Исключение разрешает конкретный домен вопреки
@@ -638,6 +651,38 @@ class Database:
     async def remove_custom_block(self, domain):
         items = [d for d in await self.get_custom_blocks() if d != domain]
         await self.set_setting("filters_custom", ",".join(items))
+
+    # --- СВОИ ПУЛЫ ФИЛЬТРОВ ----------------------------------------------
+    async def save_filter_pool(self, key, title, domains):
+        """Заводит или переписывает пул. Домены храним одной строкой: их сотни,
+        не миллионы, и отдельная таблица под каждый чужой список здесь ничего
+        не даёт."""
+        await self.execute(
+            """INSERT INTO filter_pools (key, title, domains) VALUES ($1,$2,$3)
+               ON CONFLICT (key) DO UPDATE SET title=$2, domains=$3""",
+            key, title, "\n".join(domains))
+
+    async def list_filter_pools(self):
+        rows = await self.fetch_all(
+            "SELECT key, title, domains FROM filter_pools ORDER BY title")
+        return [{"key": r["key"], "title": r["title"],
+                 "domains": [d for d in (r["domains"] or "").split("\n") if d]}
+                for r in rows]
+
+    async def get_filter_pool(self, key):
+        rows = await self.fetch_all(
+            "SELECT key, title, domains FROM filter_pools WHERE key=$1", key)
+        if not rows:
+            return None
+        r = rows[0]
+        return {"key": r["key"], "title": r["title"],
+                "domains": [d for d in (r["domains"] or "").split("\n") if d]}
+
+    async def delete_filter_pool(self, key):
+        await self.execute("DELETE FROM filter_pools WHERE key=$1", key)
+        # Пул исчез — снимаем его у всех, иначе останется висеть категория,
+        # которой больше нет, и узел будет искать несуществующий список.
+        await self.execute("DELETE FROM user_filters WHERE category=$1", key)
 
     # --- ИСКЛЮЧЕНИЯ ИЗ ФИЛЬТРА -------------------------------------------
     async def add_filter_allow(self, domain, uuid_val=None):
@@ -1114,11 +1159,17 @@ class Database:
 
     async def get_pps_events(self, hours=24):
         return await self.fetch_all(
-            """SELECT e.user_uuid, u.name, e.started_at, e.ended_at, e.peak_pps,
+            """SELECT e.id, e.user_uuid, u.name, e.started_at, e.ended_at, e.peak_pps,
                       e.avg_packet_size, e.upload_share, e.throttled
                FROM pps_events e LEFT JOIN users u ON u.uuid = e.user_uuid
                WHERE e.started_at > NOW() - ($1 || ' hours')::interval
                ORDER BY e.peak_pps DESC""", str(hours))
+
+    async def delete_pps_event(self, event_id):
+        """Снять вердикт руками. Нужно, когда событие посчитано неверно: данных
+        для пересчёта уже нет — сохраняется только вывод, — и единственное, что
+        можно сделать с ошибочным, это убрать его."""
+        await self.execute("DELETE FROM pps_events WHERE id=$1", int(event_id))
 
     # ------------------------ ЧАСОВЫЕ СРЕЗЫ ------------------------
     async def add_hourly(self, uuid, hour, b_in, b_out, p_in, p_out, peak_pps):

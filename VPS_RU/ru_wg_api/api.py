@@ -199,6 +199,9 @@ class DnsFilters(BaseModel):
     # Исключения: разрешено вопреки категории. Общие — всем, личные — адресу.
     allow_common: list = []
     allow_clients: dict = {}
+    # Свои пулы: ключ категории -> список доменов. Узел кладёт их в тот же кэш,
+    # откуда читает встроенные, и дальше не различает их вовсе.
+    pools: dict = {}
     bot_link: str = ""          # куда человеку идти с вопросом «почему закрыто»
 
 class DnsNames(BaseModel):
@@ -785,6 +788,25 @@ def read_dns_names():
             return (json.load(f) or {}).get("names", {})
     except Exception:
         return {}
+
+
+def save_pool_list(key, domains):
+    """Свой пул — обычный файл категории в кэше узла.
+
+    Так резолверу не нужно знать, что пул чем-то отличается от встроенной
+    категории: он и не отличается, кроме того, что список пришёл от владельца,
+    а не скачан.
+    """
+    safe = "".join(c for c in key if c.isalnum() or c in "-_")[:40]
+    if not safe:
+        return
+    path = f"{CONF_DIR}/cache/dns/{safe}.txt"
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("\n".join(domains))
+    except OSError as e:
+        print(f"Свой пул {safe}: {e}")
 
 
 def save_dns_state(clients, bot_link="", common=None, custom=None,
@@ -1647,6 +1669,11 @@ def set_dns_filters(req: DnsFilters):
                         for d in (req.allow_common or []) if d]
         allow_clients = {str(k): [str(d).lower().strip().strip(".") for d in v if d]
                          for k, v in (req.allow_clients or {}).items()}
+        # Свои пулы пишем в кэш до применения: резолвер читает списки оттуда,
+        # и категории без файла он считает пустыми.
+        for key, domains in (req.pools or {}).items():
+            save_pool_list(str(key), [str(d) for d in domains if d])
+
         save_dns_state(clients, req.bot_link or "", common, custom,
                        allow_common, allow_clients)
         # Общие правила и свой список действуют на всех, поэтому заворачивать

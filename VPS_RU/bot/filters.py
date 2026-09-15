@@ -85,6 +85,32 @@ async def peer_addr_map():
     return await _map()
 
 
+async def all_categories():
+    """Что можно включить человеку: встроенные категории и свои пулы.
+
+    Пул ведёт себя как категория во всём — включается, попадает под исключения,
+    называется на странице отказа своим именем. Разница только в том, откуда
+    взялся список.
+    """
+    own = []
+    try:
+        own = [(p["key"], p["title"]) for p in await db.list_filter_pools()]
+    except Exception:
+        own = []
+    return list(CATEGORIES) + own
+
+
+async def titles():
+    """Название по ключу — и для встроенных, и для своих."""
+    out = dict(TITLES)
+    try:
+        for pool in await db.list_filter_pools():
+            out[pool["key"]] = pool["title"]
+    except Exception:
+        pass
+    return out
+
+
 async def apply_filters(reason: str = ""):
     """Отдаёт узлу готовую раскладку «адрес → категории».
 
@@ -121,6 +147,13 @@ async def apply_filters(reason: str = ""):
         for ip in ips.get(uuid_val, []):
             allow_clients[ip] = domains
 
+    # Свои пулы едут вместе с раскладкой: узел кладёт их в тот же кэш, откуда
+    # читает встроенные категории, и дальше не различает.
+    try:
+        pools = {p["key"]: p["domains"] for p in await db.list_filter_pools()}
+    except Exception:
+        pools = {}
+
     try:
         async with api_session() as session:
             async with session.post(f"{WG_API_URL}/dns/filters",
@@ -129,6 +162,7 @@ async def apply_filters(reason: str = ""):
                                           "custom": custom,
                                           "allow_common": allow_common,
                                           "allow_clients": allow_clients,
+                                          "pools": pools,
                                           "bot_link": BOT_LINK["url"]}, timeout=10) as resp:
                 if resp.status != 200:
                     return False, f"узел отклонил фильтры: {await resp.text()}"
@@ -210,6 +244,7 @@ async def filters_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kb = [[InlineKeyboardButton("🌍 Общие правила", callback_data="flt_common")],
           [InlineKeyboardButton("🟢 Исключения из запретов",
                                 callback_data="flt_alw_all")],
+          [InlineKeyboardButton("📦 Свои пулы", callback_data="flt_pool_list")],
           [InlineKeyboardButton("👤 Выбрать человека", callback_data="flt_pick_0")]]
     if by_uuid:
         kb.append([InlineKeyboardButton("🔄 Применить на узле", callback_data="flt_apply")])
@@ -335,6 +370,201 @@ async def allow_remove(update: Update, context: ContextTypes.DEFAULT_TYPE,
     await update.callback_query.answer("Убрано")
     await allow_screen(update, context, uuid_val)
 
+
+# --- СВОИ ПУЛЫ -------------------------------------------------------------
+# Готовые категории собраны чужими людьми по чужим соображениям: в них нет
+# российских ресурсов и нет того, что владелец считает лишним именно у себя.
+# Пул — это категория, собранная им самим: список доменов и название.
+
+def _pool_key(title):
+    """Короткий ключ из названия. По нему пул знают узел и база, поэтому только
+    латиница и цифры: кириллицу в имени файла кэша узел бы не принял."""
+    import hashlib
+    slug = "".join(c for c in (title or "").lower()
+                   if c.isalnum() and c.isascii())[:16]
+    tail = hashlib.blake2b(title.encode(), digest_size=2).hexdigest()
+    return ("pool_" + (slug + "_" if slug else "") + tail)[:40]
+
+
+async def pool_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    pools = await db.list_filter_pools()
+
+    lines = ["📦 **Свои пулы фильтров**", ""]
+    if not pools:
+        lines += [
+            "Пулов нет.",
+            "",
+            "Пул — это своя категория: присылаете список доменов, даёте ему "
+            "название, и дальше он включается людям так же, как встроенные.",
+            "",
+            "_Пригодится там, где готовые списки не подходят: свои ресурсы, "
+            "российские сервисы, «то, что не надо детям» по вашему разумению._",
+        ]
+    else:
+        for pool in pools:
+            lines.append(f"  📦 **{escape_md(pool['title'])}** — "
+                         f"{len(pool['domains'])} доменов")
+
+    kb = [[InlineKeyboardButton("➕ Новый пул", callback_data="flt_pool_add")]]
+    for pool in pools:
+        kb.append([InlineKeyboardButton(f"📦 {pool['title'][:26]}",
+                                        callback_data=f"flt_pool_o_{pool['key']}")])
+    kb.append([InlineKeyboardButton("🔙 К фильтрам", callback_data="flt_menu")])
+
+    await show_screen(query, context, "\n".join(lines),
+                      reply_markup=InlineKeyboardMarkup(kb),
+                      parse_mode=ParseMode.MARKDOWN)
+
+
+async def pool_open(update: Update, context: ContextTypes.DEFAULT_TYPE, key):
+    query = update.callback_query
+    pool = await db.get_filter_pool(key)
+    if not pool:
+        await query.answer("Пула нет", show_alert=True)
+        return await pool_list(update, context)
+
+    shown = pool["domains"][:12]
+    lines = [f"📦 **{escape_md(pool['title'])}**", "",
+             f"Доменов: **{len(pool['domains'])}**", ""]
+    lines += [f"  `{escape_md(d)}`" for d in shown]
+    if len(pool["domains"]) > len(shown):
+        lines.append(f"  …и ещё {len(pool['domains']) - len(shown)}")
+    lines += ["", "_Включается человеку так же, как встроенная категория._"]
+
+    kb = [[InlineKeyboardButton("➕ Дописать домены",
+                                callback_data=f"flt_pool_a_{key}")],
+          [InlineKeyboardButton("🗑 Удалить пул", callback_data=f"flt_pool_d_{key}")],
+          [InlineKeyboardButton("🔙 К пулам", callback_data="flt_pool_list")]]
+    await show_screen(query, context, "\n".join(lines),
+                      reply_markup=InlineKeyboardMarkup(kb),
+                      parse_mode=ParseMode.MARKDOWN)
+
+
+async def pool_add_request(update: Update, context: ContextTypes.DEFAULT_TYPE,
+                           key=None):
+    """Просит список. Название спросим после — когда уже видно, что прислали."""
+    query = update.callback_query
+    context.user_data["state"] = "awaiting_pool_domains"
+    context.user_data["pool_key"] = key
+    where = "в этот пул" if key else "в новый пул"
+    await show_screen(
+        query, context,
+        f"📦 **Домены {where}**\n\n"
+        "Пришлите список одним сообщением — по домену в строке или через "
+        "запятую. Можно сразу сотни: выкачали откуда-нибудь перечень и "
+        "вставили целиком.\n\n"
+        "`pornhub.com`\n`xvideos.com`\n`0.0.0.0 example.com`\n\n"
+        "_Формат hosts тоже понимаю — адрес в начале строки отброшу._",
+        reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton("✖️ Отмена", callback_data="flt_pool_list")]]),
+        parse_mode=ParseMode.MARKDOWN)
+
+
+def _parse_domains(raw):
+    """Разбирает присланное: строки, запятые, формат hosts."""
+    out = []
+    for part in (raw or "").replace(",", "\n").split("\n"):
+        value = part.strip().lower()
+        if not value or value.startswith("#"):
+            continue
+        chunks = value.split()
+        if len(chunks) > 1 and chunks[0] in ("0.0.0.0", "127.0.0.1"):
+            value = chunks[1]
+        elif len(chunks) > 1:
+            continue
+        if "://" in value:
+            value = value.split("://", 1)[1]
+        value = value.split("/")[0].strip(".")
+        if value and "." in value and " " not in value and len(value) <= 100:
+            out.append(value)
+    # Порядок не важен, а повторы в присланных списках бывают всегда.
+    return sorted(set(out))
+
+
+async def pool_domains_entered(update, context):
+    """Принял список. Если пул новый — спрашиваем название."""
+    key = context.user_data.get("pool_key")
+    domains = _parse_domains(update.message.text or "")
+    chat_id = update.message.chat_id
+
+    if not domains:
+        context.user_data["state"] = None
+        await context.bot.send_message(
+            chat_id=chat_id, text="⚠️ Ни одного домена не разобрал.",
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🔙 К пулам", callback_data="flt_pool_list")]]))
+        return True
+
+    if key:
+        pool = await db.get_filter_pool(key)
+        if not pool:
+            context.user_data["state"] = None
+            return True
+        merged = sorted(set(pool["domains"]) | set(domains))
+        await db.save_filter_pool(key, pool["title"], merged)
+        context.user_data["state"] = None
+        ok, msg = await apply_filters("дописан пул")
+        await context.bot.send_message(
+            chat_id=chat_id, parse_mode=ParseMode.MARKDOWN,
+            text=(f"📦 В пул «{escape_md(pool['title'])}» добавлено "
+                  f"**{len(merged) - len(pool['domains'])}** новых, всего "
+                  f"**{len(merged)}**.\n\n"
+                  + ("Применено на узле." if ok else f"⚠️ Узел: {msg}")),
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("📦 К пулу",
+                                       callback_data=f"flt_pool_o_{key}")]]))
+        return True
+
+    # Новый пул: список уже есть, осталось название.
+    context.user_data["pool_domains"] = domains
+    context.user_data["state"] = "awaiting_pool_title"
+    await context.bot.send_message(
+        chat_id=chat_id, parse_mode=ParseMode.MARKDOWN,
+        text=(f"📦 Разобрал **{len(domains)}** доменов.\n\n"
+              "Как назвать пул? Название увидит человек на странице отказа — "
+              "пишите так, чтобы ему было понятно: «Взрослое», «Игры», "
+              "«Соцсети без ВК»."),
+        reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton("✖️ Отмена", callback_data="flt_pool_list")]]))
+    return True
+
+
+async def pool_title_entered(update, context):
+    title = (update.message.text or "").strip()[:40]
+    domains = context.user_data.get("pool_domains") or []
+    context.user_data["state"] = None
+    chat_id = update.message.chat_id
+
+    if not title or not domains:
+        await context.bot.send_message(
+            chat_id=chat_id, text="⚠️ Пустое название — пул не создан.",
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🔙 К пулам", callback_data="flt_pool_list")]]))
+        return True
+
+    key = _pool_key(title)
+    await db.save_filter_pool(key, title, domains)
+    ok, msg = await apply_filters(f"создан пул {title}")
+    await context.bot.send_message(
+        chat_id=chat_id, parse_mode=ParseMode.MARKDOWN,
+        text=(f"📦 Пул «{escape_md(title)}» создан: **{len(domains)}** доменов.\n\n"
+              "Теперь его можно включить человеку так же, как встроенную "
+              "категорию.\n\n"
+              + ("Применено на узле." if ok else f"⚠️ Узел: {msg}")),
+        reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton("📦 К пулу", callback_data=f"flt_pool_o_{key}")]]))
+    return True
+
+
+async def pool_delete(update: Update, context: ContextTypes.DEFAULT_TYPE, key):
+    pool = await db.get_filter_pool(key)
+    await db.delete_filter_pool(key)
+    await apply_filters("удалён пул")
+    await update.callback_query.answer(
+        f"Пул «{(pool or {}).get('title', '')}» удалён" if pool else "Удалено")
+    await pool_list(update, context)
+
 async def pick_user(update: Update, context: ContextTypes.DEFAULT_TYPE, page: int = 0):
     query = update.callback_query
     users = await db.get_all_users()
@@ -388,7 +618,7 @@ async def user_filters_screen(update: Update, context: ContextTypes.DEFAULT_TYPE
     # читается как «ничего не делаем», а любой значок пришлось бы объяснять.
     kb = [[InlineKeyboardButton(("🚫 " if key in mine else "") + title,
                                 callback_data=f"flt_set_{key}_{uuid_val}")]
-          for key, title in CATEGORIES]
+          for key, title in await all_categories()]
     kb.append([InlineKeyboardButton("🔙 К человеку",
                                     callback_data=f"user_detail_{uuid_val}")])
     # Исключения — рядом с категориями: закрыл «соцсети», тут же оставил рабочий

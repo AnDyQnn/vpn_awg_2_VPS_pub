@@ -50,6 +50,7 @@ from handlers_service import (
     service_menu, toggle_mode, set_mode, load_screen, limits_screen,
     change_limit, set_peer_rule, load_chart, whats_new,
     ensure_api_token, watch_api_token, charts_screen, pick_peer_screen, graphs_menu,
+    event_delete,
     peer_limit_screen
 )
 from handlers_admin import (
@@ -115,6 +116,9 @@ from filters import (
     common_screen as flt_common, common_toggle as flt_ctoggle,
     custom_add_request as flt_cadd, custom_add_entered as flt_centered,
     custom_list as flt_clist, custom_remove as flt_cremove,
+    pool_list as flt_pools, pool_open as flt_pool_open,
+    pool_add_request as flt_pool_add, pool_domains_entered as flt_pool_doms,
+    pool_title_entered as flt_pool_title, pool_delete as flt_pool_del,
     allow_screen as flt_allow, allow_add_request as flt_allow_add,
     allow_add_entered as flt_allow_entered, allow_remove as flt_allow_del,
     filters_menu, pick_user as filters_pick_user, user_filters_screen,
@@ -432,6 +436,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data["state"] = None
             return
         if await handle_role_text(update, context, state):
+            return
+
+    # Свои пулы: список доменов и название для него.
+    if state in ("awaiting_pool_domains", "awaiting_pool_title"):
+        if not check_admin(update.effective_user.id):
+            context.user_data["state"] = None
+            return
+        handler = (flt_pool_doms if state == "awaiting_pool_domains"
+                   else flt_pool_title)
+        if await handler(update, context):
             return
 
     # Исключения из фильтра разрешают сайт вопреки запрету — только владелец.
@@ -850,6 +864,8 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "svc_mode_on": await set_mode(update, context, True); return
     if data == "svc_mode_off": await set_mode(update, context, False); return
     if data == "svc_load": await load_screen(update, context); return
+    if data.startswith("svc_ev_del_"):
+        await event_delete(update, context, data.split("svc_ev_del_")[1]); return
     if data == "svc_chart": await load_chart(update, context); return
     if data == "vpn_graph": await graphs_menu(update, context); return
     if data == "svc_charts": await charts_screen(update, context); return
@@ -994,6 +1010,16 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data.startswith("flt_cpg_"):
         await flt_clist(update, context, int(data.split("_")[-1])); return
     if data == "flt_apply": await filters_apply_now(update, context); return
+
+    # Свои пулы фильтров.
+    if data == "flt_pool_list": await flt_pools(update, context); return
+    if data == "flt_pool_add": await flt_pool_add(update, context, None); return
+    if data.startswith("flt_pool_o_"):
+        await flt_pool_open(update, context, data.split("flt_pool_o_")[1]); return
+    if data.startswith("flt_pool_a_"):
+        await flt_pool_add(update, context, data.split("flt_pool_a_")[1]); return
+    if data.startswith("flt_pool_d_"):
+        await flt_pool_del(update, context, data.split("flt_pool_d_")[1]); return
 
     # Исключения. Порядок проверок: сначала длинные и точные префиксы.
     if data == "flt_alw_all": await flt_allow(update, context, None); return
