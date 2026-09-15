@@ -170,7 +170,7 @@
 
   .text{
     margin:0 auto;
-    max-width:100%;
+    max-width:34ch;
     font-size:15px;
     line-height:1.7;
     color:var(--fg);
@@ -179,7 +179,7 @@
     margin-top:14px;
     padding-top:14px;
     border-top:1px solid rgba(48,54,61,.75);
-    max-width:100%;
+    max-width:30ch;
     color:var(--muted);
     font-size:14.5px;
   }
@@ -260,8 +260,8 @@
     }
     .badge{width:92px;height:92px;margin-bottom:24px}
     .scanner{width:74px;height:74px}
-    .text{font-size:15px}
-
+    .text{max-width:32ch;font-size:15px}
+    .text + .text{max-width:28ch}
     .cta{
       margin-top:26px;
       width:100%;
@@ -275,7 +275,7 @@
     .badge{width:84px;height:84px;margin-bottom:20px}
     .scanner{width:68px;height:68px}
     h1{font-size:20px}
-    .text{font-size:14.5px}
+    .text{font-size:14.5px;max-width:30ch}
   }
   /* низкие экраны в альбомной ориентации */
   @media (max-height:520px) and (orientation:landscape){
