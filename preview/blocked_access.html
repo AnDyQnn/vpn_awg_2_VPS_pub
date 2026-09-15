@@ -247,7 +247,24 @@
     color:var(--muted);
     white-space:nowrap;
   }
-  .ref span{color:var(--fg)}
+  /* Номер переливается: его надо заметить и скопировать, а он лежит в самом
+     низу мелким моноширинным — то есть ровно там, куда не смотрят. Блик идёт
+     по тексту, а не по фону: подсветить хочется цифры, а не прямоугольник. */
+  .ref span{
+    color:var(--fg);
+    background:linear-gradient(100deg,
+      var(--fg) 34%, var(--accent) 45%, #ffffff 50%, var(--accent) 55%, var(--fg) 66%);
+    background-size:280% 100%;
+    -webkit-background-clip:text;
+    background-clip:text;
+    -webkit-text-fill-color:transparent;
+    color:transparent;
+    animation:refshine 3.4s linear infinite;
+  }
+  @keyframes refshine{
+    from{background-position:140% 0}
+    to{background-position:-140% 0}
+  }
   .host b{
     display:block;
     color:var(--red);
@@ -265,6 +282,14 @@
 
   @media (prefers-reduced-motion: reduce){
     .badge .w,.scanner .scan,.badge svg,.shackle,.lockbody,.keyhole{animation:none}
+    /* Переливание — украшение: тому, кто просил покоя, оно ни к чему, а номер
+       должен остаться читаемым. */
+    .ref span{
+      animation:none;
+      background:none;
+      -webkit-text-fill-color:var(--fg);
+      color:var(--fg);
+    }
     .lockbody{stroke-dashoffset:0}
     .keyhole{opacity:1}
     .cta{transition:none}
