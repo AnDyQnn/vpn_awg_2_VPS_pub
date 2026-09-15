@@ -34,6 +34,10 @@ NODE_DIR="${2:-$ROOT_DIR/VPS_RU}"
 CERT_DIR="$NODE_DIR/volumes/certs"
 FLAGS_DIR="$NODE_DIR/volumes/flags"
 STATE="$FLAGS_DIR/public_sub.json"
+# Отметка «владелец закрыл сам». Нужна потому, что выкладка зовёт этот скрипт с
+# "on" каждый раз: без отметки первое же обновление молча отменяло бы решение
+# владельца и снова открывало порт. Решение человека должно переживать деплой.
+OFF_MARK="$FLAGS_DIR/public_sub.off"
 
 # Порт наружу. 8443 — обычный запасной HTTPS: он не выделяется среди чужого
 # трафика и не путается с 443, на котором сидит вход Xray.
@@ -263,7 +267,18 @@ timer_off() {
 # ------------------------------------------------------------------ режимы ---
 
 case "${1:-status}" in
+  ensure)
+    # Так зовут выкладка и установщик: «сделай как надо, если владелец не
+    # запрещал». Отличается от "on" ровно одним — уважает отметку.
+    if [ -f "$OFF_MARK" ]; then
+        say "владелец закрыл подписку наружу — не трогаю"
+        exit 0
+    fi
+    exec "$0" on "$NODE_DIR"
+    ;;
+
   on)
+    rm -f "$OFF_MARK"
     issue || exit 1
     firewall_on
     timer_on
@@ -304,6 +319,9 @@ case "${1:-status}" in
     ;;
 
   off)
+    # Отметку ставим ДО всего остального: если дальше что-то не доработает,
+    # решение владельца всё равно уже записано и переживёт выкладку.
+    : > "$OFF_MARK"
     firewall_off
     timer_off
     # Сертификат убран — значит бот закроет внешний вход сам. Порт останется
@@ -319,6 +337,8 @@ case "${1:-status}" in
         SUBJ=$(openssl x509 -in "$CERT_DIR/fullchain.pem" -noout -text 2>/dev/null |
                grep -A1 'Subject Alternative Name' | tail -1 | sed 's/^ *//')
         say "включена; $SUBJ; действует до $UNTIL"
+    elif [ -f "$OFF_MARK" ]; then
+        say "выключена владельцем — выкладка её не откроет"
     else
         say "выключена"
     fi
@@ -327,7 +347,7 @@ case "${1:-status}" in
     ;;
 
   *)
-    say "использование: public_sub.sh on|off|renew|firewall|status [папка ноды]"
+    say "использование: public_sub.sh ensure|on|off|renew|firewall|status [папка ноды]"
     exit 1
     ;;
 esac

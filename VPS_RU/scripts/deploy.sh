@@ -247,7 +247,7 @@ fi
 # докер здесь перезапускается каждый раз.
 if [ -f "$PROJECT_ROOT/scripts/public_sub.sh" ]; then
     echo "[Deploy] Подписка наружу..."
-    bash "$PROJECT_ROOT/scripts/public_sub.sh" on "$NODE_DIR" || true
+    bash "$PROJECT_ROOT/scripts/public_sub.sh" ensure "$NODE_DIR" || true
 fi
 
 if [ -f "$PROJECT_ROOT/scripts/gc.sh" ]; then

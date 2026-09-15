@@ -133,5 +133,40 @@ check("и не плодит правил", chain2.count("DROP") == 3,
       "правил: %d" % chain2.count("DROP"))
 
 print()
+print("=== решение владельца переживает выкладку ===")
+# Выкладка зовёт этот скрипт каждый раз. Без отметки первое же обновление молча
+# отменяло бы решение закрыть подписку и снова открывало порт.
+check("у выкладки свой режим", "  ensure)" in text,
+      "он отличается от on ровно тем, что уважает отметку")
+check("отметка ставится при закрытии", ': > "$OFF_MARK"' in text)
+check("и снимается при открытии вручную", 'rm -f "$OFF_MARK"' in text)
+dep = "/nodescripts/deploy.sh"
+check("выкладка зовёт именно ensure",
+      os.path.exists(dep) and 'public_sub.sh" ensure' in
+      open(dep, encoding="utf-8").read(),
+      "иначе отметка ничего не значит")
+
+sh('mkdir -p /tmp/node2/volumes/flags && : > /tmp/node2/volumes/flags/public_sub.off')
+rc, out = sh("bash %s ensure /tmp/node2 2>&1" % SCRIPT)
+check("закрытую подписку выкладка не открывает", "не трогаю" in out, out.strip()[:70])
+
+print()
+print("=== охрану возвращает сторож ===")
+# Третья ступень лечения в стороже — перезапуск докера, а он стирает
+# DOCKER-USER. Без возврата порт остался бы без охраны до следующего тика
+# таймера, то есть до полусуток.
+wd = "/scripts/vpn_watchdog.sh"
+if os.path.exists(wd):
+    wtext = open(wd, encoding="utf-8").read()
+    check("сторож проверяет зацепку", "iptables -C DOCKER-USER -j VPN_SUB" in wtext)
+    check("и возвращает её сам", "public_sub.sh\" firewall" in wtext)
+    check("проверка в основном цикле", "    ensure_subguard" in wtext)
+    check("без сертификата не трогает",
+          'volumes/certs/fullchain.pem" ] || return 0' in wtext,
+          "подписка не открыта — охранять нечего")
+else:
+    check("сторож доступен для проверки", False, "нет /scripts/vpn_watchdog.sh")
+
+print()
 print("ВСЁ ПРОШЛО" if ok else "ЕСТЬ ПРОВАЛЫ")
 sys.exit(0 if ok else 1)
