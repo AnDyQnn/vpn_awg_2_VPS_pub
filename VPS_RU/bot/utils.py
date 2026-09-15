@@ -101,17 +101,22 @@ def request_env_change(key: str, value: str):
     Сам бот .env не видит: он получает переменные окружения, а не файл. Поэтому
     кладём строку во флаг, демон её применяет и сразу затирает файл.
     """
+    import secrets
     FLAGS_DIR.mkdir(parents=True, exist_ok=True)
-    flag = FLAGS_DIR / "set_env"
+    # Своё имя на каждую просьбу. Раньше файл был один на всех, и записывался
+    # он перезаписью: бот выдавал токен панелей при первом запуске, владелец
+    # тут же задавал пароль архива — и одна из двух просьб исчезала бесследно.
+    flag = FLAGS_DIR / ("set_env." + secrets.token_hex(6))
     with open(flag, "w") as f:
         f.write(f"{key}={value}\n")
     try:
         os.chmod(flag, 0o600)
     except OSError:
         pass
+    return flag
 
 
-async def env_change_applied(timeout: int = 45) -> bool:
+async def env_change_applied(flag=None, timeout: int = 45) -> bool:
     """Дождаться, пока демон на хосте заберёт просьбу.
 
     Раньше бот писал «записано и применяется» сразу после того, как положил
@@ -119,10 +124,14 @@ async def env_change_applied(timeout: int = 45) -> bool:
     лежит вечно, а человек уверен, что всё сделал. Пароль архива после такого
     спрашивается снова и снова, и выглядит это как поломка бота.
 
+    Ждём именно свой файл: чужая просьба могла появиться и исчезнуть в то же
+    окно, и тогда ответ был бы про неё.
+
     Признак простой: демон забирает файл, когда применил. Исчез — применено.
     """
     import asyncio
-    flag = FLAGS_DIR / "set_env"
+    if flag is None:
+        return False
     for _ in range(max(1, timeout)):
         if not flag.exists():
             return True
