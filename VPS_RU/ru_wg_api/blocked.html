@@ -1,5 +1,25 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<!-- Без этой строки мобильный браузер считает страницу свёрстанной под монитор:
+     рисует её в ширину около тысячи точек и ужимает целиком. Текст становится
+     нечитаемым, а все media-запросы ниже не срабатывают вовсе — браузер уверен,
+     что экран широкий. Адаптация была написана и ни разу не включалась. -->
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<meta name="robots" content="noindex, nofollow">
 <title>Доступ ограничен</title>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<!-- Шрифт с чужого сервера не задерживает показ: страницу видят ровно тогда,
+     когда что-то не открылось, и ждать в этот момент неуместно. Запасные
+     шрифты перечислены в наборе, так что до загрузки страница уже читаема. -->
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" media="print" onload="this.media='all'"
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<noscript>
+  <link rel="stylesheet"
+        href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+</noscript>
 <style>
   /* Палитра Gateway Hub: тёмная панель, синий акцент, зелёный код, фиолетовый бренд */
   :root{
@@ -22,6 +42,12 @@
 
   *{box-sizing:border-box}
 
+  html{
+    /* Страница никогда не должна ездить вбок: на телефоне это первое, что
+       ломает ощущение «сайт сломан». */
+    overflow-x:hidden;
+    -webkit-text-size-adjust:100%;
+  }
   body{
     margin:0;
     min-height:100vh;
@@ -300,7 +326,13 @@
 
   /* ---------- телефон ---------- */
   @media (max-width:560px){
-    body{padding-block:28px}
+    /* Отступы по бокам — с учётом выреза и скруглений экрана: без этого
+       карточка упирается в край и часть рамки уезжает под него. */
+    body{
+      padding-block:28px;
+      padding-left:max(16px, env(safe-area-inset-left));
+      padding-right:max(16px, env(safe-area-inset-right));
+    }
     .card{
       padding:36px 22px 26px;
       border-radius:14px;
@@ -334,6 +366,8 @@
     .card{padding:26px 24px 20px}
   }
 </style>
+</head>
+<body>
 
 <canvas id="fx" aria-hidden="true"></canvas>
 
@@ -544,3 +578,5 @@
   if (!still) requestAnimationFrame(function(){ frame(false); });
 })();
 </script>
+</body>
+</html>

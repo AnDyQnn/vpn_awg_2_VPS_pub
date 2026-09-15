@@ -42,6 +42,22 @@ check("фон со сканером на месте", 'id="fx"' in page)
 check("это не аварийная заглушка", "<h1>Закрыто</h1>" not in page)
 
 print()
+print("=== страница пригодна для телефона ===")
+# Правила под узкий экран были и раньше, но без этой строки браузер телефона
+# считает страницу свёрстанной под монитор и ужимает её целиком — media-запросы
+# при этом не срабатывают вовсе.
+check("есть viewport", 'name="viewport"' in page and "width=device-width" in page)
+check("есть doctype", page.lstrip().lower().startswith("<!doctype html>"),
+      "без него браузер переходит в режим совместимости")
+check("язык страницы указан", 'lang="ru"' in page)
+check("правила под узкий экран на месте", "max-width:560px" in page)
+check("отступы учитывают вырез экрана", "safe-area-inset" in page)
+check("страница не ездит вбок", "overflow-x:hidden" in page)
+check("чужой шрифт не задерживает показ",
+      'media="print"' in page,
+      "страницу видят, когда что-то не открылось — ждать нельзя")
+
+print()
 print("=== подстановки заполнены все до одной ===")
 left = sorted(set(re.findall(r"__[A-Z_]+__", page)))
 check("незаполненных нет", not left, ", ".join(left) or "—")
