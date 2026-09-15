@@ -85,6 +85,9 @@ from handlers_xray import (
     connections_screen, issue_xray, send_link, drop_awg, why_locked,
     mask_screen, mask_set,
 )
+from handlers_routes import (
+    routes_menu, routes_ask, routes_delete, routes_show, handle_route_input,
+)
 from handlers_donate import (
     donate_menu, donate_toggle, donate_reminder_toggle, donate_preview,
     donate_ask, donate_open, donate_delete, handle_donate_input,
@@ -423,6 +426,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data["state"] = None
             return
         if await handle_role_text(update, context, state):
+            return
+
+    # Свои исключения меняют маршрутизацию на чужом устройстве — только владелец.
+    if state == "awaiting_route_add":
+        if not check_admin(update.effective_user.id):
+            context.user_data["state"] = None
+            return
+        if await handle_route_input(update, context):
             return
 
     # Реквизиты и текст обращения — только от владельца: это его деньги и его
@@ -875,6 +886,20 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data.startswith("xr_mask_"):
         await mask_set(update, context, data[len("xr_mask_"):]); return
     if data == "xr_move": await move_screen(update, context); return
+    # Свои исключения на ключ. Длинные префиксы раньше коротких: иначе
+    # короткий перехватит чужое нажатие.
+    if data.startswith("rt_menu_"):
+        await routes_menu(update, context, data.split("rt_menu_")[1]); return
+    if data.startswith("rt_show_"):
+        await routes_show(update, context, data.split("rt_show_")[1]); return
+    if data.startswith("rt_add_d_"):
+        await routes_ask(update, context, "direct", data.split("rt_add_d_")[1]); return
+    if data.startswith("rt_add_p_"):
+        await routes_ask(update, context, "proxy", data.split("rt_add_p_")[1]); return
+    if data.startswith("rt_del_"):
+        rid, _, uid = data.split("rt_del_")[1].partition("_")
+        await routes_delete(update, context, rid, uid); return
+
     if data.startswith("xr_conn_"):
         await connections_screen(update, context, data.split("_", 2)[2]); return
     if data.startswith("xr_issue_"):

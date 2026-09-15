@@ -294,6 +294,25 @@ class Database:
                 );
             """)
 
+            # --- СВОИ ИСКЛЮЧЕНИЯ НА КЛЮЧ ---
+            # Ситуационное: рабочая подсеть, домашний сервис, конкретный сайт.
+            # Общему списку такое не место — оно про одно устройство. Ключ
+            # здесь и есть устройство, поэтому запись висит на ключе.
+            #
+            # direction: 'direct' — мимо туннеля, 'proxy' — наоборот, через
+            # туннель вопреки общему правилу.
+            await self.execute("""
+                CREATE TABLE IF NOT EXISTS peer_routing (
+                    id SERIAL PRIMARY KEY,
+                    user_uuid TEXT REFERENCES users(uuid) ON DELETE CASCADE,
+                    direction TEXT NOT NULL DEFAULT 'direct',
+                    value TEXT NOT NULL,
+                    note TEXT,
+                    created_at TIMESTAMP DEFAULT NOW(),
+                    UNIQUE (user_uuid, direction, value)
+                );
+            """)
+
             # --- ПОДДЕРЖКА ПРОЕКТА ---
             # Реквизит: карта, телефон для СБП или картинка с QR. У картинки в
             # value лежит file_id телеграма — по нему бот пересылает её без
@@ -565,6 +584,27 @@ class Database:
     async def remove_custom_block(self, domain):
         items = [d for d in await self.get_custom_blocks() if d != domain]
         await self.set_setting("filters_custom", ",".join(items))
+
+    # --- СВОИ ИСКЛЮЧЕНИЯ НА КЛЮЧ -----------------------------------------
+    async def add_peer_route(self, uuid_val, value, direction="direct", note=None):
+        await self.execute(
+            """INSERT INTO peer_routing (user_uuid, direction, value, note)
+               VALUES ($1,$2,$3,$4)
+               ON CONFLICT (user_uuid, direction, value) DO NOTHING""",
+            uuid_val, direction, value, note)
+
+    async def list_peer_routes(self, uuid_val):
+        rows = await self.fetch_all(
+            "SELECT id, direction, value, note FROM peer_routing "
+            "WHERE user_uuid=$1 ORDER BY direction, value", uuid_val)
+        return [dict(r) for r in rows]
+
+    async def delete_peer_route(self, route_id):
+        await self.execute("DELETE FROM peer_routing WHERE id=$1", int(route_id))
+
+    async def count_peer_routes(self, uuid_val):
+        return await self.fetch_val(
+            "SELECT COUNT(*) FROM peer_routing WHERE user_uuid=$1", uuid_val) or 0
 
     # --- ЛОГИН В TELEGRAM ------------------------------------------------
     async def set_tg_username(self, tg_id, username):
