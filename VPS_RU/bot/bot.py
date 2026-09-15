@@ -87,6 +87,7 @@ from handlers_xray import (
 from handlers_donate import (
     donate_menu, donate_toggle, donate_reminder_toggle, donate_preview,
     donate_ask, donate_open, donate_delete, handle_donate_input,
+    donate_period, donate_period_set,
     client_donate, client_donate_qr,
 )
 from handlers_dnsnames import (
@@ -890,6 +891,10 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "don_toggle": await donate_toggle(update, context); return
     if data == "don_rem_toggle": await donate_reminder_toggle(update, context); return
     if data == "don_preview": await donate_preview(update, context); return
+    if data == "don_period": await donate_period(update, context); return
+    if data == "don_per_own": await donate_ask(update, context, "days"); return
+    if data.startswith("don_per_"):
+        await donate_period_set(update, context, data.split("don_per_")[1]); return
     if data == "don_text": await donate_ask(update, context, "text"); return
     if data.startswith("don_add_"):
         await donate_ask(update, context, data.split("don_add_")[1]); return

@@ -92,6 +92,19 @@ async def reminder_days():
         return DEFAULT_REMINDER_DAYS
 
 
+async def set_reminder_days(days):
+    """Срок между напоминаниями. Границы жёсткие: чаще суток — это уже не
+    напоминание, реже года — просто выключенное напоминание."""
+    days = max(1, min(365, int(days)))
+    await db.set_setting("donate_reminder_days", str(days))
+    return days
+
+
+# Что предлагаем выбрать: неделя — для тех, кто выпускает редко, две — наш
+# случай, месяц и квартал — если просить совсем не хочется.
+PERIOD_CHOICES = (7, 14, 30, 90)
+
+
 async def methods():
     return await db.list_donate_methods()
 

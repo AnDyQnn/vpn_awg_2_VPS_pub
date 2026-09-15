@@ -180,6 +180,54 @@ async def main():
     check("через две недели — снова можно", await donate.should_remind(TG))
 
     print()
+    print("=== периодичность настраивается, а не зашита ===")
+    shown.clear()
+    await hd.donate_period(FakeUpdate(), FakeContext())
+    check("экран показывает текущий срок", "14" in (shown.get("text") or ""),
+          "по умолчанию две недели")
+    check("готовые варианты на кнопках",
+          all(f"don_per_{d}" in (shown.get("buttons") or [])
+              for d in donate.PERIOD_CHOICES),
+          ", ".join(shown.get("buttons") or []))
+    check("своё число тоже можно",
+          "don_per_own" in (shown.get("buttons") or []))
+
+    await hd.donate_period_set(FakeUpdate(), FakeContext(), "30")
+    check("выбор кнопкой применился", await donate.reminder_days() == 30,
+          str(await donate.reminder_days()))
+
+    await hd.handle_donate_input(InputUpdate("21"), FakeContext(),
+                                 "awaiting_donate_days")
+    check("своё число применилось", await donate.reminder_days() == 21,
+          str(await donate.reminder_days()))
+
+    await hd.handle_donate_input(InputUpdate("0"), FakeContext(),
+                                 "awaiting_donate_days")
+    check("ноль превращается в сутки, а не в ноль",
+          await donate.reminder_days() == 1,
+          "иначе напоминание пришло бы с каждой версией")
+
+    await hd.handle_donate_input(InputUpdate("99999"), FakeContext(),
+                                 "awaiting_donate_days")
+    check("слишком большое обрезается годом",
+          await donate.reminder_days() == 365,
+          str(await donate.reminder_days()))
+
+    await hd.handle_donate_input(InputUpdate("сколько-нибудь"), FakeContext(),
+                                 "awaiting_donate_days")
+    check("буквы не применяются", await donate.reminder_days() == 365,
+          "и сказано, что нужно число")
+    await donate.set_reminder_days(14)
+
+    print()
+    print("=== выключили — и кнопки нет, и напоминаний ===")
+    await donate.set_enabled(False)
+    check("кнопки у людей нет", not await donate.visible())
+    check("напоминания не уходят", not await donate.should_remind(TG),
+          "один выключатель на оба, а не два разных состояния")
+    await donate.set_enabled(True)
+
+    print()
     print("=== удалили последний реквизит ===")
     for row in await donate.methods():
         await db.delete_donate_method(row["id"])

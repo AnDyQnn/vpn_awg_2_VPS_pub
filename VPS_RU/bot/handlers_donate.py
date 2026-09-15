@@ -34,6 +34,11 @@ ASK_QR = ("🖼 **Картинка с QR**\n\n"
           "Бот запомнит её и будет пересылать людям. Файл никуда класть не "
           "нужно.")
 
+ASK_DAYS = ("⏱ **Свой срок**\n\n"
+            "Пришлите число дней одним сообщением — например, `21`.\n\n"
+            "Меньше суток нельзя, больше года бессмысленно: это уже не "
+            "напоминание, а выключенное напоминание.")
+
 ASK_TEXT = ("✍️ **Текст обращения**\n\n"
             "Пришлите новый текст одним сообщением. Реквизиты подставятся под "
             "ним сами — их писать не надо.\n\n"
@@ -102,6 +107,9 @@ async def donate_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "🔕 Не напоминать после обновлений" if rem
             else f"🔔 Напоминать раз в {days} дн.",
             callback_data="don_rem_toggle")])
+        if rem:
+            kb.append([InlineKeyboardButton(f"⏱ Периодичность · {days} дн.",
+                                            callback_data="don_period")])
         kb.append([InlineKeyboardButton("👁 Как это видят люди",
                                         callback_data="don_preview")])
     kb.append([InlineKeyboardButton("🔙 Администрирование", callback_data="svc_menu")])
@@ -129,13 +137,51 @@ async def donate_reminder_toggle(update: Update, context: ContextTypes.DEFAULT_T
     await donate_menu(update, context)
 
 
+async def donate_period(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Как часто напоминать. Цифра здесь — не про вежливость, а про то, сколько
+    раз подряд человек готов услышать одну и ту же просьбу."""
+    query = update.callback_query
+    now = await donate.reminder_days()
+
+    text = ("⏱ **Как часто напоминать**", "",
+            f"Сейчас: **раз в {now} дн.**", "",
+            "Напоминание уходит следом за «что нового» и только тому, кому это "
+            "«что нового» реально пришло. Срок считается по каждому человеку "
+            "отдельно, а не по проекту: подключился сегодня — отсчёт с "
+            "сегодня.")
+    kb = []
+    row = []
+    for days in donate.PERIOD_CHOICES:
+        mark = "✅ " if days == now else ""
+        row.append(InlineKeyboardButton(f"{mark}раз в {days} дн.",
+                                        callback_data=f"don_per_{days}"))
+        if len(row) == 2:
+            kb.append(row)
+            row = []
+    if row:
+        kb.append(row)
+    kb.append([InlineKeyboardButton("✍️ Своё число", callback_data="don_per_own")])
+    kb.append([InlineKeyboardButton("🔙 Назад", callback_data="don_menu")])
+
+    await show_screen(query, context, "\n".join(text),
+                      reply_markup=InlineKeyboardMarkup(kb),
+                      parse_mode=ParseMode.MARKDOWN)
+
+
+async def donate_period_set(update: Update, context: ContextTypes.DEFAULT_TYPE, days):
+    applied = await donate.set_reminder_days(days)
+    await db.log_event("Донаты", f"Напоминание раз в {applied} дн.")
+    await update.callback_query.answer(f"Раз в {applied} дн.")
+    await donate_menu(update, context)
+
+
 async def donate_ask(update: Update, context: ContextTypes.DEFAULT_TYPE, kind):
     """Просит прислать реквизит. Состояние — в user_data: ввод разбирает
     общий обработчик сообщений."""
     query = update.callback_query
     context.user_data["state"] = f"awaiting_donate_{kind}"
     ask = {"card": ASK_CARD, "phone": ASK_PHONE, "qr": ASK_QR,
-           "text": ASK_TEXT}[kind]
+           "text": ASK_TEXT, "days": ASK_DAYS}[kind]
     await show_screen(query, context, ask,
                       reply_markup=InlineKeyboardMarkup(
                           [[InlineKeyboardButton("✖️ Отмена",
@@ -228,7 +274,7 @@ async def handle_donate_input(update, context, state):
     """Разбирает присланный реквизит или текст. Возвращает True, если сообщение
     было для нас, — общий обработчик по этому признаку останавливается."""
     kind = state.replace("awaiting_donate_", "")
-    if kind not in ("card", "phone", "qr", "text"):
+    if kind not in ("card", "phone", "qr", "text", "days"):
         return False
     context.user_data["state"] = None
     chat_id = update.message.chat_id
@@ -257,6 +303,21 @@ async def handle_donate_input(update, context, state):
     if not raw:
         await context.bot.send_message(chat_id=chat_id, reply_markup=back,
                                        text="⚠️ Пустое сообщение — ничего не изменилось.")
+        return True
+
+    if kind == "days":
+        digits = "".join(c for c in raw if c.isdigit())
+        if not digits:
+            await context.bot.send_message(
+                chat_id=chat_id, reply_markup=back,
+                text="⚠️ Нужно число дней — например, `21`.",
+                parse_mode=ParseMode.MARKDOWN)
+            return True
+        applied = await donate.set_reminder_days(digits)
+        await db.log_event("Донаты", f"Напоминание раз в {applied} дн.")
+        await context.bot.send_message(
+            chat_id=chat_id, reply_markup=back,
+            text=f"✅ Напоминаем раз в {applied} дн.")
         return True
 
     if kind == "text":
