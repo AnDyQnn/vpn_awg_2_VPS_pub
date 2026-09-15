@@ -33,9 +33,10 @@ ALLOWED = {
     ("handlers_xray.py", "text=link"),
     # Ссылка подписки — её тоже выделяют и копируют. Идёт сразу за
     # объяснением, у которого кнопки есть.
-    ("handlers_client.py", "text=sub"),
-    # Та же ссылка с хвостом «/full» — её тоже копируют.
-    ("handlers_client.py", 'text=sub + "/full"'),
+    # Сообщение с одной только ссылкой: её выделяют целиком одним касанием,
+    # и кнопки под ней мешают попасть по тексту. Выход даёт подсказка,
+    # которая идёт сразу следом.
+    ("handlers_client.py", "text=link"),
 }
 
 SCREEN = re.compile(r"(_screen|_menu|show_screen|return_to_main|handout|_picker)\s*\(")

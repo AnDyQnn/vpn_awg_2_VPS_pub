@@ -675,11 +675,19 @@ async def send_xray_profile(context, chat_id, uuid_val):
     if qr:
         await context.bot.send_photo(
             chat_id=chat_id, photo=open(qr, "rb"),
-            caption=("📱 Отсканируйте в приложении — или скопируйте ссылку ниже.\n"
-                     "Она личная, не передавайте её никому."))
+            caption="🔑 Ваше подключение. Ссылка личная — не передавайте её никому.")
 
-    await context.bot.send_message(chat_id=chat_id, text=link,
-                                   reply_markup=exit_kb(to_client=True))
+    # Ссылка — отдельным сообщением и без разметки: так её можно выделить
+    # целиком одним касанием. Поэтому подсказка идёт следующим сообщением, а
+    # не приклеивается к ней.
+    await context.bot.send_message(chat_id=chat_id, text=link)
+
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text=("👆 Скопируйте ссылку выше и вставьте в приложение — "
+              "оно само добавит подключение.\n\n"
+              "Или отсканируйте QR, если приложение на телефоне."),
+        reply_markup=exit_kb(to_client=True))
 
     try:
         await db.delivery_downloaded(uuid_val)
