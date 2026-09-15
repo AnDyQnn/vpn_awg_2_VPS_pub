@@ -27,6 +27,10 @@ from database import db
 # останется висеть старый профиль рядом с новым.
 PROFILE_NAME = "Сплит от бота"
 
+# Резолвер узла внутри туннеля. Через него работают и фильтры по категориям, и
+# имена вроде `дом.vpn`: узел отвечает на запросы сам.
+TUNNEL_DNS = "10.13.13.1"
+
 # Приватные диапазоны и служебное. В списке исключений их нет и быть не должно:
 # там ресурсы, которые должны видеть российский адрес, а это — домашняя сеть,
 # link-local, multicast и широковещательный. Через туннель им ходить незачем
@@ -136,13 +140,19 @@ async def profile(uuid_val=None):
     prof = {
         "Name": PROFILE_NAME,
         "GlobalProxy": "true",
-        "RemoteDNSType": "DoH",
-        "RemoteDNSDomain": "https://cloudflare-dns.com/dns-query",
-        "RemoteDNSIP": "1.1.1.1",
-        "DomesticDNSType": "DoH",
-        "DomesticDNSDomain": "https://dns.google/dns-query",
-        "DomesticDNSIP": "8.8.8.8",
-        "DnsHosts": {"cloudflare-dns.com": "1.1.1.1", "dns.google": "8.8.8.8"},
+        # DNS того, что идёт через туннель, — наш резолвер на узле. Это не
+        # прихоть: фильтры и имена внутри туннеля работают ровно потому, что
+        # узел видит запросы. Через DoH к Cloudflare он их не видит вовсе —
+        # запрос уходит внутри HTTPS, и человек на Xray оставался бы и без
+        # фильтров, и без внутренних имён, хотя у него всё «включено».
+        "RemoteDNSType": "DoU",
+        "RemoteDNSDomain": "",
+        "RemoteDNSIP": TUNNEL_DNS,
+        # А для того, что идёт мимо туннеля, наш резолвер недостижим: туда
+        # ходят напрямую, в том числе при выключенном VPN.
+        "DomesticDNSType": "DoU",
+        "DomesticDNSDomain": "",
+        "DomesticDNSIP": "77.88.8.8",
         "DirectSites": sorted(set(domains)),
         "DirectIp": list(ALWAYS_DIRECT) + _collapse(listed),
         # Имя, не совпавшее ни с одним правилом по имени, проверяется ещё и по

@@ -65,6 +65,16 @@ async def main():
     check("имя проверяется и по адресу тоже",
           prof["DomainStrategy"] == "IPIfNonMatch",
           "иначе домен из списка, открытый по адресу, ушёл бы в туннель")
+    # Фильтры и внутренние имена работают ровно потому, что запросы видит наш
+    # узел. Через DoH к чужому резолверу он их не видит: запрос уходит внутри
+    # HTTPS, и человек остаётся без фильтров, хотя у него всё «включено».
+    check("DNS туннеля ведёт на наш резолвер",
+          prof["RemoteDNSIP"] == happ_routing.TUNNEL_DNS
+          and prof["RemoteDNSType"] == "DoU",
+          "%s/%s" % (prof["RemoteDNSType"], prof["RemoteDNSIP"]))
+    check("мимо туннеля — чужой резолвер",
+          prof["DomesticDNSIP"] != happ_routing.TUNNEL_DNS,
+          "наш недостижим, когда VPN выключен")
 
     print()
     print("=== ссылка для приложения ===")
