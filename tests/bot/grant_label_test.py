@@ -69,6 +69,20 @@ async def main():
           grant_text(tcp, {"10.13.13.31": "касса.vpn"}))
 
     print()
+    print("=== мёртвое правило видно ===")
+    from acl import grant_is_dead
+    # Такое лежит на живом узле: у выходного узла маршрут по умолчанию
+    # 0.0.0.0/0, и когда-то отсюда брался «адрес пира».
+    await db.add_role_grant(role_id, cidr="0.0.0.0/32", note="DE_AGENT")
+    dead = (await db.get_role_grants(role_id))[-1]
+    check("опознано как мёртвое", grant_is_dead(dead))
+    check("и помечено в подписи", "не работает" in grant_text(dead),
+          grant_text(dead))
+    check("живое правило не помечено",
+          not grant_is_dead(net) and "не работает" not in grant_text(net))
+    check("правило на человека тоже живое", not grant_is_dead(person))
+
+    print()
     print("=== испорченное правило видно ===")
     broken = {"kind": "net", "name": None, "cidr": None, "proto": "any",
               "port": None, "note": None, "target_uuid": None}

@@ -225,6 +225,42 @@ async def main():
         except Exception as e:
             say("warning", "Версии мастера и Германии", "не удалось сверить: %s" % e)
 
+    await check_dead_grants()
+
+
+async def check_dead_grants():
+    """Правила, которые не совпадут ни с одним пакетом.
+
+    Роли — про своих, и адрес вне туннеля здесь взяться не может. Такие записи
+    появляются от старых ошибок сбора адресов и остаются лежать: в цепочку
+    уходит строка, которая никогда не сработает, а владелец видит её в списке
+    доступов и верит ей.
+    """
+    try:
+        sys.path.insert(0, "/app")
+        from database import db
+        from acl import grant_is_dead
+        roles = await db.list_roles()
+    except Exception as e:
+        say("warning", "Мёртвые правила доступа", "не удалось проверить: %s" % e)
+        return
+
+    dead = []
+    for role in roles:
+        try:
+            for grant in await db.get_role_grants(role["id"]):
+                if grant_is_dead(grant):
+                    dead.append("%s: %s" % (role["name"],
+                                            grant.get("cidr") or grant.get("note") or "?"))
+        except Exception:
+            continue
+
+    if dead:
+        say("warning", "Мёртвые правила доступа",
+            "%d — ничего не открывают: %s" % (len(dead), "; ".join(dead[:4])))
+    else:
+        say("ok", "Мёртвые правила доступа", "таких нет")
+
 
 def check_category_lists():
     """Категория, у которой не загрузился список, ничего не фильтрует.
