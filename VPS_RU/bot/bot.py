@@ -49,7 +49,9 @@ from handlers_client import (
 from handlers_service import (
     service_menu, toggle_mode, set_mode, load_screen, limits_screen,
     change_limit, set_peer_rule, load_chart, whats_new,
-    ensure_api_token, watch_api_token, charts_screen, pick_peer_screen, graphs_menu,
+    ensure_api_token, watch_api_token, rotate_loop, charts_screen,
+    token_screen, token_toggle, token_now,
+    pick_peer_screen, graphs_menu,
     event_delete,
     peer_limit_screen
 )
@@ -117,6 +119,7 @@ from filters import (
     custom_add_request as flt_cadd, custom_add_entered as flt_centered,
     custom_list as flt_clist, custom_remove as flt_cremove,
     pool_list as flt_pools, pool_open as flt_pool_open,
+    pool_name_request as flt_pool_new,
     pool_add_request as flt_pool_add, pool_domains_entered as flt_pool_doms,
     pool_title_entered as flt_pool_title, pool_delete as flt_pool_del,
     allow_screen as flt_allow, allow_add_request as flt_allow_add,
@@ -863,6 +866,10 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "svc_mode_toggle": await toggle_mode(update, context); return
     if data == "svc_mode_on": await set_mode(update, context, True); return
     if data == "svc_mode_off": await set_mode(update, context, False); return
+    # Токен панелей: состояние, переключатель расписания и смена по кнопке.
+    if data == "svc_token": await token_screen(update, context); return
+    if data == "svc_tok_toggle": await token_toggle(update, context); return
+    if data == "svc_tok_now": await token_now(update, context); return
     if data == "svc_load": await load_screen(update, context); return
     if data.startswith("svc_ev_del_"):
         await event_delete(update, context, data.split("svc_ev_del_")[1]); return
@@ -1013,7 +1020,7 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Свои пулы фильтров.
     if data == "flt_pool_list": await flt_pools(update, context); return
-    if data == "flt_pool_add": await flt_pool_add(update, context, None); return
+    if data == "flt_pool_new": await flt_pool_new(update, context); return
     if data.startswith("flt_pool_o_"):
         await flt_pool_open(update, context, data.split("flt_pool_o_")[1]); return
     if data.startswith("flt_pool_a_"):
@@ -1463,6 +1470,8 @@ async def post_init(application):
         # И дальше раз в час: клиент-сервер мог подняться позже мастера, и
         # догонять его иначе было бы нечем.
         asyncio.create_task(watch_api_token(application)),
+        # Смена токена по расписанию — если владелец её включил.
+        asyncio.create_task(rotate_loop(application)),
     ]
     state_data["bg_tasks"].update(tasks)
 

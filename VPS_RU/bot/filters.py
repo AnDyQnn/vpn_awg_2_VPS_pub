@@ -244,7 +244,7 @@ async def filters_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kb = [[InlineKeyboardButton("🌍 Общие правила", callback_data="flt_common")],
           [InlineKeyboardButton("🟢 Исключения из запретов",
                                 callback_data="flt_alw_all")],
-          [InlineKeyboardButton("📦 Свои пулы", callback_data="flt_pool_list")],
+          [InlineKeyboardButton("📦 Группы фильтров", callback_data="flt_pool_list")],
           [InlineKeyboardButton("👤 Выбрать человека", callback_data="flt_pick_0")]]
     if by_uuid:
         kb.append([InlineKeyboardButton("🔄 Применить на узле", callback_data="flt_apply")])
@@ -371,7 +371,7 @@ async def allow_remove(update: Update, context: ContextTypes.DEFAULT_TYPE,
     await allow_screen(update, context, uuid_val)
 
 
-# --- СВОИ ПУЛЫ -------------------------------------------------------------
+# --- ГРУППЫ ФИЛЬТРОВ -------------------------------------------------------------
 # Готовые категории собраны чужими людьми по чужим соображениям: в них нет
 # российских ресурсов и нет того, что владелец считает лишним именно у себя.
 # Пул — это категория, собранная им самим: список доменов и название.
@@ -390,13 +390,13 @@ async def pool_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     pools = await db.list_filter_pools()
 
-    lines = ["📦 **Свои пулы фильтров**", ""]
+    lines = ["📦 **Группы фильтров**", ""]
     if not pools:
         lines += [
-            "Пулов нет.",
+            "Групп нет.",
             "",
-            "Пул — это своя категория: присылаете список доменов, даёте ему "
-            "название, и дальше он включается людям так же, как встроенные.",
+            "Группа — это своя категория: даёте ей название, заливаете список "
+            "адресов, и дальше она включается людям так же, как встроенные.",
             "",
             "_Пригодится там, где готовые списки не подходят: свои ресурсы, "
             "российские сервисы, «то, что не надо детям» по вашему разумению._",
@@ -406,7 +406,7 @@ async def pool_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
             lines.append(f"  📦 **{escape_md(pool['title'])}** — "
                          f"{len(pool['domains'])} доменов")
 
-    kb = [[InlineKeyboardButton("➕ Новый пул", callback_data="flt_pool_add")]]
+    kb = [[InlineKeyboardButton("➕ Добавить группу", callback_data="flt_pool_new")]]
     for pool in pools:
         kb.append([InlineKeyboardButton(f"📦 {pool['title'][:26]}",
                                         callback_data=f"flt_pool_o_{pool['key']}")])
@@ -421,7 +421,7 @@ async def pool_open(update: Update, context: ContextTypes.DEFAULT_TYPE, key):
     query = update.callback_query
     pool = await db.get_filter_pool(key)
     if not pool:
-        await query.answer("Пула нет", show_alert=True)
+        await query.answer("Группы нет", show_alert=True)
         return await pool_list(update, context)
 
     shown = pool["domains"][:12]
@@ -432,50 +432,106 @@ async def pool_open(update: Update, context: ContextTypes.DEFAULT_TYPE, key):
         lines.append(f"  …и ещё {len(pool['domains']) - len(shown)}")
     lines += ["", "_Включается человеку так же, как встроенная категория._"]
 
-    kb = [[InlineKeyboardButton("➕ Дописать домены",
+    kb = [[InlineKeyboardButton("➕ Добавить адреса",
                                 callback_data=f"flt_pool_a_{key}")],
-          [InlineKeyboardButton("🗑 Удалить пул", callback_data=f"flt_pool_d_{key}")],
-          [InlineKeyboardButton("🔙 К пулам", callback_data="flt_pool_list")]]
+          [InlineKeyboardButton("🗑 Удалить группу", callback_data=f"flt_pool_d_{key}")],
+          [InlineKeyboardButton("🔙 К группам", callback_data="flt_pool_list")]]
     await show_screen(query, context, "\n".join(lines),
                       reply_markup=InlineKeyboardMarkup(kb),
                       parse_mode=ParseMode.MARKDOWN)
 
 
+# Подсказка про формат — одна на оба случая: и при создании группы, и при
+# дописывании. Человек копирует адреса откуда попало, и ему надо сразу сказать,
+# что приводить их к одному виду не нужно.
+ASK_DOMAINS = (
+    "Пришлите список **построчно** — по адресу в строке. Можно сразу сотни: "
+    "выкачали перечень и вставили целиком.\n\n"
+    "Вид значения не важен, всё это один и тот же сайт:\n"
+    "`https://www.example.com/page`\n"
+    "`www.example.com`\n"
+    "`example.com`\n"
+    "`0.0.0.0 example.com`\n\n"
+    "_Схему, `www`, порт и путь срежу сам. Повторы уберу._")
+
+
 async def pool_add_request(update: Update, context: ContextTypes.DEFAULT_TYPE,
                            key=None):
-    """Просит список. Название спросим после — когда уже видно, что прислали."""
+    """Спрашивает адреса. Для новой группы это второй шаг: имя уже дали."""
     query = update.callback_query
     context.user_data["state"] = "awaiting_pool_domains"
     context.user_data["pool_key"] = key
-    where = "в этот пул" if key else "в новый пул"
+
+    if key:
+        pool = await db.get_filter_pool(key)
+        head = f"📦 **Адреса в группу «{escape_md((pool or {}).get('title', ''))}»**"
+        back = f"flt_pool_o_{key}"
+    else:
+        head = "📦 **Адреса в новую группу**"
+        back = "flt_pool_list"
+
+    await show_screen(
+        query, context, head + "\n\n" + ASK_DOMAINS,
+        reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton("✖️ Отмена", callback_data=back)]]),
+        parse_mode=ParseMode.MARKDOWN)
+
+
+async def pool_name_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Первый шаг новой группы — название.
+
+    Раньше сначала просили список, а имя спрашивали после: человек вставлял
+    три сотни строк и только тогда узнавал, что нужно ещё и назвать. Порядок
+    развёрнут — сперва имя, оно короткое.
+    """
+    query = update.callback_query
+    context.user_data["state"] = "awaiting_pool_title"
+    context.user_data["pool_domains"] = []
     await show_screen(
         query, context,
-        f"📦 **Домены {where}**\n\n"
-        "Пришлите список одним сообщением — по домену в строке или через "
-        "запятую. Можно сразу сотни: выкачали откуда-нибудь перечень и "
-        "вставили целиком.\n\n"
-        "`pornhub.com`\n`xvideos.com`\n`0.0.0.0 example.com`\n\n"
-        "_Формат hosts тоже понимаю — адрес в начале строки отброшу._",
+        "📦 **Новая группа**\n\n"
+        "Как её назвать? Название увидит человек на странице отказа — пишите "
+        "так, чтобы ему было понятно: «Взрослое», «Игры», «Соцсети без ВК».\n\n"
+        "_Адреса попрошу следующим шагом._",
         reply_markup=InlineKeyboardMarkup(
             [[InlineKeyboardButton("✖️ Отмена", callback_data="flt_pool_list")]]),
         parse_mode=ParseMode.MARKDOWN)
 
 
 def _parse_domains(raw):
-    """Разбирает присланное: строки, запятые, формат hosts."""
+    """Приводит присланное к именам доменов.
+
+    Люди копируют адреса откуда попало: `https://www.site.ru/page`, `www.site.ru`,
+    `site.ru`, строка из hosts-файла. Это один и тот же домен, и различать их
+    нельзя: правило по `www.site.ru` не закроет `site.ru`, и человек будет
+    уверен, что фильтр не работает.
+
+    Поэтому срезаем схему, `www`, порт, путь и точку на конце. Остаётся имя.
+    """
     out = []
-    for part in (raw or "").replace(",", "\n").split("\n"):
+    for part in (raw or "").replace(",", "\n").replace(";", "\n").split("\n"):
         value = part.strip().lower()
         if not value or value.startswith("#"):
             continue
+
         chunks = value.split()
-        if len(chunks) > 1 and chunks[0] in ("0.0.0.0", "127.0.0.1"):
-            value = chunks[1]
+        if len(chunks) > 1 and chunks[0] in ("0.0.0.0", "127.0.0.1", "::1"):
+            value = chunks[1]                    # строка из hosts-файла
         elif len(chunks) > 1:
-            continue
+            continue                             # фраза, а не адрес
+
         if "://" in value:
-            value = value.split("://", 1)[1]
-        value = value.split("/")[0].strip(".")
+            value = value.split("://", 1)[1]     # http://, https://, любая схема
+        value = value.split("/")[0]              # путь
+        value = value.split("?")[0].split("#")[0]
+        value = value.split("@")[-1]             # логин в адресе
+        value = value.split(":")[0]              # порт
+        value = value.strip(".")
+        if value.startswith("www."):
+            # `www` — не отдельный сайт. Оставить его значило бы завести
+            # правило, которое не сработает на том же сайте без `www`.
+            value = value[4:]
+
         if value and "." in value and " " not in value and len(value) <= 100:
             out.append(value)
     # Порядок не важен, а повторы в присланных списках бывают всегда.
@@ -483,7 +539,7 @@ def _parse_domains(raw):
 
 
 async def pool_domains_entered(update, context):
-    """Принял список. Если пул новый — спрашиваем название."""
+    """Принял список адресов в уже созданную группу."""
     key = context.user_data.get("pool_key")
     domains = _parse_domains(update.message.text or "")
     chat_id = update.message.chat_id
@@ -493,7 +549,7 @@ async def pool_domains_entered(update, context):
         await context.bot.send_message(
             chat_id=chat_id, text="⚠️ Ни одного домена не разобрал.",
             reply_markup=InlineKeyboardMarkup(
-                [[InlineKeyboardButton("🔙 К пулам", callback_data="flt_pool_list")]]))
+                [[InlineKeyboardButton("🔙 К группам", callback_data="flt_pool_list")]]))
         return True
 
     if key:
@@ -507,60 +563,62 @@ async def pool_domains_entered(update, context):
         ok, msg = await apply_filters("дописан пул")
         await context.bot.send_message(
             chat_id=chat_id, parse_mode=ParseMode.MARKDOWN,
-            text=(f"📦 В пул «{escape_md(pool['title'])}» добавлено "
+            text=(f"📦 В группу «{escape_md(pool['title'])}» добавлено "
                   f"**{len(merged) - len(pool['domains'])}** новых, всего "
                   f"**{len(merged)}**.\n\n"
                   + ("Применено на узле." if ok else f"⚠️ Узел: {msg}")),
             reply_markup=InlineKeyboardMarkup(
-                [[InlineKeyboardButton("📦 К пулу",
+                [[InlineKeyboardButton("📦 К группе",
                                        callback_data=f"flt_pool_o_{key}")]]))
         return True
 
-    # Новый пул: список уже есть, осталось название.
-    context.user_data["pool_domains"] = domains
-    context.user_data["state"] = "awaiting_pool_title"
+    # Сюда можно попасть только без имени группы — значит, разговор потерян.
+    context.user_data["state"] = None
     await context.bot.send_message(
-        chat_id=chat_id, parse_mode=ParseMode.MARKDOWN,
-        text=(f"📦 Разобрал **{len(domains)}** доменов.\n\n"
-              "Как назвать пул? Название увидит человек на странице отказа — "
-              "пишите так, чтобы ему было понятно: «Взрослое», «Игры», "
-              "«Соцсети без ВК»."),
+        chat_id=chat_id,
+        text="⚠️ Непонятно, в какую группу. Откройте её и нажмите "
+             "«Добавить адреса».",
         reply_markup=InlineKeyboardMarkup(
-            [[InlineKeyboardButton("✖️ Отмена", callback_data="flt_pool_list")]]))
+            [[InlineKeyboardButton("📦 К группам",
+                                   callback_data="flt_pool_list")]]))
     return True
 
-
 async def pool_title_entered(update, context):
+    """Имя получено — группа заведена, осталось наполнить.
+
+    Заводим сразу, ещё пустой: держать имя в памяти до конца разговора нельзя,
+    разговор человек может и бросить.
+    """
     title = (update.message.text or "").strip()[:40]
-    domains = context.user_data.get("pool_domains") or []
     context.user_data["state"] = None
     chat_id = update.message.chat_id
 
-    if not title or not domains:
+    if not title:
         await context.bot.send_message(
-            chat_id=chat_id, text="⚠️ Пустое название — пул не создан.",
+            chat_id=chat_id, text="⚠️ Пустое название — группа не создана.",
             reply_markup=InlineKeyboardMarkup(
-                [[InlineKeyboardButton("🔙 К пулам", callback_data="flt_pool_list")]]))
+                [[InlineKeyboardButton("📦 К группам",
+                                       callback_data="flt_pool_list")]]))
         return True
 
     key = _pool_key(title)
-    await db.save_filter_pool(key, title, domains)
-    ok, msg = await apply_filters(f"создан пул {title}")
+    await db.save_filter_pool(key, title, [])
+    context.user_data["state"] = "awaiting_pool_domains"
+    context.user_data["pool_key"] = key
     await context.bot.send_message(
         chat_id=chat_id, parse_mode=ParseMode.MARKDOWN,
-        text=(f"📦 Пул «{escape_md(title)}» создан: **{len(domains)}** доменов.\n\n"
-              "Теперь его можно включить человеку так же, как встроенную "
-              "категорию.\n\n"
-              + ("Применено на узле." if ok else f"⚠️ Узел: {msg}")),
+        text=("📦 Группа «%s» создана." % escape_md(title)
+              + chr(10) + chr(10) + ASK_DOMAINS),
         reply_markup=InlineKeyboardMarkup(
-            [[InlineKeyboardButton("📦 К пулу", callback_data=f"flt_pool_o_{key}")]]))
+            [[InlineKeyboardButton("✖️ Позже",
+                                   callback_data="flt_pool_o_" + key)]]))
     return True
 
 
 async def pool_delete(update: Update, context: ContextTypes.DEFAULT_TYPE, key):
     pool = await db.get_filter_pool(key)
     await db.delete_filter_pool(key)
-    await apply_filters("удалён пул")
+    await apply_filters("удалена группа")
     await update.callback_query.answer(
         f"Пул «{(pool or {}).get('title', '')}» удалён" if pool else "Удалено")
     await pool_list(update, context)
