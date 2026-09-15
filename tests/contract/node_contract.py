@@ -325,6 +325,62 @@ def check_env_described():
             say("error", "Переменная %s" % key, "пуста — %s" % why)
 
 
+def check_public_sub():
+    """Подписка наружу: жив ли сертификат и слушают ли внешний порт.
+
+    Сертификат на IP живёт 160 часов — меньше недели. Недельный отчёт приходит
+    раз в неделю, и если про сертификат в нём не сказано, узнать о его смерти
+    неоткуда: подписка просто перестанет обновляться у всех сразу, молча.
+
+    Отсюда видно ровно две вещи — файл и сокет. Правила файрвола и таймер
+    продления живут на хосте, их смотрит проверка хоста.
+    """
+    cert = os.path.join(os.getenv("SUB_CERT_DIR", "/volumes/certs"),
+                        "fullchain.pem")
+    state_file = "/volumes/flags/public_sub.json"
+    try:
+        size = os.path.getsize(cert)
+    except OSError:
+        size = 0
+    if not size:
+        # Закрыта — это нормальное состояние, а не поломка.
+        say("ok", "Подписка наружу", "закрыта, видна только изнутри")
+        return
+
+    left = None
+    try:
+        with open(state_file, encoding="utf-8") as f:
+            until = json.load(f).get("until")
+        if until:
+            left = (float(until) - time.time()) / 86400.0
+    except Exception:
+        left = None
+
+    if left is None:
+        say("warning", "Подписка наружу · сертификат", "срок неизвестен")
+    elif left < 1:
+        say("error", "Подписка наружу · сертификат",
+            "истекает меньше чем через сутки — продление не доехало")
+    elif left < 3:
+        say("warning", "Подписка наружу · сертификат",
+            "осталось %.1f сут." % left)
+    else:
+        say("ok", "Подписка наружу · сертификат", "осталось %.1f сут." % left)
+
+    # Сокет. Сертификат может лежать, а вход не подняться — например, бота
+    # перезапустили в ту минуту, когда файла ещё не было.
+    try:
+        import socket
+        s = socket.socket()
+        s.settimeout(3)
+        s.connect(("127.0.0.1", 8443))
+        s.close()
+        say("ok", "Подписка наружу · внешний вход", "порт 8443 отвечает")
+    except Exception as e:
+        say("error", "Подписка наружу · внешний вход",
+            "сертификат есть, а порт молчит: %s" % e)
+
+
 if __name__ == "__main__":
     try:
         asyncio.run(main())
@@ -332,4 +388,5 @@ if __name__ == "__main__":
         say("error", "Сверка базы с узлом", "не отработала: %s" % e)
     check_category_lists()
     check_env_described()
+    check_public_sub()
     print("\n".join(LINES))
