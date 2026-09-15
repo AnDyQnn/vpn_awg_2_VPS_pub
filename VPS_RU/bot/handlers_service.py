@@ -269,6 +269,7 @@ async def service_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
          # Не «Поддержка»: ниже есть «🆘 Поддержка» про обращения, и две кнопки
          # с одним словом читаются как одна и та же.
          InlineKeyboardButton("💳 Донаты", callback_data="don_menu")],
+        [InlineKeyboardButton("🔑 Токен панелей", callback_data="svc_token")],
         [InlineKeyboardButton(
             "📋 Ждут решения" + (f" · {len(decisions)}" if decisions else ""),
             callback_data="kd_list"),
@@ -827,7 +828,11 @@ async def ensure_api_token(app):
         if not ADMIN_ID:
             return
         try:
-            await app.bot.send_message(chat_id=ADMIN_ID, text=text)
+            await app.bot.send_message(
+                chat_id=ADMIN_ID, text=text,
+                reply_markup=InlineKeyboardMarkup(
+                    [[InlineKeyboardButton("🔑 Токен панелей",
+                                           callback_data="svc_token")]]))
         except Exception:
             pass
 
@@ -869,6 +874,152 @@ async def ensure_api_token(app):
     await tell("🔑 Токен панелей выдан автоматически — бот сейчас перезапустится "
                "и досадит его на клиент-сервер.")
 
+
+
+# --- СМЕНА ТОКЕНА ПАНЕЛЕЙ --------------------------------------------------
+# Секрет, который не меняется, со временем перестаёт быть секретом: он оседает
+# в бэкапах, в истории терминала, в переписке. Раз в неделю — компромисс между
+# этим и тем, что каждая смена пересоздаёт контейнеры.
+ROTATE_DEFAULT_DAYS = 7
+
+
+async def rotation_days():
+    raw = (await db.get_setting("api_token_rotate_days") or "").strip()
+    if not raw:
+        return ROTATE_DEFAULT_DAYS
+    try:
+        return max(1, min(365, int(raw)))
+    except ValueError:
+        return ROTATE_DEFAULT_DAYS
+
+
+async def rotation_enabled():
+    """По умолчанию выключено. Смена роняет связь на несколько секунд, и
+    включать такое за владельца нельзя."""
+    return (await db.get_setting("api_token_rotate") or "") == "1"
+
+
+async def rotate_api_token(app, reason="по расписанию"):
+    """Меняет токен на обеих нодах. Возвращает (получилось, что вышло).
+
+    Порядок важен и обратному не подлежит: сперва мастер, дождались записи,
+    потом клиент-сервер. Пока новый токен есть только у мастера, агент пускает
+    его по адресу в туннеле; наоборот — агент отвергал бы мастера со старым
+    токеном, и ноды потеряли бы друг друга до ближайшего запуска бота.
+    """
+    import secrets
+    from datetime import datetime
+    from utils import request_env_change, env_change_applied
+
+    token = secrets.token_urlsafe(24)
+    flag = request_env_change("API_TOKEN", token)
+    if not await env_change_applied(flag, timeout=60):
+        await db.log_event("Security", f"Смена токена не применилась ({reason})")
+        return False, ("служба обновлений на сервере не ответила — токен "
+                       "остался прежним")
+
+    # Мастер сейчас пересоздаёт контейнеры и этот процесс закончится. Германию
+    # догонит очередная сверка при следующем запуске: она увидит, что у той
+    # токен не совпадает, и дошлёт.
+    await db.set_setting("api_token_rotated_at", datetime.utcnow().isoformat())
+    await db.log_event("Security", f"Токен панелей сменён ({reason})")
+    return True, "токен сменён, клиент-сервер получит его следующей сверкой"
+
+
+async def rotate_loop(app):
+    """Раз в сутки смотрит, не пора ли. Время — воскресное утро, то же окно,
+    где уже стоят обновление и плановый ребут: разрыв придётся на него."""
+    import asyncio
+    from datetime import datetime, timedelta
+    from utils import get_moscow_now
+
+    await asyncio.sleep(300)
+    while True:
+        try:
+            if await rotation_enabled():
+                now_msk = get_moscow_now()
+                if now_msk.weekday() == 6 and now_msk.hour == 6:
+                    last = await db.get_setting("api_token_rotated_at")
+                    due = True
+                    if last:
+                        try:
+                            when = datetime.fromisoformat(last)
+                            due = datetime.utcnow() - when >= timedelta(
+                                days=await rotation_days())
+                        except ValueError:
+                            due = True
+                    if due:
+                        ok, msg = await rotate_api_token(app)
+                        from utils import ADMIN_ID
+                        if ADMIN_ID:
+                            try:
+                                await app.bot.send_message(
+                                    chat_id=ADMIN_ID,
+                                    text=("\U0001f501 Смена токена панелей: " + msg),
+                                    reply_markup=InlineKeyboardMarkup(
+                                        [[InlineKeyboardButton(
+                                            "🔑 Токен панелей",
+                                            callback_data="svc_token")]]))
+                            except Exception:
+                                pass
+        except Exception as e:
+            print(f"Смена токена: {e}")
+        await asyncio.sleep(1800)
+
+
+async def token_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Смена токена панелей: состояние и переключатель."""
+    from utils import API_TOKEN
+    query = update.callback_query
+    on = await rotation_enabled()
+    days = await rotation_days()
+    last = await db.get_setting("api_token_rotated_at")
+
+    lines = ["🔑 **Токен панелей**", ""]
+    lines.append("Состояние: " + ("**задан**" if API_TOKEN else "**пуст**"))
+    lines.append("Смена по расписанию: " + (f"**раз в {days} дн.**" if on
+                                            else "выключена"))
+    if last:
+        lines.append(f"Последняя смена: {last[:16].replace('T', ' ')} UTC")
+    lines += ["",
+              "Токен закрывает панели узлов вторым рубежом поверх файрвола. "
+              "Секрет, который не меняется, со временем оседает в бэкапах и в "
+              "истории терминала.",
+              "",
+              "_Смена пересоздаёт контейнеры: связь прерывается на несколько "
+              "секунд. Поэтому она идёт в воскресенье утром — в то же окно, где "
+              "уже стоят обновление и плановый ребут._"]
+
+    kb = [[InlineKeyboardButton("🔕 Не менять по расписанию" if on
+                                else f"🔄 Менять раз в {days} дн.",
+                                callback_data="svc_tok_toggle")],
+          [InlineKeyboardButton("🔁 Сменить сейчас", callback_data="svc_tok_now")],
+          [InlineKeyboardButton("🔙 Администрирование", callback_data="svc_menu")]]
+    await show_screen(query, context, "\n".join(lines),
+                      reply_markup=InlineKeyboardMarkup(kb),
+                      parse_mode=ParseMode.MARKDOWN)
+
+
+async def token_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    on = await rotation_enabled()
+    await db.set_setting("api_token_rotate", "0" if on else "1")
+    await update.callback_query.answer(
+        "Больше не меняем" if on else "Будем менять по расписанию")
+    await token_screen(update, context)
+
+
+async def token_now(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Смена по кнопке. Спрашивать подтверждение незачем: кнопка и есть
+    подтверждение, а откатывать тут нечего — новый токен ничем не хуже."""
+    query = update.callback_query
+    await query.answer("Меняю…")
+    ok, msg = await rotate_api_token(context.application, "вручную")
+    await show_screen(query, context,
+                      ("✅ " if ok else "⚠️ ") + "Смена токена: " + msg,
+                      reply_markup=InlineKeyboardMarkup(
+                          [[InlineKeyboardButton("🔑 К токену",
+                                                 callback_data="svc_token")]]),
+                      parse_mode=ParseMode.MARKDOWN)
 
 async def watch_api_token(app):
     """Повторная сверка во время работы.

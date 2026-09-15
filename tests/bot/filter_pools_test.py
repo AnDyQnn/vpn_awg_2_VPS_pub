@@ -107,14 +107,22 @@ async def main():
     check("мусор отброшен", "не домен вовсе" not in parsed, str(parsed))
 
     print()
-    print("=== создание пула ===")
+    print("=== адреса приводятся к имени домена ===")
+    mixed = F._parse_domains(
+        "https://www.example.com/page\nwww.example.com\nexample.com\n"
+        "http://site.ru:8080/x?a=1")
+    check("схема, www, порт и путь срезаны",
+          mixed == ["example.com", "site.ru"], str(mixed))
+
+    print()
+    print("=== создание группы: сначала имя ===")
     ctx = Ctx()
-    ctx.user_data["pool_key"] = None
-    await F.pool_domains_entered(Upd("pornhub.com\nxvideos.com"), ctx)
-    check("спросили название",
-          ctx.user_data.get("state") == "awaiting_pool_title",
-          "список без имени человеку ничего не скажет")
     await F.pool_title_entered(Upd("Проверка взрослое"), ctx)
+    check("группа заведена сразу", ctx.user_data.get("pool_key") is not None)
+    check("и сразу просят адреса",
+          ctx.user_data.get("state") == "awaiting_pool_domains",
+          "имя короткое, его и спрашиваем первым")
+    await F.pool_domains_entered(Upd("pornhub.com\nxvideos.com"), ctx)
 
     pools = await db.list_filter_pools()
     pool = next((p for p in pools if p["title"] == "Проверка взрослое"), None)
