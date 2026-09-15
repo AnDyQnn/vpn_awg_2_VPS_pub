@@ -172,6 +172,24 @@ async def apply_access_rules(reason: str = ""):
     return True, msg
 
 
+def grant_is_dead(grant) -> bool:
+    """Правило, которое не совпадёт ни с одним пакетом.
+
+    Такое появляется само: у выходного узла маршрут по умолчанию `0.0.0.0/0`,
+    и когда-то отсюда брался «адрес пира». Сбор адресов с тех пор чинён, а
+    записи в базе остались.
+
+    Считаем мёртвым всё, что ссылается на адрес вне туннеля: роли — про своих,
+    и внешнему адресу здесь взяться неоткуда.
+    """
+    if grant.get("target_uuid") or grant.get("name"):
+        return False
+    cidr = str(grant.get("cidr") or "")
+    if not cidr:
+        return True
+    return not cidr.startswith(TUNNEL_PREFIX)
+
+
 def grant_text(grant, names=None) -> str:
     """Человеческая запись правила: «дом.vpn», «10.13.13.7 · tcp 443».
 
@@ -201,5 +219,11 @@ def grant_text(grant, names=None) -> str:
     proto = (grant.get("proto") or "any").lower()
     port = grant.get("port")
     if proto in ("tcp", "udp"):
-        return f"{target} · {proto}{' ' + str(port) if port else ''}"
-    return str(target)
+        line = f"{target} · {proto}{' ' + str(port) if port else ''}"
+    else:
+        line = str(target)
+    # Мёртвое правило помечаем прямо в подписи: иначе владелец читает список
+    # доступов и верит строке, которая ничего не открывает.
+    if grant_is_dead(grant):
+        line += " ⚠️ не работает"
+    return line
