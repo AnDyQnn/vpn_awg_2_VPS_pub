@@ -78,7 +78,19 @@ async def main():
     for f in left:
         f.unlink()
     told.clear()
-    await hs.ensure_api_token(App())
+
+    async def fake_daemon():
+        """Демон на хосте забирает файл, когда применил. Изображаем его именно
+        во время ожидания: удалить файл заранее нельзя — бот кладёт новый."""
+        for _ in range(50):
+            files = list(utils.FLAGS_DIR.glob("set_env*"))
+            if files:
+                for f in files:
+                    f.unlink()
+                return
+            await asyncio.sleep(0.1)
+
+    await asyncio.gather(hs.ensure_api_token(App()), fake_daemon())
     check("теперь отметка стоит",
           bool(await db.get_setting("api_token_issued_at")))
     check("владельцу сказали, что выдан",
