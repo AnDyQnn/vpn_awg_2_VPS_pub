@@ -269,7 +269,6 @@ async def service_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
          # Не «Поддержка»: ниже есть «🆘 Поддержка» про обращения, и две кнопки
          # с одним словом читаются как одна и та же.
          InlineKeyboardButton("💳 Донаты", callback_data="don_menu")],
-        [InlineKeyboardButton("🔑 Ключ панелей", callback_data="svc_token")],
         [InlineKeyboardButton(
             "📋 Ждут решения" + (f" · {len(decisions)}" if decisions else ""),
             callback_data="kd_list"),
@@ -790,6 +789,21 @@ async def _de_env_status():
         return None
 
 
+async def _push_env_to_de(key, value):
+    """Кладёт переменную на узел выхода. Запрос идёт по туннелю: снаружи это
+    шифрованный трафик WireGuard."""
+    from utils import DE_AGENT_URL, api_session
+    try:
+        async with api_session() as session:
+            async with session.post(f"{DE_AGENT_URL}/host/set_env",
+                                    json={"key": key, "value": value},
+                                    timeout=10) as r:
+                return r.status == 200
+    except Exception as e:
+        print(f"Переменная {key} на клиент-сервер: {e}")
+        return False
+
+
 async def _push_token_to_de(token):
     from utils import DE_AGENT_URL, api_session
     try:
@@ -831,7 +845,7 @@ async def ensure_api_token(app):
             await app.bot.send_message(
                 chat_id=ADMIN_ID, text=text,
                 reply_markup=InlineKeyboardMarkup(
-                    [[InlineKeyboardButton("🔑 Ключ панелей",
+                    [[InlineKeyboardButton("🔑 Панель токенов",
                                            callback_data="svc_token")]]))
         except Exception:
             pass
@@ -911,19 +925,38 @@ async def rotate_api_token(app, reason="по расписанию"):
     from datetime import datetime
     from utils import request_env_change, env_change_applied
 
+    from utils import API_TOKEN
+
     token = secrets.token_urlsafe(24)
+    previous = (API_TOKEN or "").strip()
+
+    # Прошлый ключ остаётся действующим: пока новый доезжает до второй ноды, на
+    # ней ещё старый, и без этого ноды на секунды расходятся во мнении, какой
+    # ключ правильный. Он же — запасной выход, если новый где-то не прижился.
+    #
+    # Передача идёт по туннелю: снаружи это шифрованный трафик WireGuard, а не
+    # открытый канал.
+    if previous:
+        request_env_change("API_TOKEN_PREV", previous)
+        await _push_env_to_de("API_TOKEN_PREV", previous)
+
     flag = request_env_change("API_TOKEN", token)
     if not await env_change_applied(flag, timeout=60):
-        await db.log_event("Security", f"Смена токена не применилась ({reason})")
-        return False, ("служба обновлений на сервере не ответила — токен "
+        await db.log_event("Security", f"Смена ключа не применилась ({reason})")
+        return False, ("служба обновлений на сервере не ответила — ключ "
                        "остался прежним")
 
     # Мастер сейчас пересоздаёт контейнеры и этот процесс закончится. Германию
     # догонит очередная сверка при следующем запуске: она увидит, что у той
     # токен не совпадает, и дошлёт.
     await db.set_setting("api_token_rotated_at", datetime.utcnow().isoformat())
-    await db.log_event("Security", f"Токен панелей сменён ({reason})")
-    return True, "токен сменён, клиент-сервер получит его следующей сверкой"
+    # Прошлый ключ храним у себя: по нему делается откат, если новый где-то не
+    # прижился. Действующим он остаётся на обеих нодах, так что откат — это
+    # возврат к тому, что и так принимается.
+    if previous:
+        await db.set_setting("api_token_prev", previous)
+    await db.log_event("Security", f"Ключ панелей сменён ({reason})")
+    return True, "ключ сменён, клиент-сервер получит его ближайшей сверкой"
 
 
 async def rotate_loop(app):
@@ -958,7 +991,7 @@ async def rotate_loop(app):
                                     text=("\U0001f501 Смена токена панелей: " + msg),
                                     reply_markup=InlineKeyboardMarkup(
                                         [[InlineKeyboardButton(
-                                            "🔑 Ключ панелей",
+                                            "🔑 Панель токенов",
                                             callback_data="svc_token")]]))
                             except Exception:
                                 pass
@@ -975,7 +1008,7 @@ async def token_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     days = await rotation_days()
     last = await db.get_setting("api_token_rotated_at")
 
-    lines = ["🔑 **Ключ панелей узлов**", ""]
+    lines = ["🔑 **Панель токенов**", ""]
     lines.append("Состояние: " + ("**задан**" if API_TOKEN else "**пуст**"))
     lines.append("Смена по расписанию: " + (f"**раз в {days} дн.**" if on
                                             else "выключена"))
@@ -996,8 +1029,12 @@ async def token_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kb = [[InlineKeyboardButton("🔕 Не менять по расписанию" if on
                                 else f"🔄 Менять раз в {days} дн.",
                                 callback_data="svc_tok_toggle")],
-          [InlineKeyboardButton("🔁 Сменить сейчас", callback_data="svc_tok_now")],
-          [InlineKeyboardButton("🔙 Администрирование", callback_data="svc_menu")]]
+          [InlineKeyboardButton("🔁 Сменить сейчас", callback_data="svc_tok_now")]]
+    if await db.get_setting("api_token_prev"):
+        kb.append([InlineKeyboardButton("↩️ Вернуть прошлый ключ",
+                                        callback_data="svc_tok_back")])
+    kb += [
+          [InlineKeyboardButton("🔙 Мастер-сервер", callback_data="menu_ru_server")]]
     await show_screen(query, context, "\n".join(lines),
                       reply_markup=InlineKeyboardMarkup(kb),
                       parse_mode=ParseMode.MARKDOWN)
@@ -1011,6 +1048,35 @@ async def token_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await token_screen(update, context)
 
 
+async def token_rollback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Возврат к прошлому ключу.
+
+    Он и так признаётся обеими нодами, поэтому откат ничего не ломает: это
+    возврат к тому, что действует, а не введение третьего ключа.
+    """
+    from utils import request_env_change, env_change_applied
+    query = update.callback_query
+    previous = (await db.get_setting("api_token_prev") or "").strip()
+    if not previous:
+        await query.answer("Прошлого ключа нет", show_alert=True)
+        return await token_screen(update, context)
+
+    await query.answer("Откатываю…")
+    await _push_env_to_de("API_TOKEN", previous)
+    flag = request_env_change("API_TOKEN", previous)
+    ok = await env_change_applied(flag, timeout=60)
+    if ok:
+        await db.log_event("Security", "Откат к прошлому ключу панелей")
+    await show_screen(
+        query, context,
+        ("✅ Откат выполнен: вернулся прошлый ключ."
+         if ok else
+         "⚠️ Откат не применился: служба обновлений на сервере не ответила."),
+        reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton("🔑 К панели токенов", callback_data="svc_token")]]),
+        parse_mode=ParseMode.MARKDOWN)
+
+
 async def token_now(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Смена по кнопке. Спрашивать подтверждение незачем: кнопка и есть
     подтверждение, а откатывать тут нечего — новый токен ничем не хуже."""
@@ -1020,7 +1086,7 @@ async def token_now(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await show_screen(query, context,
                       ("✅ " if ok else "⚠️ ") + "Смена токена: " + msg,
                       reply_markup=InlineKeyboardMarkup(
-                          [[InlineKeyboardButton("🔑 К ключу",
+                          [[InlineKeyboardButton("🔑 К панели токенов",
                                                  callback_data="svc_token")]]),
                       parse_mode=ParseMode.MARKDOWN)
 

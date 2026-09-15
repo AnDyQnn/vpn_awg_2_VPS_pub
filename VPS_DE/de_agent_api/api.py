@@ -15,6 +15,10 @@ from pydantic import BaseModel
 # Токен необязателен: без него агент работает как раньше, чтобы обновление не рвало связь
 # мастера с агентом, если .env на одной из нод обновили позже.
 API_TOKEN = os.getenv("API_TOKEN", "").strip()
+# Предыдущий ключ. Смена идёт не мгновенно: пока новый доезжает до второй ноды,
+# на ней ещё старый. Признавая оба, мы убираем окно, в котором ноды спорят о
+# том, какой ключ правильный, — и заодно получаем запасной выход.
+API_TOKEN_PREV = os.getenv("API_TOKEN_PREV", "").strip()
 
 
 MASTER_IP = "10.13.13.1"
@@ -30,7 +34,11 @@ def verify_token(request: Request):
         return
     if not API_TOKEN:
         return
-    if request.headers.get("X-Api-Key", "") == API_TOKEN:
+    sent = request.headers.get("X-Api-Key", "")
+    if sent == API_TOKEN:
+        return
+    # Прошлый ключ действует, пока новый не разошёлся по обеим нодам.
+    if API_TOKEN_PREV and sent == API_TOKEN_PREV:
         return
     # Запросы с адреса мастера принимаем и без токена.
     #
@@ -253,7 +261,7 @@ def set_env(data: EnvChange):
     Разрешены только известные ключи: иначе через эту ручку можно было бы дописать
     в окружение что угодно.
     """
-    allowed = {"API_TOKEN", "BACKUP_PASSWORD"}
+    allowed = {"API_TOKEN", "API_TOKEN_PREV", "BACKUP_PASSWORD"}
     if data.key not in allowed:
         raise HTTPException(status_code=400, detail="Недопустимая переменная")
     try:
@@ -278,7 +286,7 @@ def env_status():
     подделывают доступ.
     """
     return {key: bool(os.getenv(key, "").strip())
-            for key in ("API_TOKEN", "BACKUP_PASSWORD")}
+            for key in ("API_TOKEN", "API_TOKEN_PREV", "BACKUP_PASSWORD")}
 
 
 @app.post("/api/host/reboot")
