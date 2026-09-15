@@ -175,8 +175,51 @@ docker compose up -d --remove-orphans
 # 6. HEALTH-CHECK новой версии. Если контейнер крашится/рестартит — ОТКАТ на предыдущую
 #    версию (даунгрейд): возвращаем код, пересобираем, поднимаем. VPN/данные защищены.
 echo "[Deploy] Шаг 5: Health-check новой версии (даю контейнерам подняться)..."
-sleep 25
+sleep 15
 problem=""
+
+# Health-gate МАРШРУТИЗАЦИИ (по мотивам gateway-selfcheck из OpenWRT): контейнеры могут
+# быть "running", но ядро VPN сломано (нет wg0 / пустая table 200 / нет fwmark / API молчит).
+# Тогда прод "жив", но трафик не ходит. Проверяем на RU-ноде; провал → тот же откат.
+#
+# Проверяем НЕ одним выстрелом. Раньше здесь была единственная попытка через 25
+# секунд после пересоздания, и этого хватало ровно до тех пор, пока узел
+# стартовал быстро. На одном ядре, сразу после сборки, панель узла поднимается
+# дольше: она читает списки фильтров на сотни тысяч имён. Деплой, который через
+# десять секунд был бы здоров, откатывался как больной — и это худший вид
+# поломки, потому что выглядит он как защита.
+#
+# Даём полторы минуты и опрашиваем каждые три секунды. Первый успех выигрывает.
+# Настоящая поломка от этого не спрячется: она не пройдёт ни одной попытки, а
+# рухнувший контейнер поймает проверка состояний ниже.
+HEALTH_WAIT=90
+HEALTH_STEP=3
+
+routing_health() {   # печатает причину или молчит, если всё хорошо
+    docker exec vpn_wireguard ip link show wg0 >/dev/null 2>&1 || { echo 'нет wg0'; return; }
+    docker exec vpn_wireguard ip route show table 200 2>/dev/null | grep -q '^default' || { echo 'table200 без default'; return; }
+    docker exec vpn_wireguard sh -c 'ip rule show 2>/dev/null | grep -qi "fwmark 0xc8"' || { echo 'нет fwmark-правила'; return; }
+    docker exec vpn_wireguard sh -c 'curl -sf --max-time 5 http://127.0.0.1:8000/api/health >/dev/null 2>&1' || { echo 'wg-api не отвечает'; return; }
+}
+
+if docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^vpn_wireguard$'; then
+    WAITED=0
+    while :; do
+        rc_msg="$(routing_health)"
+        [ -z "$rc_msg" ] && break
+        [ "$WAITED" -ge "$HEALTH_WAIT" ] && break
+        sleep "$HEALTH_STEP"
+        WAITED=$((WAITED + HEALTH_STEP))
+    done
+    if [ -n "$rc_msg" ]; then
+        problem="$problem routing($rc_msg, ждали ${WAITED}с)"
+    elif [ "$WAITED" -gt 0 ]; then
+        echo "[Deploy] Ядро маршрутизации поднялось через ${WAITED}с."
+    fi
+fi
+
+# Состояния контейнеров смотрим ПОСЛЕ ожидания: контейнер, падающий по кругу, к
+# этому моменту успеет показать себя, а медленный — успеет подняться.
 for id in $(docker compose ps -q 2>/dev/null); do
     name="$(docker inspect -f '{{.Name}}' "$id" 2>/dev/null | sed 's#^/##')"
     st="$(docker inspect -f '{{.State.Status}}' "$id" 2>/dev/null)"
@@ -184,19 +227,6 @@ for id in $(docker compose ps -q 2>/dev/null); do
         restarting|exited|dead) problem="$problem $name($st)";;
     esac
 done
-
-# Health-gate МАРШРУТИЗАЦИИ (по мотивам gateway-selfcheck из OpenWRT): контейнеры могут
-# быть "running", но ядро VPN сломано (нет wg0 / пустая table 200 / нет fwmark / API молчит).
-# Тогда прод "жив", но трафик не ходит. Проверяем на RU-ноде; провал → тот же откат.
-if docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^vpn_wireguard$'; then
-    rc_msg="$(
-        docker exec vpn_wireguard ip link show wg0 >/dev/null 2>&1 || { echo 'нет wg0'; exit 0; }
-        docker exec vpn_wireguard ip route show table 200 2>/dev/null | grep -q '^default' || { echo 'table200 без default'; exit 0; }
-        docker exec vpn_wireguard sh -c 'ip rule show 2>/dev/null | grep -qi "fwmark 0xc8"' || { echo 'нет fwmark-правила'; exit 0; }
-        docker exec vpn_wireguard sh -c 'curl -sf --max-time 5 http://127.0.0.1:8000/api/health >/dev/null 2>&1' || { echo 'wg-api не отвечает'; exit 0; }
-    )"
-    [ -n "$rc_msg" ] && problem="$problem routing($rc_msg)"
-fi
 
 if [ -n "$problem" ] && [ -n "$PREV_HASH" ]; then
     echo "[Deploy] ⛔ Новая версия нездорова:$problem"

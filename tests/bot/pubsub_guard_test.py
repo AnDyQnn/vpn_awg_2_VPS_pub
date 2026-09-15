@@ -194,8 +194,48 @@ async def main():
     print("=== внутренний вход от этого не зависит ===")
     check("порт внутри туннеля свой", sub.SUB_PORT != sub.PUBLIC_PORT,
           "внутри %d, снаружи %d" % (sub.SUB_PORT, sub.PUBLIC_PORT))
-    check("наружу публикуется только внешний", sub.PUBLIC_PORT == 8443,
-          "8080 открытым текстом наружу не публикуется намеренно")
+
+    print()
+    print("=== внешний порт свободен в сетевой области узла ===")
+    # Бот делит сеть с контейнером узла: у них ОДИН набор портов на двоих.
+    # Занять чужой значит подраться за него, и проверить это надо здесь, а не
+    # на живом узле — там за это платят откатом деплоя и минутой простоя.
+    # Именно так и вышло: подписка полезла на 8443, где стоит HTTPS-страница
+    # отказа, на которую заворачивается 443.
+    try:
+        import node_dnsfilter
+        page_https = getattr(node_dnsfilter, "HTTPS_PAGE_PORT", None)
+        page_http = getattr(node_dnsfilter, "PAGE_PORT", 80)
+    except Exception as e:
+        page_https, page_http = None, None
+        check("исходник узла доступен", False, str(e))
+
+    if page_https is not None:
+        check("не дерётся со страницей отказа по https",
+              sub.PUBLIC_PORT != page_https,
+              "страница на %s" % page_https)
+        check("и по http тоже", sub.PUBLIC_PORT != page_http,
+              "страница на %s" % page_http)
+
+    # Остальные занятые порты этой сетевой области. Список короткий и меняется
+    # редко — держим его здесь явно, чтобы следующий, кто захочет открыть порт,
+    # увидел занятые в одном месте.
+    TAKEN = {
+        53: "DNS узла",
+        80: "страница отказа, http",
+        443: "вход Xray",
+        2053: "запасной вход Xray",
+        2083: "запасной вход Xray",
+        8000: "панель узла",
+        8080: "подписка внутри туннеля",
+        8443: "страница отказа, https",
+        51820: "AmneziaWG",
+        51821: "AmneziaWG, второй интерфейс",
+    }
+    check("внешний порт ничем не занят", sub.PUBLIC_PORT not in TAKEN,
+          "%d — %s" % (sub.PUBLIC_PORT, TAKEN.get(sub.PUBLIC_PORT, "свободен")))
+    check("и внутренний остался прежним", sub.SUB_PORT == 8080,
+          "его адрес уже у людей в приложениях")
 
 
 asyncio.get_event_loop().run_until_complete(main())
