@@ -198,6 +198,7 @@ async def send_client_menu(context: ContextTypes.DEFAULT_TYPE, user_id: int, fir
          InlineKeyboardButton("📊 Статистика", callback_data="client_stats")],
         [InlineKeyboardButton("⚡️ Проверить связь", callback_data="client_select_check"),
          InlineKeyboardButton("🌐 Рос. сервисы", callback_data="client_bypass_info")],
+        [InlineKeyboardButton("📱 Приложения", callback_data="client_apps")],
         [InlineKeyboardButton("🆘 Сообщить о проблеме", callback_data="support_start")],
     ]
     # Кнопка стоит всегда. Раньше она появлялась только при непрочитанном —
@@ -389,13 +390,15 @@ async def client_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
          InlineKeyboardButton("📊 Статистика", callback_data="client_stats")],
         [InlineKeyboardButton("⚡️ Проверить связь", callback_data="client_select_check"),
          InlineKeyboardButton("🌐 Рос. сервисы", callback_data="client_bypass_info")],
+        [InlineKeyboardButton("📱 Приложения", callback_data="client_apps")],
         [InlineKeyboardButton("🆘 Сообщить о проблеме", callback_data="support_start")],
     ]
-    # Кнопку показываем только при непрочитанном — при переделке меню она
-    # потерялась, и люди не узнали даже про то, что им предназначалось.
-    if await has_unseen_changes(user_id):
-        keyboard.insert(2, [InlineKeyboardButton("✨ Что нового",
-                                                 callback_data="client_whats_new")])
+    # Место кнопки не зависит от того, есть ли непрочитанное: человек видит это
+    # меню каждый день и запоминает, где что лежит. Кнопка, которая то есть, то
+    # нет, читается как поломка. Непрочитанное показываем значком.
+    mark = "✨" if await has_unseen_changes(user_id) else "📄"
+    keyboard.insert(2, [InlineKeyboardButton(f"{mark} Что нового",
+                                             callback_data="client_whats_new")])
     if check_admin(user_id):
         keyboard.append([InlineKeyboardButton("🚪 Выйти из режима клиента", callback_data="back_to_main")])
 
@@ -682,11 +685,22 @@ async def send_xray_profile(context, chat_id, uuid_val):
     # не приклеивается к ней.
     await context.bot.send_message(chat_id=chat_id, text=link)
 
+    # Подсказка — она же первое знакомство. Человек, которому только что
+    # выдали доступ, ниоткуда не знает, что нужно приложение и где его брать:
+    # список есть, но лежит за кнопкой в карточке ключа, а вопрос возникает
+    # прямо сейчас.
+    apps = xray.apps_markdown(await xray.apps_list())
     await context.bot.send_message(
         chat_id=chat_id,
-        text=("👆 Скопируйте ссылку выше и вставьте в приложение — "
-              "оно само добавит подключение.\n\n"
-              "Или отсканируйте QR, если приложение на телефоне."),
+        text=("**Что делать дальше**\n\n"
+              "**1.** Поставьте приложение **Happ** — выберите свою систему:\n"
+              f"{apps}\n\n"
+              "**2.** Скопируйте ссылку выше и вставьте в приложение — оно само "
+              "добавит подключение. На телефоне можно вместо этого "
+              "отсканировать QR.\n\n"
+              "**3.** Включите VPN в приложении."),
+        parse_mode=ParseMode.MARKDOWN,
+        disable_web_page_preview=True,
         reply_markup=exit_kb(to_client=True))
 
     try:
@@ -1109,6 +1123,49 @@ async def client_how_handler(update: Update, context: ContextTypes.DEFAULT_TYPE,
                                        back=f"client_key_manage_{uuid_val}"),
         parse_mode=ParseMode.MARKDOWN,
         disable_web_page_preview=True)
+
+
+async def client_apps_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Где взять приложение — экран из личного кабинета.
+
+    Перечень был только в карточке ключа, за кнопкой «Как подключить». Туда за
+    программой не идут: человек ищет, что поставить на новый телефон, а не
+    разбирается с ключом. Показываем то, что нужно именно ему: под ссылку
+    `vless://` — Happ, под конфиг AmneziaWG — AmneziaWG.
+    """
+    import xray
+    query = update.callback_query
+    keys = await db.get_users_by_tg_id(update.effective_user.id)
+
+    on_xray = on_awg = False
+    for k in keys:
+        if await db.get_xray_user(k["uuid"]):
+            on_xray = True
+        else:
+            on_awg = True
+    if not keys:                      # ключей ещё нет — показываем оба
+        on_xray = on_awg = True
+
+    lines = ["📱 **Приложения**", ""]
+    if on_xray:
+        lines.append("Под ссылку `vless://` — **Happ**:")
+        lines.append(xray.apps_markdown(await xray.apps_list()))
+        lines.append("")
+        lines.append("Поставьте, откройте карточку ключа и скопируйте оттуда "
+                     "ссылку — приложение добавит подключение само.")
+    if on_awg:
+        if on_xray:
+            lines.append("")
+        lines.append("Под конфиг AmneziaWG — приложение **AmneziaWG**: "
+                     "[amnezia.org](https://amnezia.org)")
+        lines.append("Конфиг берётся из карточки ключа — файлом или по QR.")
+
+    keyboard = [[InlineKeyboardButton("🔑 Мои ключи", callback_data="client_my_keys")],
+                [InlineKeyboardButton("🏠 Личный кабинет", callback_data="client_menu")]]
+    await query.edit_message_text("\n".join(lines),
+                                  reply_markup=InlineKeyboardMarkup(keyboard),
+                                  parse_mode=ParseMode.MARKDOWN,
+                                  disable_web_page_preview=True)
 
 
 async def client_platform_handler(update: Update, context: ContextTypes.DEFAULT_TYPE,
