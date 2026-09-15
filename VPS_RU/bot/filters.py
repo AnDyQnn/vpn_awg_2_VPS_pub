@@ -206,13 +206,17 @@ async def filters_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     common = await db.get_common_filters()
     custom = await db.get_custom_blocks()
 
+    # Названия берём вместе со своими группами: иначе группа показывалась бы
+    # своим внутренним ключом вроде `pool_1631`.
+    TITLES_ALL = await titles()
+
     lines = ["🧹 **Фильтрация сайтов**", "",
              "_🚫 Запреты · 🟢 Исключения_", ""]
     if common or custom:
         parts = []
         if common:
             parts.append("категорий для всех: "
-                         + ", ".join(TITLES.get(c, c) for c in common))
+                         + ", ".join(TITLES_ALL.get(c, c) for c in common))
         if custom:
             parts.append(f"свой список: {len(custom)}")
         lines.append("🌍 **Общие правила** — " + "; ".join(parts))
@@ -229,12 +233,12 @@ async def filters_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for uuid_val, cats in by_uuid.items():
             user = await db.get_user_by_uuid(uuid_val)
             name = escape_md((user or {}).get("name") or uuid_val[:8])
-            titles = ", ".join(TITLES.get(c, c) for c in cats)
+            titles = ", ".join(TITLES_ALL.get(c, c) for c in cats)
             lines.append(f"• **{name}** — {titles}")
 
     if sizes:
         lines += ["", "_Загружено доменов: "
-                  + ", ".join(f"{TITLES.get(k, k)} — {v}" for k, v in sizes.items()) + "._"]
+                  + ", ".join(f"{TITLES_ALL.get(k, k)} — {v}" for k, v in sizes.items()) + "._"]
 
     lines += ["", "⚠️ _В браузере с DNS-over-HTTPS фильтр обходится: там запрос "
                   "уходит внутри HTTPS и на уровне DNS его не видно._"]
@@ -717,7 +721,8 @@ async def common_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
              "Действуют на всех, кто ходит через узел, включая тех, кому "
              "личные фильтры не включали.", ""]
     if common:
-        lines.append("Категории: " + ", ".join(TITLES.get(c, c) for c in common))
+        all_titles = await titles()
+        lines.append("Категории: " + ", ".join(all_titles.get(c, c) for c in common))
     else:
         lines.append("Категории не выбраны.")
     if custom:
@@ -728,9 +733,12 @@ async def common_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines.append("Свой список пуст.")
 
     kb = []
-    for key, title in CATEGORIES:
-        mark = "✅" if key in common else "⬜️"
-        kb.append([InlineKeyboardButton(f"{mark} {title}",
+    # Свои группы — здесь же: группа это категория, и запрещать её всем должно
+    # быть можно так же, как встроенную. Иначе владелец собирает группу и не
+    # находит её ровно там, где она нужнее всего.
+    for key, title in await all_categories():
+        mark = "🚫" if key in common else ""
+        kb.append([InlineKeyboardButton(f"{mark} {title}".strip(),
                                         callback_data=f"flt_ctog_{key}")])
     kb.append([InlineKeyboardButton("➕ Закрыть сайт", callback_data="flt_cadd")])
     if custom:
