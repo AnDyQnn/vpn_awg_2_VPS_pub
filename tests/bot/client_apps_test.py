@@ -48,6 +48,29 @@ class FakeUpdate:
     effective_chat = type("C", (), {"id": 1})()
 
 
+TG = 987654321
+
+
+class MenuUpdate:
+    """Меню смотрит на того, кто нажал: по нему находятся ключи человека."""
+    callback_query = FakeQuery()
+    effective_chat = type("C", (), {"id": TG})()
+    effective_user = type("U", (), {"id": TG, "first_name": "Приложенцев"})()
+
+
+class MenuBot:
+    async def send_message(self, chat_id=None, text=None, reply_markup=None, **kw):
+        shown["text"] = text
+        shown["buttons"] = [b.callback_data
+                            for row in (reply_markup.inline_keyboard if reply_markup else [])
+                            for b in row]
+
+
+class MenuContext:
+    bot = MenuBot()
+    user_data = {}
+
+
 async def main():
     await db.connect()
     import handlers_client as hc
@@ -79,6 +102,55 @@ async def main():
           "%d против %d знаков" % (len(one), len(text)))
     check("можно вернуться к списку систем",
           any("client_how" in b for b in shown.get("buttons") or []))
+
+
+    print()
+    print("=== путь из личного кабинета ===")
+    await db.execute("DELETE FROM users WHERE uuid LIKE 'ap-%'")
+    await db.execute("DELETE FROM user_tg_links WHERE tg_id=$1", TG)
+    await db.execute(
+        "INSERT INTO users (name, uuid, is_active) VALUES ('Приложенцев','ap-1',TRUE)")
+    await db.execute(
+        "INSERT INTO user_tg_links (uuid, tg_id) VALUES ('ap-1',$1)", TG)
+
+    # Одно меню перерисовывает текущее сообщение, другое шлёт новое, и зовут их
+    # по-разному: первое — по нажатию, второе — когда бот пишет сам.
+    views = ((lambda: hc.client_menu(MenuUpdate(), MenuContext()), "перерисованное меню"),
+             (lambda: hc.send_client_menu(MenuContext(), TG, "Приложенцев"), "отправленное меню"))
+    for view, label in views:
+        shown.clear()
+        await view()
+        buttons = shown.get("buttons") or []
+        check("%s: кнопка приложений" % label, "client_apps" in buttons,
+              ", ".join(buttons))
+        check("%s: «что нового» на месте" % label,
+              "client_whats_new" in buttons,
+              "кнопка, которая то есть, то нет, читается как поломка")
+
+    print()
+    print("=== экран приложений показывает нужную программу ===")
+    shown.clear()
+    await hc.client_apps_handler(MenuUpdate(), MenuContext())
+    text = shown.get("text") or ""
+    check("ключ по AmneziaWG — своё приложение", "AmneziaWG" in text)
+    check("чужого приложения нет", "Happ" not in text,
+          "у человека нет ссылки vless://")
+
+    await db.execute(
+        "INSERT INTO xray_users (user_uuid, xray_uuid, sub_token) "
+        "VALUES ('ap-1','x-ap','tok-ap')")
+    shown.clear()
+    await hc.client_apps_handler(MenuUpdate(), MenuContext())
+    text = shown.get("text") or ""
+    check("ключ по Xray — Happ", "Happ" in text)
+    for system in ("iPhone", "Android", "Windows", "macOS", "Linux"):
+        check("есть %s" % system, system in text)
+    check("есть выход в кабинет",
+          "client_menu" in (shown.get("buttons") or []))
+
+    await db.execute("DELETE FROM xray_users WHERE user_uuid LIKE 'ap-%'")
+    await db.execute("DELETE FROM user_tg_links WHERE tg_id=$1", TG)
+    await db.execute("DELETE FROM users WHERE uuid LIKE 'ap-%'")
 
 
 asyncio.get_event_loop().run_until_complete(main())
