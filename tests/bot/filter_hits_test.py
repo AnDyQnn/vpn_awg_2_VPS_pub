@@ -137,6 +137,55 @@ async def main():
     check("открытая заявка перестала быть новой",
           fresh == 0 or fresh < before, "было %d, стало %d" % (before, fresh))
 
+    print()
+    print("=== поиск по номеру со страницы ===")
+    # Номер затем и показан человеку, чтобы он прислал его. Искать по нему
+    # владелец должен уметь, а не листать список глазами.
+    await db.execute("UPDATE filter_hits SET ref='9395-570A' WHERE id=$1", hit_id)
+    found = await db.find_filter_hit("9395-570A")
+    check("находится как есть", found and found["id"] == hit_id)
+    check("регистр не важен",
+          (await db.find_filter_hit("9395-570a") or {}).get("id") == hit_id,
+          "человек переписывает номер как получится")
+    check("дефис не важен",
+          (await db.find_filter_hit("9395570A") or {}).get("id") == hit_id)
+    check("чужого номера нет", await db.find_filter_hit("0000-0000") is None)
+    check("пустой запрос ничего не находит", await db.find_filter_hit("") is None,
+          "иначе вернулся бы случайный инцидент")
+
+    said = []
+
+    class B2:
+        async def send_message(self, chat_id=None, text=None, **kw):
+            said.append(text or "")
+
+    class C2:
+        bot = B2()
+        user_data = {}
+
+    class Msg:
+        def __init__(self, text):
+            self.text = text
+            self.chat_id = 1
+
+    class U2:
+        def __init__(self, text):
+            self.message = Msg(text)
+        effective_user = type("U", (), {"id": 1})()
+
+    ctx2 = C2()
+    await hh.hit_find_entered(U2("9395-570a"), ctx2)
+    check("экран открылся по номеру", any("Инцидент" in s for s in said),
+          (said[-1][:40] if said else "—"))
+    check("в нём тот самый домен",
+          any("hit-adult.example" in s for s in said))
+
+    said.clear()
+    await hh.hit_find_entered(U2("0000-0000"), ctx2)
+    check("по чужому номеру честный ответ",
+          any("Ничего не нашлось" in s for s in said),
+          (said[-1][:40] if said else "—"))
+
     await db.execute("DELETE FROM filter_hits WHERE domain LIKE 'hit-%'")
     await db.execute("DELETE FROM user_ips WHERE uuid LIKE 'hh-%'")
     await db.execute("DELETE FROM users WHERE uuid LIKE 'hh-%'")

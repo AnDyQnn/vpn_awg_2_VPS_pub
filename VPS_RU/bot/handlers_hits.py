@@ -154,6 +154,9 @@ async def hits_screen(update: Update, context: ContextTypes.DEFAULT_TYPE, page=0
     if fresh:
         kb.append([InlineKeyboardButton("✅ Отметить все разобранными",
                                         callback_data="hit_seen_all")])
+    # Поиск по номеру — то, ради чего номер и показан человеку. Ставим рядом со
+    # списком: сюда владелец приходит с номером в руках.
+    kb.append([InlineKeyboardButton("🔎 Найти по номеру", callback_data="hit_find")])
     kb.append([InlineKeyboardButton("🔙 Администрирование", callback_data="svc_menu")])
 
     await show_screen(query, context, "\n".join(lines),
@@ -199,6 +202,73 @@ async def hit_open(update: Update, context: ContextTypes.DEFAULT_TYPE, hit_id):
                       reply_markup=InlineKeyboardMarkup(kb),
                       parse_mode=ParseMode.MARKDOWN)
 
+
+
+async def hit_find_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Просит номер. Он приходит от человека — с экрана, из переписки, вслух."""
+    query = update.callback_query
+    context.user_data["state"] = "awaiting_hit_ref"
+    await show_screen(
+        query, context,
+        "🔎 **Поиск по номеру**\n\n"
+        "Пришлите номер инцидента — тот, что человек видел на странице:\n"
+        "`9395-570A`\n\n"
+        "_Регистр и дефис не важны: перепишут как получится._",
+        reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton("✖️ Отмена", callback_data="hit_list")]]),
+        parse_mode=ParseMode.MARKDOWN)
+
+
+async def hit_find_entered(update, context):
+    """Разбирает присланный номер и открывает инцидент."""
+    context.user_data["state"] = None
+    raw = (update.message.text or "").strip()
+    chat_id = update.message.chat_id
+
+    row = None
+    try:
+        row = await db.find_filter_hit(raw)
+    except Exception as e:
+        print(f"Поиск инцидента: {e}")
+
+    kb = InlineKeyboardMarkup(
+        [[InlineKeyboardButton("🚨 К инцидентам", callback_data="hit_list")]])
+    if not row:
+        await context.bot.send_message(
+            chat_id=chat_id, reply_markup=kb, parse_mode=ParseMode.MARKDOWN,
+            text=(f"Ничего не нашлось по `{escape_md(raw[:24])}`.\n\n"
+                  "Такое бывает, если номер переписали с ошибкой или запись уже "
+                  "вытеснена — журнал на узле хранит недавнее, а не всю "
+                  "историю."))
+        return True
+
+    lines = [
+        "🚨 **Инцидент** `%s`" % (row.get("ref") or "без номера"), "",
+        f"🕒 {_when(row['happened_at'])} (МСК)",
+        f"👤 {escape_md(row['name'] or 'ключ не определён')}",
+        f"🌐 Домен: `{escape_md(row['domain'])}`",
+        f"🚦 Причина: {escape_md(row['category'] or 'доступы')}",
+        "",
+        f"📍 В туннеле: `{row['tunnel_ip'] or '—'}`",
+        f"📡 Внешний адрес: `{row['public_ip'] or 'не записан'}`",
+    ]
+    buttons = []
+    if row.get("user_uuid"):
+        lines.append(f"🔑 Ключ: `{row['user_uuid']}`")
+        buttons.append([InlineKeyboardButton(
+            "🔑 Открыть ключ", callback_data=f"user_detail_{row['user_uuid']}")])
+        buttons.append([InlineKeyboardButton(
+            "🧹 Фильтры этого ключа", callback_data=f"flt_user_{row['user_uuid']}")])
+    buttons.append([InlineKeyboardButton("🚨 К инцидентам", callback_data="hit_list")])
+
+    try:
+        await db.mark_filter_hit_seen(row["id"])
+    except Exception:
+        pass
+    await context.bot.send_message(chat_id=chat_id, text="\n".join(lines),
+                                   reply_markup=InlineKeyboardMarkup(buttons),
+                                   parse_mode=ParseMode.MARKDOWN)
+    return True
 
 async def hits_seen_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await db.mark_all_filter_hits_seen()
