@@ -257,13 +257,28 @@ def set_env(data: EnvChange):
     if data.key not in allowed:
         raise HTTPException(status_code=400, detail="Недопустимая переменная")
     try:
-        flag = os.path.join(FLAGS_DIR, "set_env")
+        # Своё имя на каждую просьбу: файл был один на всех и перезаписывался,
+        # так что две просьбы подряд оставляли только последнюю.
+        import secrets
+        flag = os.path.join(FLAGS_DIR, "set_env." + secrets.token_hex(6))
         with open(flag, "w") as f:
             f.write(f"{data.key}={data.value}\n")
         os.chmod(flag, 0o600)
         return {"status": "success"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/host/env_status")
+def env_status():
+    """Какие переменные у узла заданы. Только да/нет, без значений.
+
+    Нужно мастеру, чтобы доводить состояние до одинакового самому: раньше он
+    отправлял токен и не знал, доехал ли тот. Значения не отдаём — по ним и
+    подделывают доступ.
+    """
+    return {key: bool(os.getenv(key, "").strip())
+            for key in ("API_TOKEN", "BACKUP_PASSWORD")}
 
 
 @app.post("/api/host/reboot")

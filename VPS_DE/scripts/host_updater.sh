@@ -59,26 +59,32 @@ while true; do
     #     не может. Поэтому кладёт сюда строки KEY=VALUE, а правим мы, на хосте.
     #     Так задаётся пароль архива бэкапа: он обязан лежать в .env, потому что в базе
     #     оказался бы внутри того самого архива, который защищает.
-    if [ -f "$FLAGS_DIR/set_env" ]; then
+    # Просьб может прийти несколько подряд, и раньше они ложились в один файл
+    # с перезаписью — доезжала только последняя.
+    ENV_REQUESTS=$(ls -1 "$FLAGS_DIR"/set_env "$FLAGS_DIR"/set_env.* 2>/dev/null)
+    if [ -n "$ENV_REQUESTS" ]; then
         echo "[Updater] Обновляю .env по запросу бота..."
         ENV_FILE="$NODE_DIR/.env"
         touch "$ENV_FILE"; chmod 600 "$ENV_FILE"
-        while IFS= read -r line; do
-            case "$line" in
-                ''|'#'*) continue ;;
-            esac
-            KEY="${line%%=*}"
-            if grep -q "^${KEY}=" "$ENV_FILE"; then
-                # заменяем существующую строку целиком, значение может быть любым
-                grep -v "^${KEY}=" "$ENV_FILE" > "$ENV_FILE.tmp"
-                echo "$line" >> "$ENV_FILE.tmp"
-                mv "$ENV_FILE.tmp" "$ENV_FILE"
-            else
-                echo "$line" >> "$ENV_FILE"
-            fi
-            echo "[Updater]   переменная ${KEY} записана"
-        done < "$FLAGS_DIR/set_env"
-        shred -u "$FLAGS_DIR/set_env" 2>/dev/null || rm -f "$FLAGS_DIR/set_env"
+        for REQ in $ENV_REQUESTS; do
+            [ -f "$REQ" ] || continue
+            while IFS= read -r line; do
+                case "$line" in
+                    ''|'#'*) continue ;;
+                esac
+                KEY="${line%%=*}"
+                if grep -q "^${KEY}=" "$ENV_FILE"; then
+                    # заменяем существующую строку целиком, значение любое
+                    grep -v "^${KEY}=" "$ENV_FILE" > "$ENV_FILE.tmp"
+                    echo "$line" >> "$ENV_FILE.tmp"
+                    mv "$ENV_FILE.tmp" "$ENV_FILE"
+                else
+                    echo "$line" >> "$ENV_FILE"
+                fi
+                echo "[Updater]   переменная ${KEY} записана"
+            done < "$REQ"
+            shred -u "$REQ" 2>/dev/null || rm -f "$REQ"
+        done
         chmod 600 "$ENV_FILE"
         # Переменная доезжает до контейнеров только при пересоздании.
         cd "$NODE_DIR" && docker compose up -d >/dev/null 2>&1

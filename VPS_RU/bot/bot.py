@@ -49,7 +49,7 @@ from handlers_client import (
 from handlers_service import (
     service_menu, toggle_mode, set_mode, load_screen, limits_screen,
     change_limit, set_peer_rule, load_chart, whats_new,
-    ensure_api_token, charts_screen, pick_peer_screen, graphs_menu,
+    ensure_api_token, watch_api_token, charts_screen, pick_peer_screen, graphs_menu,
     peer_limit_screen
 )
 from handlers_admin import (
@@ -1397,7 +1397,10 @@ async def post_init(application):
         # сервер должен подняться до того, как кто-то попытается обновиться.
         asyncio.create_task(start_subscriptions()),
         # токен панелей выдаётся сам, если его нет — вводить ничего не нужно
-        asyncio.create_task(ensure_api_token(application))
+        asyncio.create_task(ensure_api_token(application)),
+        # И дальше раз в час: клиент-сервер мог подняться позже мастера, и
+        # догонять его иначе было бы нечем.
+        asyncio.create_task(watch_api_token(application)),
     ]
     state_data["bg_tasks"].update(tasks)
 

@@ -743,56 +743,112 @@ async def whats_new(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # никого не интересует и нигде не вводится руками — бот генерирует его сам при первом
 # запуске, если в окружении пусто, и раскладывает на обе ноды. Никаких кнопок.
 
-async def ensure_api_token(app):
-    """Выдаёт токен автоматически, если его нет.
-
-    Момент выбран не случайно: бот стартует сразу после деплоя, когда контейнеры
-    и так только что пересоздавались. Значит короткий разрыв, неизбежный при записи
-    переменной, приходится ровно на то же окно, а не на середину рабочего дня.
-
-    Защита от повторов: если запись почему-то не доехала, вторая попытка будет не
-    раньше чем через час — иначе бот при каждом старте пересоздавал бы контейнеры.
-    """
-    import secrets
-    from datetime import datetime, timedelta
-    from utils import API_TOKEN, ADMIN_ID, request_env_change, DE_AGENT_URL, api_session
-
-    if API_TOKEN:
-        return
-
+async def _de_env_status():
+    """Что у узла выхода задано. None — не ответил."""
+    from utils import DE_AGENT_URL, api_session
     try:
-        last = await db.get_setting("api_token_issued_at")
-        if last and datetime.utcnow() - datetime.fromisoformat(last) < timedelta(hours=1):
-            return
+        async with api_session() as session:
+            async with session.get(f"{DE_AGENT_URL}/host/env_status", timeout=8) as r:
+                if r.status != 200:
+                    return None
+                return await r.json()
     except Exception:
-        pass
+        return None
 
-    token = secrets.token_urlsafe(24)
-    de_ok = False
+
+async def _push_token_to_de(token):
+    from utils import DE_AGENT_URL, api_session
     try:
         async with api_session() as session:
             async with session.post(f"{DE_AGENT_URL}/host/set_env",
                                     json={"key": "API_TOKEN", "value": token},
                                     timeout=10) as r:
-                de_ok = r.status == 200
+                return r.status == 200
     except Exception as e:
         print(f"Токен на клиент-сервер: {e}")
+        return False
 
-    request_env_change("API_TOKEN", token)
+
+async def ensure_api_token(app):
+    """Доводит токен панелей до одинакового состояния на обеих нодах.
+
+    Раньше это было разовым действием: сгенерировать, разослать, записать в базу
+    отметку «выдан». Результат не проверялся ни разу, поэтому любая потеря по
+    дороге — а терялось тихо — делала отметку ложью. Бот считал дело сделанным,
+    а панели оставались без токена.
+
+    Теперь это состояние, которое поддерживается:
+      • токена нет — выдаём и ДОЖИДАЕМСЯ, пока запись применится;
+      • токен есть, а у Германии нет — досылаем;
+      • совпали — молчим.
+
+    Момент выбран не случайно: бот стартует сразу после деплоя, когда контейнеры
+    и так только что пересоздавались. Значит короткий разрыв, неизбежный при
+    записи переменной, приходится ровно на то же окно, а не на середину дня.
+    """
+    import secrets
+    from utils import (API_TOKEN, ADMIN_ID, request_env_change,
+                       env_change_applied)
+
+    async def tell(text):
+        if not ADMIN_ID:
+            return
+        try:
+            await app.bot.send_message(chat_id=ADMIN_ID, text=text)
+        except Exception:
+            pass
+
+    # --- токен у мастера есть: сверяем с узлом выхода ---------------------
+    if API_TOKEN:
+        status = await _de_env_status()
+        if status is None:
+            # Германия молчит — не повод что-то менять. Она примет мастера и
+            # без токена: адрес в туннеле подделать нельзя.
+            return
+        if status.get("API_TOKEN"):
+            return
+        if await _push_token_to_de(API_TOKEN):
+            await db.log_event("Security", "Токен панелей досаждён на клиент-сервер")
+            await tell("🔑 Клиент-сервер получил токен панелей — обе панели "
+                       "закрыты вторым рубежом поверх файрвола.")
+        return
+
+    # --- токена нет вовсе: выдаём ----------------------------------------
+    token = secrets.token_urlsafe(24)
+    flag = request_env_change("API_TOKEN", token)
+    if not await env_change_applied(flag, timeout=60):
+        # Отметку НЕ ставим: иначе бот запомнит несделанное как сделанное.
+        await db.log_event("Security", "Токен панелей: запись не применилась")
+        await tell("⚠️ Токен панелей выдать не вышло: служба обновлений на "
+                   "сервере не ответила.\n\n"
+                   "Проверьте: systemctl status vpn-updater\n"
+                   "Панели пока защищены только файрволом. Бот попробует снова "
+                   "при следующем запуске.")
+        return
+
+    from datetime import datetime
     await db.set_setting("api_token_issued_at", datetime.utcnow().isoformat())
     await db.log_event("Security", "Токен панелей выдан автоматически")
     print("🔑 Токен панелей выдан автоматически")
+    # На Германию токен уедет следующим запуском: запись переменной пересоздаёт
+    # контейнеры, и этот процесс прямо сейчас закончится. Досылать отсюда
+    # бессмысленно — не успеем.
+    await tell("🔑 Токен панелей выдан автоматически — бот сейчас перезапустится "
+               "и досадит его на клиент-сервер.")
 
-    if ADMIN_ID:
+
+async def watch_api_token(app):
+    """Повторная сверка во время работы.
+
+    Узел выхода поднимается не всегда одновременно с мастером: он мог быть
+    выключен, перезагружаться, обновляться. Раз в час проверяем заново, чтобы
+    состояние сошлось само, а не после того, как кто-то заметит.
+    """
+    import asyncio
+    while True:
+        await asyncio.sleep(3600)
         try:
-            await app.bot.send_message(
-                chat_id=ADMIN_ID,
-                text=("🔑 Токен панелей выдан автоматически — панели узлов закрыты "
-                      "вторым рубежом поверх файрвола.\n\n"
-                      + ("Клиент-сервер тоже получил его."
-                         if de_ok else
-                         "⚠️ Клиент-сервер не ответил — он получит токен при следующем "
-                         "запуске бота. До тех пор его панель защищена файрволом."))
-            )
-        except Exception:
-            pass
+            await ensure_api_token(app)
+        except Exception as e:
+            print(f"Сверка токена панелей: {e}")
+
