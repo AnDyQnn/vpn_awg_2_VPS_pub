@@ -95,6 +95,20 @@ async def main():
     await db.execute("INSERT INTO users (name, uuid, is_active) VALUES ('Донатов','dn-1',TRUE)")
     await db.execute("INSERT INTO user_tg_links (uuid, tg_id) VALUES ('dn-1',$1)", TG)
 
+    print("=== на чистой установке всё выключено ===")
+    # Именно с нуля, а не «выставим ноль и проверим ноль»: раздел про деньги
+    # не должен включаться сам ни при первой установке, ни при обновлении.
+    await db.execute("DELETE FROM settings WHERE key LIKE 'donate_%'")
+    check("кнопки у людей нет", not await donate.enabled())
+    check("напоминания выключены", not await donate.reminder_enabled())
+    check("и в целом ничего не видно", not await donate.visible())
+    check("срок по умолчанию — две недели", await donate.reminder_days() == 14,
+          str(await donate.reminder_days()))
+    check("текст готов, но никому не показан",
+          "не зависит" in await donate.text(),
+          "включает владелец, когда всё настроит")
+
+    print()
     print("=== пока нечем платить, кнопки нет ===")
     check("кнопка не показывается", not await donate.visible())
     import handlers_client as hc
