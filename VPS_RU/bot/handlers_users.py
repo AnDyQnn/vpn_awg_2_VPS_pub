@@ -359,6 +359,12 @@ async def action_delete_user(update: Update, context: ContextTypes.DEFAULT_TYPE,
             await sync_person("человек удалён")
         except Exception as e:
             print(f"Xray: конфиг не пересобран после удаления: {e}")
+        # Адрес освободился и завтра достанется другому. Правило фильтра,
+        # выданное на этот адрес, осталось бы висеть на новом хозяине — он
+        # получил бы чужие запреты, не зная почему.
+        from restrictions import reapply
+        await reapply("удалён ключ")
+
         await db.log_event("Delete", f"Deleted key {user['name']}")
         await update.callback_query.answer("Успешно удален!", show_alert=True)
         await users_list_menu(update, context, 0)

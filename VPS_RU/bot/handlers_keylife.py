@@ -265,11 +265,14 @@ async def do_delete(update: Update, context: ContextTypes.DEFAULT_TYPE, uuid_val
 
     # Доступы пересобираем: адрес освободился и завтра достанется другому,
     # а правило, выданное на этот адрес, осталось бы висеть на новом хозяине.
+    # Пересобираем И доступы, И фильтры: то и другое узел применяет по адресу,
+    # а адрес освободился. Раньше здесь были только доступы — фильтр оставался
+    # на адресе и доставался следующему хозяину.
     try:
-        from acl import apply_access_rules
-        await apply_access_rules("удалён ключ")
+        from restrictions import reapply
+        await reapply("удалён ключ")
     except Exception as e:
-        print(f"KeyLife: не удалось пересобрать доступы: {e}")
+        print(f"KeyLife: не удалось пересобрать ограничения: {e}")
 
     await query.answer("Ключ удалён")
     await pending_screen(update, context)
