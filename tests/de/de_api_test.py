@@ -91,5 +91,38 @@ with open(os.path.join(FLAGS, "audit_report.json"), "w") as f:
 check("когда готово", master.get("/api/host/audit_result").json().get("status"), "done")
 
 print()
+print("=== состояние переменных: да/нет, без значений ===")
+# Мастер спрашивает это, чтобы понять, доехал ли ключ. Значения отдавать нельзя
+# — по ним и подделывают доступ.
+r = master.get("/api/host/env_status")
+check("отвечает мастеру", r.status_code, 200)
+body = r.json()
+check("про ключ панелей сказано", "API_TOKEN" in body, True)
+check("ответ — да/нет", isinstance(body.get("API_TOKEN"), bool), True)
+check("значение не отдано", "secret-for-test" in str(body), False)
+check("без токена и не от мастера — отказ",
+      stranger.get("/api/host/env_status").status_code, 401)
+
+print()
+print("=== прошлый ключ действует, пока новый не разошёлся ===")
+# Смена идёт не мгновенно: пока новый ключ доезжает до второй ноды, на ней ещё
+# старый. Признавая оба, снимаем окно, в котором ноды спорят о том, какой ключ
+# правильный.
+api.API_TOKEN_PREV = "prev-key-for-test"
+old_key = TestClient(api.app, client=("203.0.113.9", 51820))
+check("с прошлым ключом пускают",
+      old_key.get("/api/wg/status", headers={"X-Api-Key": "prev-key-for-test"}).status_code,
+      200)
+check("с нынешним тоже",
+      old_key.get("/api/wg/status",
+                  headers={"X-Api-Key": "secret-for-test"}).status_code, 200)
+check("с чужим — нет",
+      old_key.get("/api/wg/status", headers={"X-Api-Key": "someone-else"}).status_code, 401)
+api.API_TOKEN_PREV = ""
+check("прошлый ключ убрали — он больше не пускает",
+      old_key.get("/api/wg/status", headers={"X-Api-Key": "prev-key-for-test"}).status_code,
+      401)
+
+print()
 print("ВСЁ ПРОШЛО" if ok else "ЕСТЬ ПРОВАЛЫ")
 sys.exit(0 if ok else 1)
