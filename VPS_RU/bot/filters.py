@@ -175,7 +175,7 @@ async def filters_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     custom = await db.get_custom_blocks()
 
     lines = ["🧹 **Фильтрация сайтов**", "",
-             "_🚫 — закрыто, 🟢 — разрешено вопреки запрету._", ""]
+             "_🚫 Запреты · 🟢 Исключения_", ""]
     if common or custom:
         parts = []
         if common:
@@ -376,15 +376,17 @@ async def user_filters_screen(update: Update, context: ContextTypes.DEFAULT_TYPE
     mine = set(await db.get_user_filters(uuid_val))
     lines = [f"🧹 **Фильтры: {escape_md(user['name'])}**", ""]
     if mine:
-        lines.append("Отмеченные категории для него закрыты.")
+        lines.append(f"Запрещено категорий: **{len(mine)}** из {len(CATEGORIES)}.")
     else:
-        lines.append("Фильтров нет — интернет открыт полностью.")
-    lines += ["", "_Закрытый сайт не просто не открывается: человек попадает "
+        lines.append("Запретов нет — интернет открыт полностью.")
+    lines += ["", "Нажмите на категорию, чтобы запретить её. Нажмите ещё раз — "
+                  "запрет снимется.",
+              "", "_Закрытый сайт не просто не открывается: человек попадает "
                   "на страницу с объяснением._"]
 
-    # 🚫 — закрыто, ➖ — открыто. Галочку здесь использовать нельзя: ею же
-    # помечены исключения, и один знак означал бы и запрет, и разрешение.
-    kb = [[InlineKeyboardButton(("🚫 " if key in mine else "➖ ") + title,
+    # 🚫 стоит у запрещённых. У остальных знака нет вовсе: пустая строка
+    # читается как «ничего не делаем», а любой значок пришлось бы объяснять.
+    kb = [[InlineKeyboardButton(("🚫 " if key in mine else "") + title,
                                 callback_data=f"flt_set_{key}_{uuid_val}")]
           for key, title in CATEGORIES]
     kb.append([InlineKeyboardButton("🔙 К человеку",
