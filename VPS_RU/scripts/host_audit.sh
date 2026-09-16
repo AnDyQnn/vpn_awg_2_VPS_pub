@@ -48,9 +48,27 @@ ping -c 1 -W 2 1.1.1.1 >/dev/null 2>&1
 ping -c 1 -W 2 google.com >/dev/null 2>&1
 [ $? -eq 0 ] && add_check CAT_NET "DNS Разрешение имен" "ok" "Работает" || add_check CAT_NET "DNS Разрешение имен" "error" "Сбой DNS"
 
-# ИСПРАВЛЕНО: Telegram заблокирован в РФ - это норма, ставим warning вместо error
-curl -s -m 3 https://api.telegram.org >/dev/null 2>&1
-[ $? -eq 0 ] && add_check CAT_NET "Доступность Telegram API" "ok" "Связь есть" || add_check CAT_NET "Доступность Telegram API" "warning" "Заблокировано (Норма для РФ)"
+# Telegram проверяем ОТТУДА, ГДЕ ЖИВЁТ БОТ, а не с хоста.
+#
+# С хоста Telegram в России закрыт, и это ничего не говорит о работе бота: бот
+# сидит в сетевой области узла и ходит наружу через Германию. Проверка с хоста
+# выдавала «заблокировано, норма для РФ» — замечание, которое ничего не значит
+# и которое поэтому переставали читать.
+#
+# Значение имеет ровно одно: может ли бот достучаться до Telegram. Если не
+# может — он мёртв, и это уже ошибка, а не примечание.
+if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx vpn_bot; then
+    TG_CODE=$(docker exec vpn_bot curl -s -o /dev/null -w "%{http_code}" -m 8               https://api.telegram.org 2>/dev/null)
+    # Любой ответ годится: api.telegram.org на голый корень отвечает
+    # перенаправлением, и это такая же связь, как 200.
+    if [ -n "$TG_CODE" ] && [ "$TG_CODE" != "000" ]; then
+        add_check CAT_NET "Доступность Telegram API" "ok" "Связь есть (код $TG_CODE, через туннель)"
+    else
+        add_check CAT_NET "Доступность Telegram API" "error" "Бот не достучится до Telegram"
+    fi
+else
+    add_check CAT_NET "Доступность Telegram API" "warning" "Контейнер бота не запущен"
+fi
 
 curl -s -m 3 https://github.com >/dev/null 2>&1
 [ $? -eq 0 ] && add_check CAT_NET "Доступность GitHub" "ok" "Связь есть" || add_check CAT_NET "Доступность GitHub" "warning" "Недоступен"
@@ -433,8 +451,31 @@ check_logs "vpn_bot"
 check_logs "vpn_wireguard"
 check_logs "vpn_db"
 
-UPDATES=$(apt-get -s upgrade 2>/dev/null | grep -Po "^Inst \K[^ ]+" | wc -l)
-[ "${UPDATES:-0}" -eq 0 ] && add_check CAT_LOGS "Системные обновления ОС" "ok" "Все установлено" || add_check CAT_LOGS "Системные обновления ОС" "warning" "Доступно $UPDATES пакетов"
+# Обновления ОС: важно не число, а есть ли среди них ЗАПЛАТКИ БЕЗОПАСНОСТИ.
+#
+# Ставятся они раз в неделю, в ночь перед плановой перезагрузкой: обновление
+# docker перезапускает демон и рвёт контейнеры, поэтому оно и приходится на три
+# часа ночи воскресенья. Решение сознательное, и менять его незачем.
+#
+# Но из-за этого заплатка безопасности может ждать до семи суток, а проверка
+# писала одинаковое «доступно N пакетов» и для неё, и для косметики. Такое
+# замечание перестают читать.
+UPD_LIST=$(apt-get -s upgrade 2>/dev/null | grep "^Inst")
+UPDATES=$(printf '%s
+' "$UPD_LIST" | grep -c "^Inst")
+SEC=$(printf '%s
+' "$UPD_LIST" | grep -c "security")
+if [ "${UPDATES:-0}" -eq 0 ]; then
+    add_check CAT_LOGS "Системные обновления ОС" "ok" "Все установлено"
+elif [ "${SEC:-0}" -gt 0 ]; then
+    SEC_NAMES=$(printf '%s
+' "$UPD_LIST" | grep "security" | awk '{print $2}' | head -4 | tr '
+' ' ')
+    add_check CAT_LOGS "Заплатки безопасности ОС" "warning" "Ждут $SEC: $SEC_NAMES(ставятся в воскресенье 03:00)"
+    add_check CAT_LOGS "Системные обновления ОС" "ok" "Ждут $UPDATES, ставятся по расписанию"
+else
+    add_check CAT_LOGS "Системные обновления ОС" "ok" "Ждут $UPDATES, среди них заплаток безопасности нет"
+fi
 
 # --- Подписка наружу ------------------------------------------------------
 # Единственный порт, который мы открываем в интернет сами. Проверяем не «вклю-
