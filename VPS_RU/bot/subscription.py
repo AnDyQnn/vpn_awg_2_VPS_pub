@@ -199,6 +199,81 @@ async def _userinfo(rec) -> str:
     return (f"upload={used_in}; download={used_out}; total=0; expire={expire}")
 
 
+# Страница для человека, открывшего ссылку в браузере.
+#
+# Приложению по этому адресу отдаётся список профилей в base64 — и человек,
+# ткнув в ссылку из Telegram, видел ровно это: гигантскую строку без начала и
+# конца. Выглядит как поломка, а на самом деле всё правильно, просто адрес не
+# для глаз.
+#
+# Браузер отличается от приложения одним: он просит html. Приложения этого не
+# просят никогда, поэтому подмена их не задевает.
+BROWSER_PAGE = """<!doctype html>
+<html lang="ru"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ваша ссылка VPN</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { margin:0; min-height:100vh; display:flex; align-items:center;
+         justify-content:center; padding:24px;
+         font:16px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+         background:#0d1117; color:#e6edf3; }
+  .card { max-width:520px; width:100%; background:#161b22; border:1px solid #30363d;
+          border-radius:14px; padding:24px; }
+  h1 { font-size:20px; margin:0 0 12px; }
+  p { margin:0 0 14px; color:#9aa4b2; }
+  .link { word-break:break-all; background:#0d1117; border:1px solid #30363d;
+          border-radius:10px; padding:12px; font-family:ui-monospace,monospace;
+          font-size:13px; color:#e6edf3; }
+  button { margin-top:14px; width:100%; padding:13px; font-size:16px;
+           border:0; border-radius:10px; background:#238636; color:#fff;
+           cursor:pointer; }
+  button:active { background:#1a6f2b; }
+  .ok { color:#3fb950; }
+  ol { margin:14px 0 0; padding-left:20px; color:#9aa4b2; }
+  li { margin-bottom:6px; }
+</style></head><body>
+<div class="card">
+  <h1>Это ваша ссылка на VPN</h1>
+  <p>Её не нужно открывать в браузере — её нужно вставить в приложение.</p>
+  <div class="link" id="u">__URL__</div>
+  <button id="b">Скопировать ссылку</button>
+  <ol>
+    <li>Откройте приложение <b>Happ</b>.</li>
+    <li>Добавьте подписку и вставьте эту ссылку.</li>
+    <li>Включите VPN.</li>
+  </ol>
+  <p style="margin-top:14px">Дальше всё обновляется само: новые сервера и
+  настройки приложение подтянет без вашего участия.</p>
+</div>
+<script>
+document.getElementById('b').onclick = function () {
+  var u = document.getElementById('u').textContent;
+  var done = function () {
+    var b = document.getElementById('b');
+    b.textContent = 'Скопировано';
+    b.className = 'ok';
+    setTimeout(function () { b.textContent = 'Скопировать ссылку'; b.className = ''; }, 1600);
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(u).then(done, function () {});
+  } else {
+    var t = document.createElement('textarea');
+    t.value = u; document.body.appendChild(t); t.select();
+    try { document.execCommand('copy'); done(); } catch (e) {}
+    document.body.removeChild(t);
+  }
+};
+</script>
+</body></html>
+"""
+
+
+def _wants_html(request):
+    """Пришёл ли запрос из браузера, а не из приложения."""
+    return "text/html" in (request.headers.get("Accept", "") or "")
+
+
 async def handle_sub(request):
     """Отдаёт профиль по личному токену.
 
@@ -243,6 +318,14 @@ async def handle_sub(request):
             routing = ""
     except Exception as e:
         print(f"Подписка: профиль маршрутизации не собрался: {e}")
+
+    # Человеку, открывшему ссылку в браузере, — объяснение и кнопка «копировать».
+    # Приложение html не просит, так что его это не касается.
+    if _wants_html(request):
+        return web.Response(
+            body=BROWSER_PAGE.replace("__URL__", str(request.url)).encode(),
+            content_type="text/html", charset="utf-8",
+            headers={"Cache-Control": "no-store"})
 
     body = await xray.subscription_body(token, extra=in_body)
     if not body:

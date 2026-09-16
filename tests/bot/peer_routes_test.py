@@ -138,7 +138,14 @@ async def main():
     import subscription as S
 
     async def headers_for(token):
-        resp = await S.handle_sub(type("R", (), {"match_info": {"token": token}})())
+        # headers нужны: по ним отличают браузер от приложения — браузеру
+        # вместо base64 отдаётся страница с кнопкой «скопировать».
+        # remote — для счёта промахов по адресу.
+        resp = await S.handle_sub(type("R", (), {
+            "match_info": {"token": token},
+            "headers": {"Accept": "*/*"},
+            "remote": "203.0.113.5",
+        })())
         return resp.headers
 
     h1 = await headers_for("tok-rt1")
