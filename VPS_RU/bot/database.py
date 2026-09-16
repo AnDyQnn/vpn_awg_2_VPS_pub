@@ -1175,31 +1175,31 @@ class Database:
         await self.execute("DELETE FROM pps_events WHERE id=$1", int(event_id))
 
     # ------------------------ ЧАСОВЫЕ СРЕЗЫ ------------------------
-    async def find_direction_border(self, min_bytes=50 * 1024 * 1024,
-                                    need_bad=24, need_good=12, purity=0.9):
-        """С какого часа история трафика пишется правильно.
+    async def find_inverted_spans(self, min_bytes=50 * 1024 * 1024,
+                                  min_run=12):
+        """Промежутки, где направления трафика записаны наоборот.
 
-        Признак не зависит от объёмов и числа людей: у обычного человека приём
-        в разы больше отдачи. Пока сборщик путал колонки, час за часом выходило
-        наоборот.
+        Раньше здесь искалась одна граница — «всё до неё перевёрнуто». На живых
+        данных такой картины не оказалось: до 14 сентября приём и отдача почти
+        равны (колонки заполнялись одинаково, а не переставлялись), перевёрнут
+        ровно промежуток с 14-го по 15-е. Поэтому ищем ПРОМЕЖУТКИ, а не рубеж.
 
-        Условия нарочно строгие, потому что чинится это САМО, без спроса, и
-        ошибиться нельзя ни разу. Один час чьей-то тяжёлой раздачи выглядит
-        точно так же, как ошибка сборщика, — и приняв его за границу, мы
-        перевернули бы всю верную историю. Поэтому требуем не признак, а
-        картину:
+        Признак: у обычного человека приём в разы больше отдачи. Час, где
+        наоборот, подозрителен — но одного часа мало: столько же выглядит
+        честная тяжёлая раздача. Настоящая ошибка сборщика длится часами
+        подряд, поэтому берём только полосы длиной от `min_run` часов.
 
-          * перевёрнутых часов подряд до границы — не меньше `need_bad`;
-          * правильных часов после неё — не меньше `need_good`;
-          * и по обе стороны не меньше `purity` часов должны быть заодно со
-            своей стороной. Случайный выброс картину не создаёт.
+        Тихие часы не в счёт: ночью остаются служебные пакеты, они симметричны
+        и о направлении не говорят ничего.
 
-        Тихие часы не в счёт: ночью живого трафика нет, остаются служебные
-        пакеты, а они симметричны и о направлении не говорят ничего.
+        Самую свежую полосу не трогаем, даже если она длинная: если перевёрнут
+        последний час, значит сборщик сломан прямо сейчас, и чинить надо его, а
+        не следы.
 
-        Возвращает час, начиная с которого данные верны, или None — если
-        такой картины нет. None значит «не трогать».
+        Возвращает список пар (с какого часа, по какой) — правый край не
+        включается.
         """
+        from datetime import timedelta
         rows = await self.fetch_all(
             "SELECT hour, SUM(bytes_in) AS up, SUM(bytes_out) AS down "
             "FROM traffic_hourly GROUP BY hour ORDER BY hour")
@@ -1208,25 +1208,39 @@ class Database:
             up, down = int(r["up"] or 0), int(r["down"] or 0)
             if up + down < min_bytes:
                 continue
-            hours.append((r["hour"], down < up))        # True — перевёрнутый
-        if len(hours) < need_bad + need_good:
-            return None
+            hours.append((r["hour"], down < up))
+        if not hours:
+            return []
 
-        # Ищем место, где перевёрнутая часть сменяется правильной.
-        for i in range(need_bad, len(hours) - need_good + 1):
-            before = [bad for _h, bad in hours[:i]]
-            after = [bad for _h, bad in hours[i:]]
-            if sum(before) / len(before) < purity:
+        spans, run = [], []
+        for hour, inverted in hours:
+            if inverted:
+                run.append(hour)
                 continue
-            if sum(1 for bad in after if not bad) / len(after) < purity:
-                continue
-            # Края должны быть чистыми: иначе граница поставлена по шуму.
-            if not all(before[-need_bad:]):
-                continue
-            if any(after[:need_good]):
-                continue
-            return hours[i][0]
-        return None
+            if len(run) >= min_run:
+                spans.append((run[0], run[-1] + timedelta(hours=1)))
+            run = []
+        # Хвост намеренно не закрываем: полоса, дотянувшаяся до последнего
+        # часа, означает сломанный сборщик, а не старый след.
+        return spans
+
+    async def swap_hourly_range(self, start, end):
+        """Меняет местами отдачу и приём в промежутке [start, end).
+
+        Одним запросом и без промежуточной колонки: SQL присваивает из
+        значений, какими они были до начала запроса. Цикл по строкам оставил бы
+        историю наполовину перевёрнутой, оборвись он посередине.
+        """
+        await self.execute(
+            """UPDATE traffic_hourly
+               SET bytes_in = bytes_out, bytes_out = bytes_in,
+                   packets_in = packets_out, packets_out = packets_in
+               WHERE hour >= $1 AND hour < $2""", start, end)
+
+    async def count_hourly_range(self, start, end):
+        return await self.fetch_val(
+            "SELECT COUNT(*) FROM traffic_hourly WHERE hour >= $1 AND hour < $2",
+            start, end) or 0
 
     async def count_hourly_before(self, before):
         """Сколько часовых строк старше указанного момента."""
