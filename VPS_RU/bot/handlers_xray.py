@@ -80,7 +80,12 @@ async def connections_screen(update: Update, context: ContextTypes.DEFAULT_TYPE,
 
     kb = []
     if state["has_xray"]:
-        kb.append([InlineKeyboardButton("📨 Выслать ссылку", callback_data=f"xr_send_{uuid_val}")])
+        # «Доступ», а не «ссылка» и не «конфиг». У AmneziaWG человек получает
+        # файл, у Xray — адрес, и владельцу, который ведёт и тех и других, два
+        # слова для одного действия только мешают. А слово «ссылка» вдобавок
+        # обманывает: по ней не переходят, её вставляют в приложение.
+        kb.append([InlineKeyboardButton("📨 Отправить доступ",
+                                        callback_data=f"xr_send_{uuid_val}")])
         # Не «ссылку»: она как раз остаётся. Меняется ключ доступа — старый
         # перестаёт работать, а адрес у человека прежний.
         kb.append([InlineKeyboardButton("♻️ Перевыпустить ключ",
@@ -164,11 +169,11 @@ async def send_link(update: Update, context: ContextTypes.DEFAULT_TYPE, uuid_val
     if not sent:
         await context.bot.send_message(chat_id=query.message.chat_id,
                                        text=f"{user['name']} — Telegram не привязан, "
-                                            f"ссылка ниже")
+                                            f"доступ ниже")
         await send_copyable(context.bot, query.message.chat_id, link,
                             reply_markup=InlineKeyboardMarkup(
                                 [[copy_button(link)]]))
-    await query.answer("Отправлено" if sent else "Telegram не привязан — ссылка здесь")
+    await query.answer("Отправлено" if sent else "Telegram не привязан — доступ здесь")
     await connections_screen(update, context, uuid_val)
 
 
@@ -537,8 +542,8 @@ async def instructions(uuid_val=None, platform=None):
         ]
     lines += [
         "",
-        "⚠️ Ссылка личная. По ней подключаются к вашему доступу — "
-        "не передавайте её никому.",
+        "⚠️ Это ваш личный доступ. По нему подключаются к вашему VPN — "
+        "не передавайте его никому.",
     ]
     return "\n".join(lines)
 

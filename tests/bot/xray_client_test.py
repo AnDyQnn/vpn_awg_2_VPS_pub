@@ -109,9 +109,12 @@ async def main():
     print("=== карточка ключа у человека на Xray ===")
     await hc.client_key_manage_handler(upd, ctx, "cl-1")
     print(sent["markup"])
-    assert "📥 Получить ссылку" in sent["markup"]
+    # «Доступ», а не «ссылка»: по ней не переходят, её вставляют в приложение,
+    # и слово сбивало с толку — человек тыкал и попадал в браузер.
+    assert "📥 Получить доступ" in sent["markup"]
     assert "❓ Как подключить" in sent["markup"]
-    assert "новую ссылку" in sent["screen"], sent["screen"]
+    # Перевыпуск меняет ключ, а адрес остаётся — об этом и должно быть сказано.
+    assert "адрес при этом остаётся" in sent["screen"], sent["screen"]
     print("кнопки те же, подписи по делу: ок")
 
     print("\n=== карточка у человека на AmneziaWG ===")
@@ -145,7 +148,7 @@ async def main():
 
     print("\n=== перевыпуск объясняет, что будет ===")
     await hc.client_regen_confirm(upd, ctx, "cl-1")
-    assert "прежняя перестанет работать сразу" in sent["screen"], sent["screen"]
+    assert "вставлять ничего не нужно" in sent["screen"], sent["screen"]
     await hc.client_regen_confirm(upd, ctx, "cl-2")
     assert "файл конфигурации" in sent["screen"], sent["screen"]
     print("для каждого свой текст: ок")

@@ -545,14 +545,18 @@ async def client_key_manage_handler(update: Update, context: ContextTypes.DEFAUL
 
     on_xray = bool(await db.get_xray_user(uuid_val))
     if on_xray:
-        lines += ["", "_Перевыпуск выдаёт новую ссылку, прежняя перестаёт "
-                      "работать сразу — на случай, если ссылка утекла._"]
+        lines += ["", "_Перевыпуск меняет ключ доступа: прежний перестаёт "
+                      "работать сразу. Ваш адрес при этом остаётся прежним — "
+                      "приложение заберёт новый ключ само._"]
     else:
         lines += ["", "_Перевыпуск выдаёт новый конфиг, старый работает, пока новый "
                       "не заработает — без обрыва._"]
 
     keyboard = [
-        [InlineKeyboardButton("📥 Получить ссылку" if on_xray else "📥 Скачать конфиг",
+        # У Xray человек получает адрес, у AmneziaWG — файл. Называем то, что
+        # он и правда получит: «ссылка» здесь сбивала с толку, потому что по
+        # ней не переходят, её вставляют в приложение.
+        [InlineKeyboardButton("📥 Получить доступ" if on_xray else "📥 Скачать конфиг",
                               callback_data=f"client_download_{uuid_val}"),
          InlineKeyboardButton("⚡️ Проверить связь", callback_data=f"check_conn_{uuid_val}")],
         [InlineKeyboardButton("🔄 Перевыпустить", callback_data=f"client_regen_{uuid_val}")],
@@ -848,9 +852,11 @@ async def client_regen_confirm(update: Update, context: ContextTypes.DEFAULT_TYP
     keyboard = [[InlineKeyboardButton("✅ Да, перевыпустить", callback_data=f"do_client_regen_{uuid_val}")],[InlineKeyboardButton("🔙 Отмена", callback_data=f"client_key_manage_{uuid_val}")]
     ]
     if await db.get_xray_user(uuid_val):
-        text = ("⚠️ **Смена доступа**\n\nВам выдадут новую ссылку, а прежняя "
-                "перестанет работать сразу. Делайте это, если ссылка попала не "
-                "в те руки.\nВы уверены?")
+        text = ("⚠️ **Смена ключа**\n\n"
+                "Ключ доступа сменится, прежний перестанет работать сразу. "
+                "Делайте это, если он попал не в те руки.\n\n"
+                "Ваш адрес останется прежним — приложение заберёт новый ключ "
+                "само, вставлять ничего не нужно.\nВы уверены?")
     else:
         text = ("⚠️ **Смена ключа**\n\nВам выдадут новый файл конфигурации — его "
                 "нужно добавить в AmneziaWG. Старый ключ продолжит работать и "
