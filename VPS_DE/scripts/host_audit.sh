@@ -299,6 +299,21 @@ if [ -f "$HH_FILE" ]; then
             add_check CAT_HOST "Пакеты в очереди на обновление" "ok" "${HH_UPG} шт."
         fi
 
+        # Отдельно — ЗАПЛАТКИ БЕЗОПАСНОСТИ. Число пакетов само по себе ничего не
+        # говорит: ставятся они раз в неделю, в ночь перед плановой
+        # перезагрузкой, и косметика может спокойно ждать. А заплатка — нет.
+        UPD_LIST=$(apt-get -s upgrade 2>/dev/null | grep "^Inst")
+        SEC=$(printf '%s
+' "$UPD_LIST" | grep -c "security")
+        if [ "${SEC:-0}" -gt 0 ]; then
+            SEC_NAMES=$(printf '%s
+' "$UPD_LIST" | grep "security" | awk '{print $2}' | head -4 | tr '
+' ' ')
+            add_check CAT_HOST "Заплатки безопасности ОС" "warning" "Ждут $SEC: $SEC_NAMES(ставятся в воскресенье 03:00)"
+        else
+            add_check CAT_HOST "Заплатки безопасности ОС" "ok" "Нет ожидающих"
+        fi
+
         # /var/log — это НЕ журнал systemd, его чистит вакуум. Здесь файлы служб,
         # за которыми до появления ротации не следил никто.
         HH_LOG=$(jint "$HH_FILE" var_log_mb)
