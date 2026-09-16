@@ -12,7 +12,29 @@
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-NODE_DIR="${1:-$(dirname "$SCRIPT_DIR")}"
+ROOT_DIR="$(dirname "$SCRIPT_DIR")"
+
+# Куда писать отчёт. Скрипт лежит в ОБЩЕЙ папке scripts/, а volumes у каждой
+# ноды свои — VPS_RU или VPS_DE. Раньше без аргумента путь брался от корня
+# проекта, и отчёт ложился в несуществующую volumes/flags рядом с ним. Бот
+# искал его у ноды и не находил, а проверка честно писала «ещё не отрабатывала»
+# — и была права: за всё время отчёт не доехал ни разу.
+#
+# Аргумент по-прежнему уважаем: он есть в вызовах, где папка известна точно.
+if [ -n "${1:-}" ]; then
+    NODE_DIR="$1"
+else
+    NODE_DIR=""
+    # Признак папки ноды — её compose-файл; если его нет (бывает на стенде),
+    # годится и заведённая volumes: именно туда и пишется отчёт.
+    for D in "$ROOT_DIR"/VPS_RU "$ROOT_DIR"/VPS_DE; do
+        if [ -f "$D/docker-compose.yml" ] || [ -d "$D/volumes" ]; then
+            NODE_DIR="$D"; break
+        fi
+    done
+    # Ни одной ноды рядом — значит скрипт запущен из папки самой ноды.
+    [ -z "$NODE_DIR" ] && NODE_DIR="$ROOT_DIR"
+fi
 OUT_DIR="$NODE_DIR/volumes/flags"
 OUT="$OUT_DIR/host_health.json"
 mkdir -p "$OUT_DIR"
@@ -28,7 +50,11 @@ VOLUMES_MB=$(du -sm "$NODE_DIR/volumes" 2>/dev/null | awk '{print $1}')
 DOCKER_MB=$(du -sm /var/lib/docker 2>/dev/null | awk '{print $1}')
 
 # Зависшие процессы и нагрузка
-ZOMBIES=$(ps -eo stat= 2>/dev/null | grep -c '^Z' || echo 0)
+# grep -c печатает 0 и возвращает единицу, когда совпадений нет, — и «|| echo 0»
+# дописывал второй ноль. Значение становилось двустрочным, и сравнение с
+# числом падало: «integer expression expected» — тихо, посреди скрипта.
+ZOMBIES=$(ps -eo stat= 2>/dev/null | grep -c '^Z')
+ZOMBIES=${ZOMBIES:-0}
 LOAD=$(awk '{print $1}' /proc/loadavg)
 CORES=$(nproc 2>/dev/null || echo 1)
 
@@ -37,7 +63,8 @@ REBOOT_REQUIRED=false
 [ -f /var/run/reboot-required ] && REBOOT_REQUIRED=true
 
 # Сколько пакетов ждут обновления
-UPGRADABLE=$(apt list --upgradable 2>/dev/null | grep -c upgradable || echo 0)
+UPGRADABLE=$(apt list --upgradable 2>/dev/null | grep -c upgradable)
+UPGRADABLE=${UPGRADABLE:-0}
 
 WARN=""
 [ "${DISK_PCT:-0}" -ge 85 ] && WARN="${WARN}диск занят ${DISK_PCT}%; "
