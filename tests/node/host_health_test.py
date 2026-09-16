@@ -94,5 +94,21 @@ check("счёт даёт одно число", out2.strip().count("\n") == 0,
 sh("rm -rf %s /tmp/hh_named" % root)
 
 print()
+print("=== аудит не судит узел в момент перезапуска ===")
+# Проверка через полминуты после пересоздания контейнера рисовала катастрофу на
+# ровном месте: «ядро зависло», «wg0 не найден», «NAT отсутствует». Всё неправда
+# — узел просто поднимался. Такой отчёт хуже, чем никакого.
+for name, path in (("мастера", "/nodescripts/host_audit.sh"),
+                   ("Германии", "/descripts/host_audit.sh")):
+    if not os.path.exists(path):
+        continue
+    at = open(path, encoding="utf-8").read()
+    check("аудит %s ждёт готовности узла" % name, "SETTLE_LEFT=90" in at,
+          "иначе десять ложных ошибок при целом туннеле")
+    check("ждёт ответа панели, а не просто паузы (%s)" % name,
+          "api/health" in at.split("SETTLE_LEFT=90")[1][:400],
+          "пауза вслепую ничего не гарантирует")
+
+print()
 print("ВСЁ ПРОШЛО" if ok else "ЕСТЬ ПРОВАЛЫ")
 sys.exit(0 if ok else 1)
