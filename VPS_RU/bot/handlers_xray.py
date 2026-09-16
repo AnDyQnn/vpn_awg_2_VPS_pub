@@ -66,8 +66,9 @@ async def connections_screen(update: Update, context: ContextTypes.DEFAULT_TYPE,
 
     if state["has_xray"]:
         url = await xray.subscription_url(state["sub_token"])
-        lines.append("Ссылка на профиль выдана. Она постоянная: изменения "
-                     "доезжают сами, перевыпускать не нужно.")
+        lines.append("Адрес подписки выдан. Он постоянный и переживает "
+                     "перевыпуск: приложение забирает по нему новый ключ само, "
+                     "человеку делать нечего.")
         if url:
             lines.append("Подписка обновляется по личному адресу автоматически.")
         else:
@@ -80,7 +81,9 @@ async def connections_screen(update: Update, context: ContextTypes.DEFAULT_TYPE,
     kb = []
     if state["has_xray"]:
         kb.append([InlineKeyboardButton("📨 Выслать ссылку", callback_data=f"xr_send_{uuid_val}")])
-        kb.append([InlineKeyboardButton("♻️ Перевыпустить ссылку",
+        # Не «ссылку»: она как раз остаётся. Меняется ключ доступа — старый
+        # перестаёт работать, а адрес у человека прежний.
+        kb.append([InlineKeyboardButton("♻️ Перевыпустить ключ",
                                         callback_data=f"xr_issue_{uuid_val}")])
         # Отключить AmneziaWG можно только тому, кто уже доехал по Xray.
         if state["awg_ip"]:

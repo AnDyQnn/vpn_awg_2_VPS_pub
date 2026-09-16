@@ -147,13 +147,29 @@ async def main():
     assert await xray.subscription_body(rec3["sub_token"]) == "", "пауза должна гасить подписку"
     print("пусто: ок")
 
-    print("\n=== отзыв ссылки ===")
+    print("\n=== перевыпуск: ключ новый, адрес прежний ===")
+    # Раньше здесь ожидалось обратное — что перевыпуск меняет и адрес. Это и
+    # оказалось бедой: адрес, уже вставленный в приложение, умирал, приложение
+    # молча оставалось с отозванным ключом, и человек сидел без связи.
     old_token = rec["sub_token"]
+    old_uuid = rec["xray_uuid"]
     ok, new_token = await xray.issue("xr-1")
-    assert ok and new_token != old_token, "перевыпуск обязан менять токен"
-    assert await xray.subscription_body(old_token) == "", "старая ссылка должна умереть"
-    assert await xray.subscription_body(new_token) != "", "новая должна работать"
-    print("старая ссылка мертва, новая живая: ок")
+    assert ok and new_token == old_token, "адрес подписки обязан пережить перевыпуск"
+    after = await db.get_xray_user("xr-1")
+    assert after["xray_uuid"] != old_uuid, "ключ доступа обязан смениться"
+    # Подписка отдаётся в base64 — раскодируем, иначе сравнивать не с чем.
+    import base64 as _b64
+    body = _b64.b64decode(await xray.subscription_body(old_token)).decode("utf-8", "replace")
+    assert after["xray_uuid"] in body, "по прежнему адресу должен приезжать новый ключ"
+    assert old_uuid not in body, "отозванный ключ не должен доезжать до человека"
+    print("адрес прежний, ключ новый: ок")
+
+    print("\n=== отзыв самого адреса — отдельно и осознанно ===")
+    ok, changed = await xray.issue("xr-1", new_address=True)
+    assert ok and changed != old_token, "по просьбе адрес обязан смениться"
+    assert await xray.subscription_body(old_token) == "", "прежний адрес должен умереть"
+    assert await xray.subscription_body(changed) != "", "новый должен работать"
+    print("адрес сменён по просьбе: ок")
 
     await db.execute("DELETE FROM users WHERE uuid LIKE 'xr-%'")
     print("\nВСЁ ПРОШЛО")
