@@ -71,6 +71,65 @@ RandomizedDelaySec=15m
 Persistent=true
 EOF
 
+# 2.5 ЗАПЛАТКИ БЕЗОПАСНОСТИ — КАЖДЫЙ ДЕНЬ, А НЕ РАЗ В НЕДЕЛЮ.
+#
+# Общая установка стоит по воскресеньям намеренно: она задевает всё подряд, а
+# рядом плановая перезагрузка, которая доводит дело до конца. Но заплатка
+# безопасности не должна ждать до семи суток только потому, что рядом с ней в
+# очереди лежит косметика.
+#
+# Поэтому отдельный ежедневный проход, и он берёт РОВНО то, что пришло из
+# ветки безопасности, — по одному пакету поимённо, а не «обнови всё». Список
+# пуст — ничего и не делается.
+#
+# Docker этим проходом не задевается никогда: он приезжает из своего источника,
+# а не из веток Ubuntu. Значит контейнеры не перезапускаются, и туннель не
+# рвётся.
+cat > /usr/local/sbin/vpn-security-upgrade <<'SEC'
+#!/bin/bash
+# Ставит только то, что пришло из ветки безопасности. Ничего не удаляет.
+set -u
+export DEBIAN_FRONTEND=noninteractive
+APT="apt-get -o DPkg::Lock::Timeout=300 -o Dpkg::Options::=--force-confold"
+$APT update -qq >/dev/null 2>&1
+SEC_PKGS=$(apt-get -s upgrade 2>/dev/null | awk '/^Inst/ && /security/ {print $2}')
+if [ -z "$SEC_PKGS" ]; then
+    echo "[security] заплаток нет"
+    exit 0
+fi
+echo "[security] ставлю: $SEC_PKGS"
+# --only-upgrade: новые пакеты не появляются, а значит и удалять ничего не
+# придётся. Именно этого мы и хотим от прохода, который идёт без присмотра.
+$APT -y --only-upgrade install $SEC_PKGS
+SEC
+chmod +x /usr/local/sbin/vpn-security-upgrade
+
+cat > /etc/systemd/system/vpn-security-upgrade.service <<'UNIT'
+[Unit]
+Description=Заплатки безопасности ОС (ежедневно)
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/vpn-security-upgrade
+UNIT
+
+cat > /etc/systemd/system/vpn-security-upgrade.timer <<'UNIT'
+[Unit]
+Description=Заплатки безопасности ОС — каждый день
+
+[Timer]
+OnCalendar=*-*-* 03:40
+RandomizedDelaySec=20m
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+UNIT
+systemctl daemon-reload 2>/dev/null || true
+systemctl enable --now vpn-security-upgrade.timer 2>/dev/null || true
+echo "[maintenance] Заплатки безопасности ставятся ежедневно в 03:40."
+
 # 3. Потолок логов journald (по умолчанию лимит = 10% диска; на DE диск всего 10 ГБ).
 mkdir -p /etc/systemd/journald.conf.d
 cat > /etc/systemd/journald.conf.d/size.conf <<'EOF'
@@ -138,6 +197,22 @@ if command -v ufw >/dev/null 2>&1; then
         ufw allow "$XPORT/tcp" >/dev/null 2>&1 || true
     done
     echo "[maintenance] Входы Xray разрешены в файрволе: 443, 2053, 2083."
+
+    # Открытый порт, которого никто не слушает, — это не дыра, но и не порядок:
+    # он остаётся в списке и каждый следующий человек тратит время, выясняя,
+    # что там. SSH давно переехал с 22-го, а правило осталось с установки.
+    #
+    # Снимаем ТОЛЬКО если 22-й действительно никем не занят: если кто-то вернул
+    # его сознательно, закрывать вход под собой нельзя.
+    SSH_EFF_PORT=$(sshd -T 2>/dev/null | awk '/^port /{print $2}' | head -1)
+    if [ -n "$SSH_EFF_PORT" ] && [ "$SSH_EFF_PORT" != "22" ]; then
+        if ! ss -lnt 2>/dev/null | awk '{print $4}' | grep -qE '(^|[.:])22$'; then
+            if ufw status 2>/dev/null | grep -qE '^22/tcp'; then
+                ufw delete allow 22/tcp >/dev/null 2>&1 || true
+                echo "[maintenance] Снято лишнее правило ufw на 22/tcp: SSH живёт на $SSH_EFF_PORT."
+            fi
+        fi
+    fi
 fi
 
 # 5. Сторож узла — отдельной службой, а не внутри бота.

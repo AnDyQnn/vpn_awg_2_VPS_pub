@@ -110,5 +110,48 @@ for name, path in (("мастера", "/nodescripts/host_audit.sh"),
           "пауза вслепую ничего не гарантирует")
 
 print()
+print("=== проверки судят по делу, а не по настройке ===")
+for name, path in (("мастера", "/nodescripts/host_audit.sh"),
+                   ("Германии", "/descripts/host_audit.sh")):
+    if not os.path.exists(path):
+        continue
+    at = open(path, encoding="utf-8").read()
+    # Предупреждение про пароль было не про пароль, а про перебор. Перебор
+    # закрывает fail2ban — значит и судить надо по нему, иначе проверка врёт.
+    check("вход по паролю смотрит на стража перебора (%s)" % name,
+          "fail2ban-client status sshd" in at,
+          "иначе «уязвимо к брутфорсу» при живом страже")
+    check("нет стража — это ошибка, а не примечание (%s)" % name,
+          'страж перебора не работает' in at)
+    # Мгновенный замер процессора ничего не значит: проверка часто идёт сразу
+    # после сборки образов.
+    check("загрузка судится по среднему за минуту (%s)" % name,
+          "loadavg" in at and "LOAD_X100" in at,
+          "мгновенный замер показывает 100% на ровном месте")
+    check("заплатки знают про ежедневный проход (%s)" % name,
+          "vpn-security-upgrade.timer" in at)
+
+hm = "/scripts/ensure_host_maintenance.sh"
+if os.path.exists(hm):
+    mt = open(hm, encoding="utf-8").read()
+    print()
+    print("=== ежедневный проход по заплаткам ===")
+    check("берёт только ветку безопасности",
+          "/^Inst/ && /security/" in mt,
+          "«обнови всё» задело бы docker и порвало туннель")
+    check("ничего не устанавливает заново",
+          "--only-upgrade" in mt,
+          "тогда и удалять ничего не придётся")
+    check("ждёт замок apt", "DPkg::Lock::Timeout" in mt)
+    check("ежедневно, а не раз в неделю",
+          "OnCalendar=*-*-* 03:40" in mt)
+    print()
+    print("=== лишний порт 22 снимается осторожно ===")
+    check("только если SSH переехал", "SSH_EFF_PORT" in mt)
+    check("и только если его никто не слушает",
+          "ss -lnt" in mt and "ufw delete allow 22/tcp" in mt,
+          "закрывать вход под собой нельзя")
+
+print()
 print("ВСЁ ПРОШЛО" if ok else "ЕСТЬ ПРОВАЛЫ")
 sys.exit(0 if ok else 1)
