@@ -98,6 +98,47 @@ def _config_is_split_tunnel(name):
     return None
 
 
+async def repair_traffic_directions():
+    """Разворачивает историю трафика, записанную с перепутанными колонками.
+
+    Сборщик когда-то писал приём в колонку отдачи: любой качающий выглядел
+    раздающим, и по такой истории нельзя было понять ни кто качает, ни кто
+    раздаёт. Сборщик починен, но записанное до этого так и лежит перевёрнутым.
+
+    Почему само, а не кнопкой. Это не выбор и не настройка: перевёрнутые данные
+    просто неверны, и держать их такими незачем. Кнопка тут была лишней —
+    владельцу предлагалось решать то, у чего один правильный ответ.
+
+    Делается один раз за всю жизнь установки — по отметке в настройках. Даже
+    если разбор данных однажды ошибётся, второй попытки у него не будет.
+
+    Границу ищем строго (см. find_direction_border): один час чьей-то тяжёлой
+    раздачи выглядит так же, как ошибка сборщика, и принять его за границу
+    значит перевернуть всю верную историю.
+    """
+    try:
+        if await db.get_setting("traffic_direction_repaired"):
+            return 0
+        border = await db.find_direction_border()
+        if border is None:
+            return 0
+        rows = await db.count_hourly_before(border)
+        if not rows:
+            return 0
+        await db.swap_hourly_directions(border)
+        await db.set_setting("traffic_direction_repaired",
+                             border.strftime("%Y-%m-%dT%H:%M"))
+        await db.log_event(
+            "Трафик",
+            f"История развёрнута автоматически: строк {rows}, "
+            f"граница {border:%d.%m %H:%M} UTC")
+        print(f"Трафик: история развёрнута, строк {rows}, граница {border}")
+        return rows
+    except Exception as e:
+        print(f"Трафик: развернуть историю не вышло: {e}")
+        return 0
+
+
 async def reconcile_routing_versions():
     """Одноразовая сверка при старте: чинит ключи, которые УЖЕ были перевыпущены до
     фикса бага (routing_version записался как 0), хотя их конфиг по факту содержит

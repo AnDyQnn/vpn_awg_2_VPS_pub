@@ -1175,6 +1175,59 @@ class Database:
         await self.execute("DELETE FROM pps_events WHERE id=$1", int(event_id))
 
     # ------------------------ ЧАСОВЫЕ СРЕЗЫ ------------------------
+    async def find_direction_border(self, min_bytes=50 * 1024 * 1024,
+                                    need_bad=24, need_good=12, purity=0.9):
+        """С какого часа история трафика пишется правильно.
+
+        Признак не зависит от объёмов и числа людей: у обычного человека приём
+        в разы больше отдачи. Пока сборщик путал колонки, час за часом выходило
+        наоборот.
+
+        Условия нарочно строгие, потому что чинится это САМО, без спроса, и
+        ошибиться нельзя ни разу. Один час чьей-то тяжёлой раздачи выглядит
+        точно так же, как ошибка сборщика, — и приняв его за границу, мы
+        перевернули бы всю верную историю. Поэтому требуем не признак, а
+        картину:
+
+          * перевёрнутых часов подряд до границы — не меньше `need_bad`;
+          * правильных часов после неё — не меньше `need_good`;
+          * и по обе стороны не меньше `purity` часов должны быть заодно со
+            своей стороной. Случайный выброс картину не создаёт.
+
+        Тихие часы не в счёт: ночью живого трафика нет, остаются служебные
+        пакеты, а они симметричны и о направлении не говорят ничего.
+
+        Возвращает час, начиная с которого данные верны, или None — если
+        такой картины нет. None значит «не трогать».
+        """
+        rows = await self.fetch_all(
+            "SELECT hour, SUM(bytes_in) AS up, SUM(bytes_out) AS down "
+            "FROM traffic_hourly GROUP BY hour ORDER BY hour")
+        hours = []
+        for r in rows:
+            up, down = int(r["up"] or 0), int(r["down"] or 0)
+            if up + down < min_bytes:
+                continue
+            hours.append((r["hour"], down < up))        # True — перевёрнутый
+        if len(hours) < need_bad + need_good:
+            return None
+
+        # Ищем место, где перевёрнутая часть сменяется правильной.
+        for i in range(need_bad, len(hours) - need_good + 1):
+            before = [bad for _h, bad in hours[:i]]
+            after = [bad for _h, bad in hours[i:]]
+            if sum(before) / len(before) < purity:
+                continue
+            if sum(1 for bad in after if not bad) / len(after) < purity:
+                continue
+            # Края должны быть чистыми: иначе граница поставлена по шуму.
+            if not all(before[-need_bad:]):
+                continue
+            if any(after[:need_good]):
+                continue
+            return hours[i][0]
+        return None
+
     async def count_hourly_before(self, before):
         """Сколько часовых строк старше указанного момента."""
         return await self.fetch_val(
