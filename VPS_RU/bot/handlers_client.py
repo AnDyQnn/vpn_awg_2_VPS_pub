@@ -553,10 +553,10 @@ async def client_key_manage_handler(update: Update, context: ContextTypes.DEFAUL
                       "не заработает — без обрыва._"]
 
     keyboard = [
-        # У Xray человек получает адрес, у AmneziaWG — файл. Называем то, что
-        # он и правда получит: «ссылка» здесь сбивала с толку, потому что по
-        # ней не переходят, её вставляют в приложение.
-        [InlineKeyboardButton("📥 Получить доступ" if on_xray else "📥 Скачать конфиг",
+        # Подпись называет протокол: человеку сразу видно, какое приложение
+        # ему нужно. Слово «ссылка» отсюда убрано — по ней не переходят, её
+        # вставляют в приложение, и переходившие попадали в браузер.
+        [InlineKeyboardButton("📥 Конфиг Xray" if on_xray else "📥 Конфиг AmneziaWG",
                               callback_data=f"client_download_{uuid_val}"),
          InlineKeyboardButton("⚡️ Проверить связь", callback_data=f"check_conn_{uuid_val}")],
         [InlineKeyboardButton("🔄 Перевыпустить", callback_data=f"client_regen_{uuid_val}")],
