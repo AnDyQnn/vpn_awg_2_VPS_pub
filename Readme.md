@@ -98,6 +98,10 @@
 | ![мастер](https://img.shields.io/badge/мастер-58a6ff?style=flat-square) | `vpn_db` | PostgreSQL 15 (пользователи, статистика, логи, тикеты) |
 | ![клиент](https://img.shields.io/badge/клиент-a371f7?style=flat-square) | `de_vpn_agent` | AmneziaWG-клиент + FastAPI Monitor (выход в интернет, метрики) |
 
+> **Карта портов и сетевых границ** — в [docs/ports.md](docs/ports.md): кто где
+> слушает, что видно из интернета, как устроена охрана открытого порта и почему
+> узел когда-то отвечал только российским адресам.
+
 ### Схема потоков
 
 ```mermaid
