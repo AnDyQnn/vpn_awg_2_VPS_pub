@@ -37,9 +37,19 @@ sh("ipset create ru_nets hash:net family inet -exist")
 sh("ipset add ru_nets 203.0.113.0/24 -exist")
 
 print("=== правила ставятся ===")
-rc1, o1 = sh("iptables -t mangle -A PREROUTING ! -i wg0 -m conntrack "
+# Порядок в PREROUTING решает всё: на узле выше стоят RETURN для частных сетей,
+# и адрес контейнера (172.20.0.6) попадает в 172.16.0.0/12 — пакет выходил из
+# цепочки раньше, чем доходил до пометки. Счётчик показывал ноль.
+sh("iptables -t mangle -A PREROUTING -d 172.16.0.0/12 -j RETURN")
+rc1, o1 = sh("iptables -t mangle -I PREROUTING 1 ! -i wg0 -m conntrack "
              "--ctstate NEW -j CONNMARK --set-mark 100")
 check("пометка входящих соединений", rc1 == 0, o1.strip()[:70])
+
+_, pre0 = sh("iptables -t mangle -S PREROUTING")
+pre_lines = [l for l in pre0.splitlines() if l.startswith("-A PREROUTING")]
+check("пометка стоит первой в цепочке",
+      pre_lines and "CONNMARK" in pre_lines[0],
+      pre_lines[0][:70] if pre_lines else "правил нет")
 
 rc2, o2 = sh("iptables -t mangle -I OUTPUT 1 -m connmark --mark 100 -j RETURN")
 check("исключение для их ответов", rc2 == 0, o2.strip()[:70])
