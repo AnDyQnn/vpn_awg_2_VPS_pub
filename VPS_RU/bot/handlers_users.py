@@ -315,7 +315,7 @@ async def render_user_detail(context, chat_id, message_id, uuid):
     if user_ips:
         keyboard.append([InlineKeyboardButton("🧹 Сбросить историю сетей", callback_data=f"clear_ips_{uuid}")])
     
-    keyboard.extend([[InlineKeyboardButton("📨 Отправить доступ", callback_data=f"act_resend_{uuid}")],[InlineKeyboardButton("❌ Удалить пользователя", callback_data=f"confirm_delete_{uuid}")],[InlineKeyboardButton("🔙 Назад к списку", callback_data="users_page_0")]
+    keyboard.extend([[InlineKeyboardButton("📨 Конфиг AmneziaWG", callback_data=f"act_resend_{uuid}")],[InlineKeyboardButton("❌ Удалить пользователя", callback_data=f"confirm_delete_{uuid}")],[InlineKeyboardButton("🔙 Назад к списку", callback_data="users_page_0")]
     ])
     
     if message_id:
