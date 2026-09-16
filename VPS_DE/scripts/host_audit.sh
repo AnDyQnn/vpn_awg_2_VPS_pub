@@ -155,8 +155,23 @@ MSS=$(docker exec "$CONT" iptables -t mangle -S 2>/dev/null | grep -i "TCPMSS")
 WG_DUMP=$(docker exec "$CONT" wg show wg0 dump 2>/dev/null | wc -l)
 [ "${WG_DUMP:-0}" -ge 1 ] && add_check CAT_VPN "Ответ ядра WireGuard" "ok" "Успешно" || add_check CAT_VPN "Ответ ядра WireGuard" "error" "Ядро не отвечает"
 
+# Проверка обратного пути. Требовать здесь ноль — ошибка, скопированная с
+# мастера: там она мешает, потому что ответы приходят через туннель, а уходят
+# через внешний интерфейс. На узле ВЫХОДА такой асимметрии нет — клиентский
+# трафик приходит с wg0 с адресами 10.13.13.x, и обратный путь для них тот же
+# wg0. Строгая проверка здесь работает как задумано и отсекает подделки.
+#
+# Поэтому смотрим не на настройку, а на последствие: сколько пакетов она реально
+# отбросила. Ноль или единицы — она ловит мусор; тысячи — значит мешает своим.
 RP=$(docker exec "$CONT" sysctl -n net.ipv4.conf.all.rp_filter 2>/dev/null)
-[ "$RP" = "0" ] && add_check CAT_VPN "rp_filter (асимм. маршрутизация)" "ok" "0 (верно)" || add_check CAT_VPN "rp_filter (асимм. маршрутизация)" "warning" "${RP:-?} — должно быть 0"
+RP_DROP=$(docker exec "$CONT" sh -c "nstat -az 2>/dev/null | awk '/IPReversePathFilter/{print \$2}'" 2>/dev/null)
+RP_DROP=${RP_DROP:-0}
+case "$RP_DROP" in ''|*[!0-9]*) RP_DROP=0 ;; esac
+if [ "$RP_DROP" -gt 1000 ]; then
+    add_check CAT_VPN "Проверка обратного пути" "warning" "отброшено $RP_DROP пакетов — мешает своим (rp_filter=$RP)"
+else
+    add_check CAT_VPN "Проверка обратного пути" "ok" "rp_filter=$RP, отброшено $RP_DROP — ловит только подделки"
+fi
 
 PEERS_TOTAL=$(docker exec "$CONT" wg show wg0 peers 2>/dev/null | grep -c .)
 add_check CAT_VPN "Пиры WireGuard" "ok" "Всего: ${PEERS_TOTAL:-0} (ожидается 1 — мастер RU)"
