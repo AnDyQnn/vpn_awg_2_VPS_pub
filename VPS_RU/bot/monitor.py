@@ -99,41 +99,44 @@ def _config_is_split_tunnel(name):
 
 
 async def repair_traffic_directions():
-    """Разворачивает историю трафика, записанную с перепутанными колонками.
+    """Разворачивает промежутки истории, записанные с перепутанными колонками.
 
     Сборщик когда-то писал приём в колонку отдачи: любой качающий выглядел
     раздающим, и по такой истории нельзя было понять ни кто качает, ни кто
-    раздаёт. Сборщик починен, но записанное до этого так и лежит перевёрнутым.
+    раздаёт. Сборщик починен, но записанное тогда так и лежит перевёрнутым.
 
     Почему само, а не кнопкой. Это не выбор и не настройка: перевёрнутые данные
-    просто неверны, и держать их такими незачем. Кнопка тут была лишней —
-    владельцу предлагалось решать то, у чего один правильный ответ.
+    просто неверны, и держать их такими незачем. Кнопка предлагала владельцу
+    решать то, у чего один правильный ответ.
 
     Делается один раз за всю жизнь установки — по отметке в настройках. Даже
     если разбор данных однажды ошибётся, второй попытки у него не будет.
-
-    Границу ищем строго (см. find_direction_border): один час чьей-то тяжёлой
-    раздачи выглядит так же, как ошибка сборщика, и принять его за границу
-    значит перевернуть всю верную историю.
     """
     try:
         if await db.get_setting("traffic_direction_repaired"):
             return 0
-        border = await db.find_direction_border()
-        if border is None:
+        spans = await db.find_inverted_spans()
+        if not spans:
             return 0
-        rows = await db.count_hourly_before(border)
-        if not rows:
+        total = 0
+        parts = []
+        for start_h, end_h in spans:
+            n = await db.count_hourly_range(start_h, end_h)
+            if not n:
+                continue
+            await db.swap_hourly_range(start_h, end_h)
+            total += n
+            parts.append(f"{start_h:%d.%m %H:%M}–{end_h:%d.%m %H:%M}")
+        if not total:
             return 0
-        await db.swap_hourly_directions(border)
         await db.set_setting("traffic_direction_repaired",
-                             border.strftime("%Y-%m-%dT%H:%M"))
+                             datetime.utcnow().strftime("%Y-%m-%dT%H:%M"))
         await db.log_event(
             "Трафик",
-            f"История развёрнута автоматически: строк {rows}, "
-            f"граница {border:%d.%m %H:%M} UTC")
-        print(f"Трафик: история развёрнута, строк {rows}, граница {border}")
-        return rows
+            f"История развёрнута автоматически: строк {total}, "
+            f"промежутки: {', '.join(parts)}")
+        print(f"Трафик: развёрнуто строк {total}, промежутки {parts}")
+        return total
     except Exception as e:
         print(f"Трафик: развернуть историю не вышло: {e}")
         return 0
