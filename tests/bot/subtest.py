@@ -93,7 +93,12 @@ async def main():
         print("\n=== что видит клиент ===")
         print({k: v for k, v in head.items()
                if k.lower().startswith(("profile", "subscription", "cache"))})
-        assert head["profile-update-interval"] == "12"
+        # Не прибиваем число гвоздями: важно, что клиенту названо то же, чем
+        # живёт сервер, и что перечитывать предлагается достаточно часто —
+        # перевыпуск отзывает ключ сразу, и до следующего опроса человек без
+        # связи.
+        assert head["profile-update-interval"] == str(subscription.UPDATE_INTERVAL_HOURS)
+        assert subscription.UPDATE_INTERVAL_HOURS <= 3, subscription.UPDATE_INTERVAL_HOURS
         assert base64.b64decode(head["profile-title"].split(":", 1)[1]).decode() == "Ника"
         info = dict(p.strip().split("=") for p in head["subscription-userinfo"].split(";"))
         assert info["upload"] == "1000" and info["download"] == "2000", info
@@ -115,14 +120,30 @@ async def main():
             assert "vpn" not in (await r.text()).lower()
         print("везде 404, корень молчит: ок")
 
-        print("\n=== отзыв ссылки действует сразу ===")
-        ok, new_token = await xray.issue("sb-1")
+        print("\n=== перевыпуск: адрес живёт, ключ меняется ===")
+        # Раньше здесь ждали, что адрес умрёт. Именно это и ломало людям связь:
+        # адрес в приложении переставал отвечать, а сервера в нём оставались с
+        # уже отозванным ключом.
+        before = await db.get_xray_user("sb-1")
+        ok, same_token = await xray.issue("sb-1")
+        assert ok and same_token == token, "адрес обязан пережить перевыпуск"
+        after = await db.get_xray_user("sb-1")
+        assert after["xray_uuid"] != before["xray_uuid"], "ключ обязан смениться"
+        async with s.get(f"{BASE}/sub/{token}") as r:
+            assert r.status == 200, "прежний адрес обязан отвечать"
+            body = base64.b64decode(await r.text()).decode("utf-8", "replace")
+        assert after["xray_uuid"] in body, "по нему должен приезжать новый ключ"
+        assert before["xray_uuid"] not in body, "отозванный ключ не должен доезжать"
+        print("адрес прежний, ключ новый: ок")
+
+        print("\n=== смена самого адреса — по отдельной просьбе ===")
+        ok, new_token = await xray.issue("sb-1", new_address=True)
         assert ok and new_token != token
         async with s.get(f"{BASE}/sub/{token}") as r:
-            assert r.status == 404, "старая ссылка обязана умереть немедленно"
+            assert r.status == 404, "прежний адрес обязан умереть немедленно"
         async with s.get(f"{BASE}/sub/{new_token}") as r:
             assert r.status == 200
-        print("старая мертва, новая жива: ок")
+        print("старый адрес мёртв, новый жив: ок")
 
         print("\n=== адрес подписки ===")
         # Раньше без настройки адреса ссылку не показывали вовсе — подписка

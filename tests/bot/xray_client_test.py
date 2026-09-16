@@ -150,16 +150,23 @@ async def main():
     assert "файл конфигурации" in sent["screen"], sent["screen"]
     print("для каждого свой текст: ок")
 
-    print("\n=== перевыпуск меняет ссылку ===")
+    print("\n=== перевыпуск: ключ новый, адрес прежний ===")
+    # Ожидание «адрес должен смениться» тут и было ошибкой: человек
+    # перевыпускал доступ, адрес в его приложении умирал, а приложение
+    # оставалось с отозванным ключом. Выглядело как «ничего не работает».
     sent["messages"], sent["photos"] = [], []
+    before = await db.get_xray_user("cl-1")
     await hc.client_regen_action(upd, ctx, "cl-1")
     rec = await db.get_xray_user("cl-1")
-    assert rec["sub_token"] != token, "токен не сменился"
-    assert await xray.subscription_body(token) == "", "старая ссылка ещё жива"
+    assert rec["sub_token"] == token, "адрес подписки обязан пережить перевыпуск"
+    assert rec["xray_uuid"] != before["xray_uuid"], "ключ доступа обязан смениться"
+    import base64 as _b64
+    body = _b64.b64decode(await xray.subscription_body(token)).decode("utf-8", "replace")
+    assert rec["xray_uuid"] in body, "по прежнему адресу должен приезжать новый ключ"
     # Человеку уходит один адрес — подписка. Разовая ссылка осталась
     # у владельца: человеку нужен один способ подключиться, а не три.
     assert any("vless://" in m for m in sent["messages"]), sent["messages"]
-    print("новая ссылка выдана, старая мертва: ок")
+    print("адрес прежний, ключ новый: ок")
 
     await db.execute("DELETE FROM users WHERE uuid LIKE 'cl-%'")
     print("\nВСЁ ПРОШЛО")
