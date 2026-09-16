@@ -135,9 +135,25 @@ sleep 1
 
 echo "host" > "$STATUS_FILE"
 
+# Загрузка процессора. Одно мгновение здесь не значит ничего: проверка часто
+# идёт сразу после сборки образов, и мгновенный замер показывает 100% там, где
+# узел просто доделывает работу. Такое замечание появляется в каждом отчёте и
+# поэтому не читается.
+#
+# Смотрим на среднее за минуту относительно числа ядер: это и есть «перегружен
+# ли узел», а не «занят ли он прямо сейчас».
 CPU_IDLE=$(vmstat 1 2 | tail -1 | awk '{print $15}')
 CPU_USE=$(( 100 - ${CPU_IDLE:-0} ))
-[ "$CPU_USE" -lt 90 ] && add_check CAT_HOST "Загрузка CPU" "ok" "${CPU_USE}%" || add_check CAT_HOST "Загрузка CPU" "warning" "Высокая: ${CPU_USE}%"
+LOAD1=$(awk '{print $1}' /proc/loadavg)
+NCPU=$(nproc 2>/dev/null || echo 1)
+# Порог — полтора ядра на ядро: кратковременная очередь это норма, устойчивая
+# перегрузка — нет. Сравниваем целыми числами, умножив на сто.
+LOAD_X100=$(awk -v l="$LOAD1" -v n="$NCPU" 'BEGIN{printf "%d", (l/n)*100}')
+if [ "${LOAD_X100:-0}" -lt 150 ]; then
+    add_check CAT_HOST "Загрузка CPU" "ok" "сейчас ${CPU_USE}%, среднее за минуту ${LOAD1} на ${NCPU} ядр."
+else
+    add_check CAT_HOST "Загрузка CPU" "warning" "перегружен: среднее за минуту ${LOAD1} на ${NCPU} ядр."
+fi
 
 IO_WAIT=$(vmstat 1 2 | tail -1 | awk '{print $16}')
 [ "${IO_WAIT:-0}" -lt 15 ] && add_check CAT_HOST "Дисковый I/O Wait" "ok" "${IO_WAIT:-0}%" || add_check CAT_HOST "Дисковый I/O Wait" "warning" "${IO_WAIT:-0}% (Медленный диск)"
@@ -371,10 +387,27 @@ if [ -z "$SSHD_EFF" ]; then
     add_check CAT_SEC "Вход по паролю (SSH)" "warning" "Не удалось прочитать настройки sshd"
     SSH_PORT=$(grep -iE "^Port\s+" /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}')
 else
+    # Есть ли страж перебора. Предупреждение про пароль было не про пароль как
+    # таковой, а про перебор — а его закрывает fail2ban. Писать «уязвимо к
+    # брутфорсу» при живом страже значит врать, и такие строки перестают
+    # читать вместе с настоящими.
+    F2B_BANNED=""
+    if systemctl is-active --quiet fail2ban 2>/dev/null; then
+        if fail2ban-client status sshd >/dev/null 2>&1; then
+            F2B_BANNED=$(fail2ban-client status sshd 2>/dev/null |
+                         awk '/Total banned/{print $NF}')
+            F2B_BANNED="${F2B_BANNED:-0}"
+        fi
+    fi
+
     ROOT_SSH=$(echo "$SSHD_EFF" | grep -i "^permitrootlogin " | awk '{print $2}')
     case "$ROOT_SSH" in
         yes)
-            add_check CAT_SEC "SSH Root Login" "warning" "Разрешен (Рекомендуется отключить)" ;;
+            if [ -n "$F2B_BANNED" ]; then
+                add_check CAT_SEC "SSH Root Login" "ok" "Разрешён осознанно, перебор закрывает fail2ban"
+            else
+                add_check CAT_SEC "SSH Root Login" "warning" "Разрешён, и перебор ничем не закрыт"
+            fi ;;
         prohibit-password|without-password)
             add_check CAT_SEC "SSH Root Login" "ok" "Только по ключу" ;;
         *)
@@ -386,7 +419,11 @@ else
     if [ "$SSH_PASS" = "yes" ] || [ "$SSH_KBD" = "yes" ]; then
         # Проверяем обе: клавиатурный вход — это тот же пароль, просто спрошенный
         # иначе, и отключив только первую, защиты не получаешь.
-        add_check CAT_SEC "Вход по паролю (SSH)" "warning" "Разрешен (Уязвимо к брутфорсу)"
+        if [ -n "$F2B_BANNED" ]; then
+            add_check CAT_SEC "Вход по паролю (SSH)" "ok" "Разрешён осознанно; перебор закрыт, забанено за всё время: $F2B_BANNED"
+        else
+            add_check CAT_SEC "Вход по паролю (SSH)" "error" "Разрешён, а страж перебора не работает"
+        fi
     else
         add_check CAT_SEC "Вход по паролю (SSH)" "ok" "Отключен (по ключам)"
     fi
@@ -495,7 +532,13 @@ elif [ "${SEC:-0}" -gt 0 ]; then
     SEC_NAMES=$(printf '%s
 ' "$UPD_LIST" | grep "security" | awk '{print $2}' | head -4 | tr '
 ' ' ')
-    add_check CAT_LOGS "Заплатки безопасности ОС" "warning" "Ждут $SEC: $SEC_NAMES(ставятся в воскресенье 03:00)"
+    if systemctl is-active --quiet vpn-security-upgrade.timer 2>/dev/null; then
+        # Ежедневный проход есть — значит ждать им до завтра, а не до
+        # воскресенья, и это уже не замечание.
+        add_check CAT_LOGS "Заплатки безопасности ОС" "ok" "Ждут $SEC, ставятся сегодня ночью: $SEC_NAMES"
+    else
+        add_check CAT_LOGS "Заплатки безопасности ОС" "warning" "Ждут $SEC, а ежедневный проход не заведён: $SEC_NAMES"
+    fi
     add_check CAT_LOGS "Системные обновления ОС" "ok" "Ждут $UPDATES, ставятся по расписанию"
 else
     add_check CAT_LOGS "Системные обновления ОС" "ok" "Ждут $UPDATES, среди них заплаток безопасности нет"
