@@ -400,14 +400,14 @@ async def profile_links(user_uuid):
     входов и заводились.
     """
     out = []
-    for port, dest in await entries():
-        link = await profile_link(user_uuid, port=port, dest=dest)
+    for i, (port, dest) in enumerate(await entries()):
+        link = await profile_link(user_uuid, port=port, dest=dest, index=i)
         if link:
             out.append(link)
     return out
 
 
-async def profile_link(user_uuid, port=None, dest=None) -> str:
+async def profile_link(user_uuid, port=None, dest=None, index=0) -> str:
     """Сама строка подключения — то, что человек вставляет в приложение."""
     rec = await db.get_xray_user(user_uuid)
     if not rec:
@@ -421,8 +421,17 @@ async def profile_link(user_uuid, port=None, dest=None) -> str:
     # Вход: по умолчанию основной, но подписка собирает ссылку на каждый.
     port = port or cfg["port"]
     dest = dest or cfg["dest"]
-    # Имя профиля с маской: в приложении видно, какой вход сейчас работает.
-    name = f"{name} · {dest}" if dest != cfg["dest"] else name
+    # Имя входа в приложении.
+    #
+    # Раньше сюда подставлялась маска — домен, которым прикидывается вход. Для
+    # нас это опознавательный знак, а человек видел в списке «Сбербанк» и
+    # «Wildberries» и справедливо не понимал, откуда у него чужие сервера и
+    # почему их три. Маска — наша внутренняя кухня, показывать её незачем.
+    #
+    # Пишем то, что человеку и правда нужно знать: какой вход основной, а какие
+    # запасные. Пробуются они по порядку, и это единственное, что про них важно.
+    if index > 0:
+        name = f"{name} · запасной {index}"
     return (f"vless://{rec['xray_uuid']}@{host}:{port}"
             f"?type=tcp&security=reality&sni={mask_for(dest, user_uuid)}"
             f"&fp=chrome&pbk={cfg['public_key']}&sid={cfg['short_id']}"

@@ -1332,7 +1332,9 @@ async def _send_xray_split_notice(app, key, domains):
             "Ниже — обновлённое подключение. Скопируйте текст целиком и "
             "вставьте в приложение: оно заменит настройки само, ключ у вас "
             "остаётся прежним.")
+    from utils import copy_button
     kb = InlineKeyboardMarkup([
+        [copy_button(blob)],
         [InlineKeyboardButton("🌐 Список исключений", callback_data="client_bypass_info")],
         [InlineKeyboardButton("🔕 Не напоминать", callback_data="client_notify_off")],
         [InlineKeyboardButton("🏠 Личный кабинет", callback_data="client_menu")],

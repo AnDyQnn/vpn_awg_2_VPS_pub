@@ -12,7 +12,8 @@ from telegram.ext import ContextTypes
 
 import xray
 from database import db
-from utils import exit_kb, escape_md, show_screen, send_copyable
+from utils import (exit_kb, escape_md, show_screen, send_copyable,
+                   copy_button)
 
 BACK_SERVICE = [InlineKeyboardButton("🔙 Администрирование", callback_data="svc_menu")]
 
@@ -146,9 +147,14 @@ async def send_link(update: Update, context: ContextTypes.DEFAULT_TYPE, uuid_val
                                            disable_web_page_preview=True)
             if qr:
                 await context.bot.send_photo(chat_id=tid, photo=open(qr, "rb"))
-            # Ссылку отдельным сообщением и кодом: так она копируется
-            # одним касанием и не ломается о собственные подчёркивания.
-            await send_copyable(context.bot, tid, link)
+            # Ссылку отдельным сообщением и кодом: так она не ломается о
+            # собственные подчёркивания. А рядом — кнопка «скопировать»:
+            # адрес подписки некоторые клиенты Telegram делают нажимаемым
+            # прямо в коде, и человек, ткнув в него, попадал в браузер и видел
+            # гору base64 вместо подписки.
+            await send_copyable(context.bot, tid, link,
+                                reply_markup=InlineKeyboardMarkup(
+                                    [[copy_button(link)]]))
         ok, err = await track_send(uuid_val, tid, _send)
         sent += 1 if ok else 0
 
@@ -156,7 +162,9 @@ async def send_link(update: Update, context: ContextTypes.DEFAULT_TYPE, uuid_val
         await context.bot.send_message(chat_id=query.message.chat_id,
                                        text=f"{user['name']} — Telegram не привязан, "
                                             f"ссылка ниже")
-        await send_copyable(context.bot, query.message.chat_id, link)
+        await send_copyable(context.bot, query.message.chat_id, link,
+                            reply_markup=InlineKeyboardMarkup(
+                                [[copy_button(link)]]))
     await query.answer("Отправлено" if sent else "Telegram не привязан — ссылка здесь")
     await connections_screen(update, context, uuid_val)
 
@@ -576,10 +584,15 @@ async def handout(update, context, uuid_val, name, tg_id=None):
         reply_markup=exit_kb(("👥 Люди", "list_users")))
     if qr:
         await context.bot.send_photo(chat_id=chat_id, photo=open(qr, "rb"))
-    # Ссылка отдельным сообщением и кодом: копируется одним касанием и не
-    # ломается о собственные подчёркивания.
-    # Без кнопки: Telegram не принимает схему `vless://` в кнопке.
-    await send_copyable(context.bot, chat_id, link)
+    # Ссылка отдельным сообщением и кодом: не ломается о собственные
+    # подчёркивания. Кнопка «скопировать» кладёт её в буфер по нажатию —
+    # раньше человек тыкал в адрес подписки, попадал в браузер и видел гору
+    # base64 вместо подписки.
+    #
+    # Кнопка именно копирующая, а не ссылочная: схему `vless://` Telegram в
+    # ссылке не принимает вовсе.
+    await send_copyable(context.bot, chat_id, link,
+                        reply_markup=InlineKeyboardMarkup([[copy_button(link)]]))
 
     if tg_id:
         from delivery import track_send

@@ -11,7 +11,7 @@ from utils import (
     api_session,
     send_copyable,
     escape_md, WG_API_URL, state_data, check_admin, CONFIGS_DIR, dt_to_moscow,
-    ts_to_moscow, safe_delete, GOSUSLUGI_APP_WARNING
+    ts_to_moscow, safe_delete, GOSUSLUGI_APP_WARNING, copy_button
 )
 from database import db
 from delivery import track_send
@@ -720,7 +720,8 @@ async def send_xray_profile(context, chat_id, uuid_val):
     # Ссылка — отдельным сообщением и кодом: по коду достаточно нажать, и он
     # копируется целиком. Поэтому подсказка идёт следующим сообщением, а не
     # приклеивается к ссылке — иначе скопировалось бы и её.
-    await send_copyable(context.bot, chat_id, link)
+    await send_copyable(context.bot, chat_id, link,
+                        reply_markup=InlineKeyboardMarkup([[copy_button(link)]]))
 
     # Подсказка — она же первое знакомство. Человек, которому только что
     # выдали доступ, ниоткуда не знает, что нужно приложение и где его брать:
