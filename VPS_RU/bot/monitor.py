@@ -331,46 +331,111 @@ async def get_dashboard():
     )
 
 # ------------------------ СИСТЕМНЫЕ АЛЕРТЫ ------------------------
+
+# Сколько раз подряд узел должен не ответить, прежде чем звать владельца.
+#
+# Раньше хватало одного неудачного запроса с пятисекундным ожиданием — и
+# приходило «Агент недоступен, упал туннель или сервис». Хватало занятого
+# агента, снятия копии или секундной задержки в туннеле. Владелец бежал
+# смотреть, а там всё работало.
+#
+# Проверки идут раз в пять минут, так что три промаха — это четверть часа
+# молчания подряд. Настоящее падение столько не прячется, а случайная заминка
+# не доживает.
+DE_MISSES_TO_ALERT = 3
+_de_misses = 0
+
+
+def _overloaded(load1, cores):
+    """Перегружен ли узел. Судим по среднему за минуту, а не по мгновению.
+
+    Мгновенный замер показывает сотню на ровном месте: хватает ночной проверки
+    обновлений или снятия копии. Такие тревоги приходят регулярно, ничего не
+    значат — и их перестают читать вместе с настоящими.
+
+    Полтора на ядро: кратковременная очередь это норма, устойчивая — нет.
+    """
+    try:
+        return float(load1) / max(1, int(cores or 1)) >= 1.5
+    except (TypeError, ValueError):
+        return False
+
+
 async def resource_monitor_loop(app):
+    global _de_misses
     while True:
-        await asyncio.sleep(300) 
+        await asyncio.sleep(300)
         now = time.time()
-        
+
         def should_alert(key):
             if key not in resource_alert_cache or (now - resource_alert_cache[key]) > 3600:
                 resource_alert_cache[key] = now
                 return True
             return False
 
-        alerts = []
+        # Тревоги разного рода: у них разные заголовки. Раньше всё шло под
+        # «Критическая нагрузка», и сообщение о недоступном узле читалось как
+        # «упал И перегружен» разом — ровно то, чего не было.
+        load_alerts = []
+        down_alerts = []
 
-        cpu_ru = psutil.cpu_percent(interval=1)
+        try:
+            import os as _os
+            load1 = _os.getloadavg()[0]
+            cores = psutil.cpu_count() or 1
+        except Exception:
+            load1, cores = 0, 1
         ram_ru = psutil.virtual_memory().percent
         disk_ru = psutil.disk_usage("/").percent
-        
-        if cpu_ru > 90 and should_alert("RU_CPU"): alerts.append(f"🇷🇺 **RU CPU:** {cpu_ru}%")
-        if ram_ru > 95 and should_alert("RU_RAM"): alerts.append(f"🇷🇺 **RU RAM:** {ram_ru}%")
-        if disk_ru > 90 and should_alert("RU_DISK"): alerts.append(f"🇷🇺 **RU Диск:** {disk_ru}%")
+
+        if _overloaded(load1, cores) and should_alert("RU_CPU"):
+            load_alerts.append(f"🇷🇺 **Мастер:** среднее за минуту {load1:.2f} на {cores} ядр.")
+        if ram_ru > 95 and should_alert("RU_RAM"):
+            load_alerts.append(f"🇷🇺 **Мастер, память:** {ram_ru}%")
+        if disk_ru > 90 and should_alert("RU_DISK"):
+            load_alerts.append(f"🇷🇺 **Мастер, диск:** {disk_ru}%")
 
         try:
             async with api_session() as session:
-                async with session.get(f"{DE_AGENT_URL}/system_stats", timeout=5) as resp:
-                    if resp.status == 200:
-                        de_data = await resp.json()
-                        cpu_de = de_data.get('cpu', 0)
-                        ram_de = de_data.get('ram', 0)
-                        disk_de = de_data.get('disk', 0)
-                        
-                        if cpu_de > 90 and should_alert("DE_CPU"): alerts.append(f"🇩🇪 **DE CPU:** {cpu_de}%")
-                        if ram_de > 95 and should_alert("DE_RAM"): alerts.append(f"🇩🇪 **DE RAM:** {ram_de}%")
-                        if disk_de > 90 and should_alert("DE_DISK"): alerts.append(f"🇩🇪 **DE Диск:** {disk_de}%")
-        except Exception:
-            if should_alert("DE_DOWN"): alerts.append("🇩🇪 **DE Агент недоступен!** (Упал туннель или сервис)")
+                async with session.get(f"{DE_AGENT_URL}/system_stats", timeout=10) as resp:
+                    if resp.status != 200:
+                        raise RuntimeError(f"код {resp.status}")
+                    de_data = await resp.json()
+            _de_misses = 0
+            ram_de = de_data.get("ram", 0)
+            disk_de = de_data.get("disk", 0)
+            # Германия отдаёт и мгновенный процент, и среднее — если умеет.
+            # Не умеет (старая версия) — по нагрузке её просто не судим, а не
+            # выдумываем тревогу из мгновенного замера.
+            load_de = de_data.get("load1")
+            cores_de = de_data.get("cores", 1)
+            if load_de is not None and _overloaded(load_de, cores_de) and should_alert("DE_CPU"):
+                load_alerts.append(
+                    f"🇩🇪 **Германия:** среднее за минуту {float(load_de):.2f} на {cores_de} ядр.")
+            if ram_de > 95 and should_alert("DE_RAM"):
+                load_alerts.append(f"🇩🇪 **Германия, память:** {ram_de}%")
+            if disk_de > 90 and should_alert("DE_DISK"):
+                load_alerts.append(f"🇩🇪 **Германия, диск:** {disk_de}%")
+        except Exception as e:
+            _de_misses += 1
+            if _de_misses >= DE_MISSES_TO_ALERT and should_alert("DE_DOWN"):
+                down_alerts.append(
+                    f"🇩🇪 **Германия не отвечает** — подряд {_de_misses} раза, "
+                    f"это больше четверти часа.\n_Последняя причина: {e}_")
 
-        if alerts and ADMIN_ID:
-            msg = "⚠️ **Критическая нагрузка на систему!**\n\n" + "\n".join(alerts)
-            try: await notify_admin(app, text=msg, parse_mode="Markdown")
-            except: pass
+        if not (load_alerts or down_alerts) or not ADMIN_ID:
+            continue
+
+        parts = []
+        if down_alerts:
+            parts.append("🚨 **Узел не отвечает**\n\n" + "\n".join(down_alerts))
+        if load_alerts:
+            parts.append("⚠️ **Высокая нагрузка**\n\n" + "\n".join(load_alerts))
+        try:
+            await notify_admin(app, text="\n\n".join(parts), parse_mode="Markdown")
+        except Exception:
+            pass
+
 
 # ------------------------ MONITOR & ANTI-SHARING ------------------------
 async def alert_loop(app):

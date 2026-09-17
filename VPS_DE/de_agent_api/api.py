@@ -232,7 +232,19 @@ def get_system_stats():
         try: disk = psutil.disk_usage("/hostfs").percent
         except: disk = psutil.disk_usage("/").percent
 
-        return {"cpu": cpu, "ram": ram, "disk": disk}
+        # Среднее за минуту и число ядер. Мгновенный процент оставляем — он
+        # нужен для дашборда, где человек смотрит «что сейчас». А вот СУДИТЬ по
+        # нему нельзя: ночная проверка обновлений или снятие копии поднимают
+        # его до сотни на пустом месте, и мастер слал тревогу о перегрузке
+        # туда, где нагрузки нет.
+        try:
+            load1 = os.getloadavg()[0]
+            cores = psutil.cpu_count() or 1
+        except Exception:
+            load1, cores = None, 1
+
+        return {"cpu": cpu, "ram": ram, "disk": disk,
+                "load1": load1, "cores": cores}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
