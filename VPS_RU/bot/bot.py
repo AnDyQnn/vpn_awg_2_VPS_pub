@@ -33,7 +33,7 @@ from monitor import (
     load_collector_loop, retire_watch_loop, notify_admin, migration_watch_loop, weekly_health_loop,
     bypass_list_handler, bypass_happ_handler,
     bypass_del_handler, bypass_add_manual_handler, bypass_add_request_handler,
-    reconcile_routing_versions, repair_traffic_directions
+    reconcile_routing_versions, repair_traffic_directions, geo_files_loop
 )
 from wireguard_manager import pause_peer, resume_peer
 
@@ -1499,6 +1499,8 @@ async def post_init(application):
         asyncio.create_task(ensure_api_token(application)),
         # Попытки на закрытое забираем с узла и складываем как заявки.
         asyncio.create_task(hits_loop(application)),
+        # Гео-файлы для приложения: без них профиль маршрутизации не применяется.
+        asyncio.create_task(geo_files_loop(application)),
         # И дальше раз в час: клиент-сервер мог подняться позже мастера, и
         # догонять его иначе было бы нечем.
         asyncio.create_task(watch_api_token(application)),

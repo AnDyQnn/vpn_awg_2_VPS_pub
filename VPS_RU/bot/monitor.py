@@ -98,6 +98,85 @@ def _config_is_split_tunnel(name):
     return None
 
 
+# --- Гео-файлы для приложения ------------------------------------------------
+#
+# Приложение тянет их само, и по умолчанию с GitHub — который из России не
+# открывается. Без них оно считает профиль маршрутизации испорченным целиком.
+# Поэтому качаем мы и раздаём со своего узла: сюда GitHub доступен, потому что
+# наружу бот ходит через Германию.
+GEO_DIR = "/volumes/geo"
+GEO_SOURCE = ("https://github.com/Loyalsoldier/v2ray-rules-dat/releases/"
+              "latest/download/%s")
+GEO_FILES = ("geosite.dat", "geoip.dat")
+# Раз в сутки: списки обновляются ежедневно, а весят мегабайты.
+GEO_REFRESH_HOURS = 24
+# Файл меньше этого — не файл, а страница с ошибкой или обрывок. Класть такой
+# на место целого значит сломать профиль у всех разом.
+GEO_MIN_BYTES = 100 * 1024
+
+
+async def fetch_geo_files(force=False):
+    """Скачивает гео-файлы, если пора. Возвращает, сколько обновилось.
+
+    Пишем через временный файл: оборвись загрузка на середине, приложение
+    получило бы обрубок и снова сказало бы «повреждены».
+    """
+    import os
+    import time as _t
+    import aiohttp
+
+    os.makedirs(GEO_DIR, exist_ok=True)
+    updated = 0
+    for name in GEO_FILES:
+        path = os.path.join(GEO_DIR, name)
+        try:
+            fresh = (os.path.getsize(path) >= GEO_MIN_BYTES and
+                     _t.time() - os.path.getmtime(path) < GEO_REFRESH_HOURS * 3600)
+        except OSError:
+            fresh = False
+        if fresh and not force:
+            continue
+        tmp = path + ".part"
+        try:
+            timeout = aiohttp.ClientTimeout(total=180)
+            async with aiohttp.ClientSession(timeout=timeout) as s:
+                async with s.get(GEO_SOURCE % name) as r:
+                    if r.status != 200:
+                        print(f"Гео-файлы: {name} — код {r.status}")
+                        continue
+                    data = await r.read()
+            if len(data) < GEO_MIN_BYTES:
+                print(f"Гео-файлы: {name} пришёл слишком мал ({len(data)} б)")
+                continue
+            with open(tmp, "wb") as f:
+                f.write(data)
+            os.replace(tmp, path)
+            updated += 1
+            print(f"Гео-файлы: {name} обновлён, {len(data) // 1024} КБ")
+        except Exception as e:
+            print(f"Гео-файлы: {name} не скачался: {e}")
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+    return updated
+
+
+async def geo_files_loop(app):
+    """Держит гео-файлы свежими. Первый заход — сразу после старта.
+
+    Без них у людей на Xray не работает ничего: приложение считает профиль
+    маршрутизации испорченным и не применяет его вовсе.
+    """
+    await asyncio.sleep(60)
+    while True:
+        try:
+            await fetch_geo_files()
+        except Exception as e:
+            print(f"Гео-файлы: {e}")
+        await asyncio.sleep(3600)
+
+
 async def repair_traffic_directions():
     """Разворачивает промежутки истории, записанные с перепутанными колонками.
 
