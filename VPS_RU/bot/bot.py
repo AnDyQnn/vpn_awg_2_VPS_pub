@@ -62,7 +62,7 @@ from handlers_admin import (
     restore_file_handler, export_excel, run_audit_handler, schedule_update_menu, toggle_auto_update,
     support_admin_menu, support_user_tickets, support_ticket_detail, support_reply_start, support_close_ticket,
     de_confirm_reboot, do_de_reboot_server, de_read_logs,
-    de_update, de_backup, de_run_audit, update_all
+    de_update, de_backup, de_run_audit, update_all, backups_list_screen
 )
 from handlers_users import (
     users_list_menu, user_detail_menu, confirm_delete_menu, action_delete_user, action_resend_config,

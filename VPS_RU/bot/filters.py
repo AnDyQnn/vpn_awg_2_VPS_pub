@@ -233,8 +233,11 @@ async def filters_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for uuid_val, cats in by_uuid.items():
             user = await db.get_user_by_uuid(uuid_val)
             name = escape_md((user or {}).get("name") or uuid_val[:8])
-            titles = ", ".join(TITLES_ALL.get(c, c) for c in cats)
-            lines.append(f"• **{name}** — {titles}")
+            # Имя переменной не должно совпадать с именем функции titles():
+            # присваивание делает её локальной на всю функцию, и вызов выше
+            # падает с UnboundLocalError — экран просто не открывался.
+            cat_names = ", ".join(TITLES_ALL.get(c, c) for c in cats)
+            lines.append(f"• **{name}** — {cat_names}")
 
     if sizes:
         lines += ["", "_Загружено доменов: "
