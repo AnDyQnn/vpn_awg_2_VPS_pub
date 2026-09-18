@@ -137,6 +137,10 @@ async def hits_screen(update: Update, context: ContextTypes.DEFAULT_TYPE, page=0
             lines.append(f"{mark} {_when(row['happened_at'])} · **{who}**")
             lines.append(f"     `{escape_md(row['domain'])}`"
                          + (f" · `{row['ref']}`" if row.get("ref") else ""))
+        # Срок хранения — здесь, а не в настройках: он объясняет, почему
+        # старого в списке нет, ровно там, где этот вопрос и возникает.
+        lines += ["", "_Разобранные хранятся %d дней, неразобранные — %d._"
+                  % (db.HITS_KEEP_SEEN_DAYS, db.HITS_KEEP_NEW_DAYS)]
 
     kb = []
     for row in rows:

@@ -764,8 +764,11 @@ class Database:
     async def list_filter_hits(self, limit=20, offset=0, only_new=False):
         where = "WHERE seen_at IS NULL" if only_new else ""
         rows = await self.fetch_all(
+            # ref обязателен: человек приходит с номером со страницы отказа,
+            # и по списку он должен найтись глазами, а не только поиском.
+            # Его тут не было — экран рисовал пустоту и молчал об этом.
             f"""SELECT id, happened_at, user_uuid, name, tunnel_ip, public_ip,
-                       domain, category, seen_at
+                       domain, category, seen_at, ref
                 FROM filter_hits {where}
                 ORDER BY happened_at DESC LIMIT $1 OFFSET $2""", limit, offset)
         return [dict(r) for r in rows]
@@ -1593,6 +1596,31 @@ class Database:
             ORDER BY s.last_seen ASC
         """
         return await self.fetch_all(query)
+
+    # Сколько живут карточки инцидентов.
+    #
+    # Разобранные — месяц: смысл карточки в разборе, а после него она нужна
+    # разве что вспомнить, что это уже было. Неразобранные — квартал: то, до
+    # чего руки не дошли, не должно исчезать само, иначе уборка прячет работу.
+    #
+    # Дело не в месте (записей единицы в день), а в том, что список, где всё за
+    # всё время, перестают открывать.
+    HITS_KEEP_SEEN_DAYS = 30
+    HITS_KEEP_NEW_DAYS = 90
+
+    async def cleanup_filter_hits(self):
+        """Убирает старые инциденты. Возвращает, сколько убрано."""
+        before = await self.fetch_val("SELECT COUNT(*) FROM filter_hits") or 0
+        await self.execute(
+            "DELETE FROM filter_hits WHERE seen_at IS NOT NULL "
+            "AND happened_at < NOW() - INTERVAL '%d DAYS'"
+            % int(self.HITS_KEEP_SEEN_DAYS))
+        await self.execute(
+            "DELETE FROM filter_hits WHERE seen_at IS NULL "
+            "AND happened_at < NOW() - INTERVAL '%d DAYS'"
+            % int(self.HITS_KEEP_NEW_DAYS))
+        after = await self.fetch_val("SELECT COUNT(*) FROM filter_hits") or 0
+        return before - after
 
     async def cleanup_old_logs(self, days=7):
         await self.execute(f"DELETE FROM events_log WHERE timestamp < NOW() - INTERVAL '{days} DAYS'")
