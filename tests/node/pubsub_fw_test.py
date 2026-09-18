@@ -176,5 +176,23 @@ else:
     check("сторож доступен для проверки", False, "нет /scripts/vpn_watchdog.sh")
 
 print()
+print("=== сверка смотрит на порт, когда охрана уже вернулась ===")
+# Перезапуск докера стирает DOCKER-USER, а возвращает правила шаг подписки.
+# Сверка стояла ПЕРЕД ним и каждый раз видела молчащий вход: в отчёте после
+# каждой выкладки лежало расхождение «сертификат есть, а порт молчит»,
+# которого через минуту уже не было.
+dep = "/nodescripts/deploy.sh"
+if os.path.exists(dep):
+    dtext = open(dep, encoding="utf-8").read()
+    i_sub = dtext.find("public_sub.sh\" ensure")
+    i_chk = dtext.find("contract_check.sh\" \"$NODE_DIR\"")
+    check("оба шага на месте", i_sub > 0 and i_chk > 0,
+          "подписка %d, сверка %d" % (i_sub, i_chk))
+    check("сверка идёт после подписки", 0 < i_sub < i_chk,
+          "иначе она врёт после каждой выкладки")
+else:
+    check("выкладка доступна для проверки", False, "нет /nodescripts/deploy.sh")
+
+print()
 print("ВСЁ ПРОШЛО" if ok else "ЕСТЬ ПРОВАЛЫ")
 sys.exit(0 if ok else 1)
