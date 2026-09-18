@@ -179,7 +179,7 @@ async def main():
         fn = getattr(bot_mod, fname, None)
         if fn is None:
             # Кнопка есть, обработчик написан, а имени в bot.py нет — нажатие
-            # падает с NameError. Так и жила кнопка «Какие копии есть»: её
+            # падает с NameError. Так и жила кнопка «Список копий»: её
             # забыли внести в список импорта.
             broken.append((data, fname, "имя не импортировано в bot.py"))
             continue

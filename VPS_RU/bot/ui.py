@@ -56,7 +56,7 @@ def menu_backups():
         [InlineKeyboardButton("💾 Копия клиента", callback_data="de_backup")],
         # Посмотреть, что уже есть: без этого экрана понять, какие копии лежат
         # на сервере, можно было только зайдя туда руками.
-        [InlineKeyboardButton("📦 Какие копии есть", callback_data="backup_list")],
+        [InlineKeyboardButton("📦 Список копий", callback_data="backup_list")],
         [InlineKeyboardButton("📊 Сводка · Excel", callback_data="download_logs"),
          InlineKeyboardButton("📊 База · Excel", callback_data="export_excel")],
         [InlineKeyboardButton("🔙 Главное меню", callback_data="back_to_main")],
