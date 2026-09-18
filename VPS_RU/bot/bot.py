@@ -1515,6 +1515,16 @@ async def post_init(application):
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.WARNING)
+    # Подписи кнопок из плоского конфига проекта. Ставится ДО всего остального:
+    # подмена идёт на конструктор кнопки, и клавиатуры, собранные раньше, о ней
+    # уже не узнают.
+    try:
+        import button_names
+        _n = button_names.apply()
+        if _n:
+            print("Подписи кнопок: задано своими именами — %d" % _n)
+    except Exception as _e:
+        print("Подписи кнопок: не применены (%s) — работаем как в коде" % _e)
     loop = asyncio.get_event_loop()
     loop.run_until_complete(db.connect())
     app = ApplicationBuilder().token(BOT_TOKEN).post_init(post_init).build()

@@ -11,15 +11,20 @@
   кладёт рядом в `frontmap.data.js`. Карта, нарисованная руками, врёт на второй
   день: кнопку переименовали, экран добавили, ветку убрали. Здесь врать нечему.
 
-  Что здесь можно делать. Двигать экраны, перетаскивать кнопки внутри экрана и
-  между экранами, переименовывать подписи. Всё это — ПРЕДЛОЖЕНИЕ, набросок
-  будущего расположения: сам бот от этого не меняется. Правки хранятся в
-  браузере и переживают закрытие страницы; отдельной кнопкой их видно списком —
-  что именно вы поменяли относительно кода, — и этот список можно унести.
+  Что здесь можно делать, и что из этого доедет до людей.
 
-  Почему правки не идут в бота сразу. Потому что карта — место подумать, а не
-  выкатить. Переставить кнопку в живом боте значит поменять экран у тридцати
-  человек; между «я так вижу» и этим должен стоять осознанный шаг.
+  ПОДПИСИ — настоящая настройка. Переименованная здесь кнопка выгружается в
+  плоский конфиг `config/buttons.json`: ключ — адрес нажатия, значение — то, что
+  увидит человек. Бот читает этот файл при запуске, править код не нужно.
+  Подпись привязана к адресу, а не к месту, поэтому меняется сразу на всех
+  экранах, где эта кнопка нарисована, — сколько их, написано под кнопкой.
+
+  РАСКЛАДКА — порядок кнопок, переносы между экранами, положение карточек —
+  остаётся наброском. Плоским словарём её не выразить: порядок живёт в коде
+  рядом с условиями вроде «эту строку показываем, только если есть Xray».
+  Такие правки видно списком, переносить их в код нужно руками.
+
+  Всё сохраняется в браузере и переживает закрытие страницы.
 -->
 <style>
 :root{
@@ -212,10 +217,33 @@ DATA.screens.forEach(function (s) {
 // экранах («🔙 Главное меню» везде), поэтому экран в ключе обязателен.
 function keyOf(sid, b) { return sid + " " + b.data + " " + b.line; }
 
+// Подпись — это НАСТРОЙКА, а не пометка на картинке. Ключ у неё один на весь
+// проект: `callback_data`. Поэтому переименование кнопки «🔙 Главное меню»
+// меняет её на всех экранах разом — так же, как это сделает сам бот, прочитав
+// config/buttons.json. Показать здесь иначе значило бы соврать о последствиях.
 function labelOf(sid, b) {
-  var k = keyOf(sid, b);
-  return (k in edits.labels) ? edits.labels[k] : b.label;
+  var d = b.data;
+  if (d in edits.labels) return edits.labels[d];
+  return b.label;
 }
+
+// Кнопку с подписью или адресом «на лету» настроить нельзя: её `callback_data`
+// каждый раз другая, и ключа для конфига просто не существует.
+function tunable(b) {
+  return b.data && b.data !== "«меняется»" &&
+         b.data.indexOf("…") < 0 && b.data.indexOf("url:") !== 0;
+}
+
+// Сколько экранов покажут эту же кнопку. Переименовывая, человек должен
+// видеть, что трогает не одно место.
+var spread = {};
+DATA.screens.forEach(function (s) {
+  s.buttons.forEach(function (b) {
+    if (!spread[b.data]) spread[b.data] = {};
+    spread[b.data][s.id] = 1;
+  });
+});
+function spreadOf(d) { return Object.keys(spread[d] || {}).length; }
 
 // Где кнопка живёт сейчас: на своём экране или перенесённая на другой.
 function homeOf(sid, b) {
@@ -394,15 +422,21 @@ function row(sid, x) {
   var wrap = document.createElement("div");
   wrap.style.flex = "1";
   var lab = document.createElement("div");
-  lab.className = "lab" + ((keyOf(x.from, b) in edits.labels) ? " edited" : "");
-  lab.contentEditable = "true";
+  var canEdit = tunable(b);
+  lab.className = "lab" + ((b.data in edits.labels) ? " edited" : "");
+  lab.contentEditable = canEdit ? "true" : "false";
   lab.spellcheck = false;
   lab.textContent = labelOf(x.from, b);
+  if (!canEdit) lab.title = "Подпись собирается на лету — настроить нельзя";
   lab.addEventListener("blur", function () {
-    var k = keyOf(x.from, b), v = lab.textContent.trim();
-    if (v === b.label) delete edits.labels[k]; else edits.labels[k] = v;
-    lab.classList.toggle("edited", k in edits.labels);
+    if (!canEdit) return;
+    var v = lab.textContent.trim();
+    var base = (b.code_label !== undefined) ? b.code_label : b.label;
+    if (!v || v === base) delete edits.labels[b.data];
+    else edits.labels[b.data] = v;
+    lab.classList.toggle("edited", b.data in edits.labels);
     save();
+    render();
   });
   lab.addEventListener("keydown", function (e) {
     if (e.key === "Enter") { e.preventDefault(); lab.blur(); }
@@ -426,7 +460,10 @@ function row(sid, x) {
           : String(b.data).indexOf("url:") === 0
             ? ' <span class="vary">→ внешняя ссылка</span>'
             : ' <span class="dead">→ ветки в роутере нет</span>');
-  sub.innerHTML = dataTxt + toTxt;
+  var n = spreadOf(b.data);
+  var many = (n > 1 && tunable(b))
+    ? ' <span class="vary">· на ' + n + ' экранах</span>' : '';
+  sub.innerHTML = dataTxt + toTxt + many;
   wrap.appendChild(sub);
   li.appendChild(wrap);
 
@@ -575,11 +612,17 @@ function applySearch() {
 // -------------------------------------------------------------------- правки
 function diffList() {
   var out = {labels: [], moves: [], order: [], pos: 0};
+  var seenData = {};
   DATA.screens.forEach(function (s) {
     s.buttons.forEach(function (b) {
+      var base = (b.code_label !== undefined) ? b.code_label : b.label;
+      if ((b.data in edits.labels) && edits.labels[b.data] !== base
+          && !seenData[b.data]) {
+        seenData[b.data] = 1;
+        out.labels.push({was: base, now: edits.labels[b.data], data: b.data,
+                         where: spreadOf(b.data)});
+      }
       var k = keyOf(s.id, b);
-      if (k in edits.labels && edits.labels[k] !== b.label)
-        out.labels.push({screen: s.id, was: b.label, now: edits.labels[k], data: b.data});
       if (edits.moves[k])
         out.moves.push({label: labelOf(s.id, b), from: s.id, to: edits.moves[k]});
     });
@@ -587,6 +630,18 @@ function diffList() {
   Object.keys(edits.order).forEach(function (sid) { out.order.push(sid); });
   out.pos = Object.keys(edits.pos).length;
   return out;
+}
+
+// Содержимое config/buttons.json: то, что реально поедет в бота. Уже
+// применённые имена из действующего конфига сохраняем — иначе выгрузка стёрла
+// бы всё, чего человек не трогал в этот раз.
+function configJson() {
+  var cfg = {"_": "Подписи кнопок бота. Ключ — callback_data, значение — что " +
+                  "видит человек. Пусто = как в коде. Правится руками или " +
+                  "через docs/assets/frontmap.html."};
+  Object.keys(DATA.names || {}).forEach(function (k) { cfg[k] = DATA.names[k]; });
+  Object.keys(edits.labels).forEach(function (k) { cfg[k] = edits.labels[k]; });
+  return JSON.stringify(cfg, null, 2) + "\n";
 }
 
 function paintDiffCount() {
@@ -597,19 +652,22 @@ function paintDiffCount() {
 
 function paintDiff() {
   var d = diffList(), h = [];
-  h.push('<p class="hint">Это набросок. Бот от него не меняется — чтобы правка ' +
-         'доехала до людей, её надо перенести в код осознанно.</p>');
+  h.push('<p class="hint">Подписи — настоящая настройка: сохраните файл в ' +
+         '<b>config/buttons.json</b>, и бот возьмёт их при следующей выкладке. ' +
+         'Раскладка (порядок, переносы, положение) остаётся наброском — её ' +
+         'переносят в код руками.</p>');
   if (d.labels.length) {
-    h.push('<div class="diff"><h3>Переименовано</h3><ul>');
+    h.push('<div class="diff"><h3>Переименовано · поедет в бота</h3><ul>');
     d.labels.forEach(function (x) {
       h.push('<li><span class="was">' + esc(x.was) + '</span> → <span class="now">' +
-             esc(x.now) + '</span><div class="sub">' + esc(x.screen) + ' · ' +
-             esc(x.data) + '</div></li>');
+             esc(x.now) + '</span><div class="sub">' + esc(x.data) +
+             (x.where > 1 ? ' · на ' + x.where + ' экранах' : '') +
+             '</div></li>');
     });
     h.push('</ul></div>');
   }
   if (d.moves.length) {
-    h.push('<div class="diff"><h3>Перенесено на другой экран</h3><ul>');
+    h.push('<div class="diff"><h3>Перенесено · только набросок</h3><ul>');
     d.moves.forEach(function (x) {
       h.push('<li>«' + esc(x.label) + '»<div class="sub">' + esc(x.from) +
              ' → ' + esc(x.to) + '</div></li>');
@@ -625,12 +683,12 @@ function paintDiff() {
            d.pos + '</li></ul></div>');
   }
   if (!d.labels.length && !d.moves.length && !d.order.length && !d.pos) {
-    h.push('<p class="empty">Пока ничего. Двигайте карточки, перетаскивайте ' +
-           'кнопки, правьте подписи прямо в тексте — всё окажется здесь ' +
-           'и переживёт закрытие страницы.</p>');
+    h.push('<p class="empty">Пока ничего. Щёлкните по подписи кнопки и ' +
+           'напишите своё — она окажется здесь и уедет в конфиг. Карточки ' +
+           'и порядок кнопок тоже можно двигать.</p>');
   }
-  h.push('<textarea id="dump" readonly>' +
-         esc(JSON.stringify(edits, null, 1)) + '</textarea>');
+  h.push('<div class="diff"><h3>config/buttons.json</h3></div>');
+  h.push('<textarea id="dump" readonly>' + esc(configJson()) + '</textarea>');
   document.getElementById("diffBody").innerHTML = h.join("");
 }
 
@@ -669,10 +727,10 @@ document.getElementById("copyDiff").addEventListener("click", function () {
   setTimeout(function () { me.textContent = "Скопировать"; }, 1600);
 });
 document.getElementById("saveFile").addEventListener("click", function () {
-  var blob = new Blob([JSON.stringify(edits, null, 1)], {type: "application/json"});
+  var blob = new Blob([configJson()], {type: "application/json"});
   var a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
-  a.download = "frontmap-правки.json";
+  a.download = "buttons.json";
   a.click();
   setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
 });
