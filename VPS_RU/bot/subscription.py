@@ -387,6 +387,39 @@ async def handle_routing(request):
         headers={"Cache-Control": "no-store"})
 
 
+# --- Гео-файлы для приложения ------------------------------------------------
+#
+# Приложение тянет geosite.dat и geoip.dat само, и по умолчанию с GitHub —
+# который из России не открывается. Без них оно считает профиль маршрутизации
+# испорченным целиком: ни сплита, ни нашего DNS, ни фильтров.
+#
+# Нашим правилам эти файлы не нужны — у нас обычные домены и сети. Но требует
+# их приложение, а не мы, поэтому проще отдать: до GitHub узел достаёт, а до
+# узла достаёт телефон.
+GEO_DIR = os.getenv("SUB_GEO_DIR", "/volumes/geo")
+GEO_FILES = ("geosite.dat", "geoip.dat")
+
+
+async def handle_geo(request):
+    """Отдаёт гео-файл. Только эти два имени и ничего больше.
+
+    Имя берём не из запроса, а сверяем со списком: иначе адрес превращается в
+    способ читать файлы узла.
+    """
+    name = request.match_info.get("name", "")
+    if name not in GEO_FILES:
+        return web.Response(status=404, text="not found")
+    path = os.path.join(GEO_DIR, name)
+    try:
+        if os.path.getsize(path) < 1024:
+            raise OSError("слишком мал")
+    except OSError:
+        # Ещё не скачали — молчим так же, как на всё остальное. Приложение
+        # попробует снова, а лишних подробностей чужому знать незачем.
+        return web.Response(status=404, text="not found")
+    return web.FileResponse(path, headers={"Cache-Control": "public, max-age=3600"})
+
+
 async def handle_root(request):
     """Корень молчит. На сервере с открытым портом это важнее вежливости:
     страница-приветствие сразу говорит сканеру, что тут есть что искать."""
@@ -534,6 +567,9 @@ async def start_server():
     # Тот же профиль, но голым JSON: скрипту нужен он, а не ссылка для
     # приложения.
     app.router.add_get("/routing/{token}", handle_routing)
+    # Гео-файлы — без токена: их запрашивает приложение до того, как разберётся
+    # с подпиской, и секрета в них нет. Это открытые списки.
+    app.router.add_get("/geo/{name}", handle_geo)
     app.router.add_get("/", handle_root)
     # Всё остальное — тоже молчание, и через тот же рубеж: без этого чужой путь
     # отвечал бы иначе, чем чужой токен, и по разнице ответов читалась бы карта.
