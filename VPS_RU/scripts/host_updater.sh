@@ -40,12 +40,17 @@ mkdir -p "$FLAGS_DIR"
 # Своя служба разрывает эту связь: демон перезапускается, выкладка продолжается.
 # --wait отдаёт её код возврата, а одно имя службы на всех делает две
 # одновременные выкладки невозможными по построению.
+deploy_busy() {
+    command -v systemctl >/dev/null 2>&1 || return 1
+    systemctl is-active --quiet vpn-deploy 2>/dev/null
+}
+
 run_deploy() {
     if ! command -v systemd-run >/dev/null 2>&1; then
         bash "$SCRIPT_DIR/deploy.sh"
         return $?
     fi
-    if systemctl is-active --quiet vpn-deploy 2>/dev/null; then
+    if deploy_busy; then
         echo "[Updater] Выкладка уже идёт — вторую не запускаю."
         return 0
     fi
@@ -58,13 +63,20 @@ run_deploy() {
 while true; do
     # 1. ОБНОВЛЕНИЕ СИСТЕМЫ
     if [ -f "$UPDATE_FLAG" ]; then
-        echo "[Updater] Найдена метка обновления. Запуск deploy.sh..."
-        rm -f "$UPDATE_FLAG"
-        
-        # Запускаем скрипт деплоя своей службой — см. run_deploy выше.
-        run_deploy
-        
-        echo "[Updater] Цикл обновления завершен."
+        # Метку снимаем ТОЛЬКО когда берёмся за работу. Идущая выкладка —
+        # причина подождать, а не повод забыть просьбу: демон перезапускается
+        # посреди выкладки (она это переживает, на то и своя служба), и
+        # свежий демон крутит цикл, пока прежняя ещё идёт. Снимали метку
+        # раньше — и нажатие «обновить» в эту минуту пропадало молча.
+        if deploy_busy; then
+            echo "[Updater] Выкладка ещё идёт — метку держу до её конца."
+        else
+            echo "[Updater] Найдена метка обновления. Запуск deploy.sh..."
+            rm -f "$UPDATE_FLAG"
+            # Запускаем скрипт деплоя своей службой — см. run_deploy выше.
+            run_deploy
+            echo "[Updater] Цикл обновления завершен."
+        fi
     fi
 
     # 2. ПЕРЕЗАГРУЗКА СЕРВЕРА

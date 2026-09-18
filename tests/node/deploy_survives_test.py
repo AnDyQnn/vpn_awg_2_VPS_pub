@@ -54,10 +54,10 @@ def read(path):
         return f.read()
 
 
-def func_body(path):
-    """Текст функции run_deploy из самого скрипта — без копий и пересказов."""
+def func_body(path, name="run_deploy"):
+    """Текст функции из самого скрипта — без копий и пересказов."""
     src = read(path)
-    m = re.search(r"^run_deploy\(\) \{.*?^\}$", src, re.S | re.M)
+    m = re.search(r"^%s\(\) \{.*?^\}$" % name, src, re.S | re.M)
     return m.group(0) if m else ""
 
 
@@ -87,6 +87,8 @@ def run(path):
         f.write("#!/bin/bash\n")
         f.write("PATH=%s/bin:$PATH\n" % STAND)
         f.write("SCRIPT_DIR=%s\n" % STAND)
+        # run_deploy опирается на deploy_busy — берём обе как есть.
+        f.write(func_body(path, "deploy_busy") + "\n")
         f.write(func_body(path) + "\n")
         f.write("run_deploy\n")
     code, out = sh("bash %s" % harness)
@@ -101,10 +103,13 @@ for name, path, deploy_path in (("мастер", RU, RU_DEPLOY),
     body = func_body(path)
     check("выкладка вынесена в run_deploy", bool(body),
           "иначе она снова ребёнок демона")
+    check("занятость выделена в deploy_busy",
+          bool(func_body(path, "deploy_busy")),
+          "её спрашивают в двух местах, и ответ должен быть один")
 
     upd = read(path)
     branch = upd[upd.index("UPDATE_FLAG\" ]"):] if "UPDATE_FLAG\" ]" in upd else ""
-    branch = branch[:400]
+    branch = branch[:900]
     check("метка обновления зовёт run_deploy",
           "run_deploy" in branch and 'bash "$SCRIPT_DIR/deploy.sh"' not in branch,
           "прямой вызов делает выкладку ребёнком демона")
@@ -125,6 +130,17 @@ for name, path, deploy_path in (("мастер", RU, RU_DEPLOY),
     code, out, calls, ran = run(path)
     check("вторую выкладку поверх идущей не начинаем", not ran,
           "две сборки разом — это гонка за один и тот же тег образа")
+
+    # Но и просьбу при этом терять нельзя. Метка снимается ПЕРЕД запуском,
+    # поэтому проверка занятости обязана стоять раньше снятия: иначе нажатие
+    # «обновить», пришедшее в минуту идущей выкладки, пропадает молча.
+    branch_full = upd[upd.index("UPDATE_FLAG\" ]"):][:900]
+    i_busy = branch_full.find("deploy_busy")
+    i_rm = branch_full.find('rm -f "$UPDATE_FLAG"')
+    check("занятость проверяется до снятия метки",
+          0 <= i_busy < i_rm, "занятость %d, снятие %d" % (i_busy, i_rm))
+    check("и про удержание сказано вслух", "держу до её конца" in branch_full,
+          "молчаливое ожидание не отличить от потери")
 
     stand(systemd_run=False)
     code, out, calls, ran = run(path)
