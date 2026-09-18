@@ -27,3 +27,8 @@ WORKPLAN.md
 
 # Промежуточные файлы прогона тестов (обмен между тестами внутри одного запуска)
 tests/out/
+
+# Ставится только ради docs/assets/render_check.js
+node_modules/
+package-lock.json
+package.json

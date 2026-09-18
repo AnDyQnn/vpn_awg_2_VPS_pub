@@ -11,6 +11,14 @@
   кладёт рядом в `frontmap.data.js`. Карта, нарисованная руками, врёт на второй
   день: кнопку переименовали, экран добавили, ветку убрали. Здесь врать нечему.
 
+  Почему по умолчанию видно не всё. Экранов больше двухсот. Показать их разом
+  значит показать кашу: двести карточек и полтысячи линий читаются не лучше
+  белого шума, и первое, что делает человек, — закрывает вкладку. Поэтому
+  открывается ВЕТКА: где вы сейчас, откуда сюда пришли и куда отсюда можно
+  уйти. Шаг за шагом — ровно так, как ходит по боту живой человек. Общий вид
+  никуда не делся, он на соседней вкладке и нужен для другого: увидеть форму
+  целиком и найти оторванные куски.
+
   Что здесь можно делать, и что из этого доедет до людей.
 
   ПОДПИСИ — настоящая настройка. Переименованная здесь кнопка выгружается в
@@ -22,13 +30,12 @@
   РАСКЛАДКА — порядок кнопок, переносы между экранами, положение карточек —
   остаётся наброском. Плоским словарём её не выразить: порядок живёт в коде
   рядом с условиями вроде «эту строку показываем, только если есть Xray».
-  Такие правки видно списком, переносить их в код нужно руками.
 
   Всё сохраняется в браузере и переживает закрытие страницы.
 -->
 <style>
 :root{
-  --bg:#0e1116; --bg2:#161b22; --bg3:#1c2430;
+  --bg:#0e1116; --bg2:#161b22; --bg3:#1c2430; --bg4:#222c3a;
   --fg:#c9d1d9; --muted:#8b949e; --accent:#58a6ff;
   --good:#3fb950; --border:#30363d; --red:#f85149;
   --amber:#d29922; --violet:#a371f7;
@@ -40,45 +47,69 @@ html,body{height:100%}
 body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font-body);
      font-size:14px;overflow:hidden}
 
-/* ---------- верхняя панель ---------- */
-header{position:fixed;inset:0 0 auto 0;height:52px;z-index:30;display:flex;
-       align-items:center;gap:8px;padding:0 14px;background:rgba(14,17,22,.94);
+header{position:fixed;inset:0 0 auto 0;height:52px;z-index:40;display:flex;
+       align-items:center;gap:8px;padding:0 14px;background:rgba(14,17,22,.95);
        border-bottom:1px solid var(--border);backdrop-filter:blur(6px);
-       flex-wrap:nowrap;overflow-x:auto}
-h1{font-size:15px;margin:0 10px 0 0;white-space:nowrap;font-weight:600}
-h1 small{color:var(--muted);font-weight:400;margin-left:6px}
+       overflow-x:auto;white-space:nowrap}
+h1{font-size:15px;margin:0 8px 0 0;font-weight:600}
 .tabs{display:flex;gap:2px;background:var(--bg2);border:1px solid var(--border);
       border-radius:8px;padding:2px}
 .tabs button{background:none;border:0;color:var(--muted);padding:5px 12px;
-             border-radius:6px;cursor:pointer;font:inherit;white-space:nowrap}
-.tabs button.on{background:var(--bg3);color:var(--fg)}
+             border-radius:6px;cursor:pointer;font:inherit}
+.tabs button.on{background:var(--bg4);color:var(--fg)}
 .btn{background:var(--bg2);border:1px solid var(--border);color:var(--fg);
-     padding:6px 11px;border-radius:7px;cursor:pointer;font:inherit;white-space:nowrap}
+     padding:6px 11px;border-radius:7px;cursor:pointer;font:inherit}
 .btn:hover{border-color:var(--accent)}
 .btn.warn:hover{border-color:var(--red);color:var(--red)}
 input[type=search]{background:var(--bg2);border:1px solid var(--border);
-  color:var(--fg);padding:6px 10px;border-radius:7px;font:inherit;min-width:150px}
-label.chk{display:flex;align-items:center;gap:6px;color:var(--muted);
-          white-space:nowrap;cursor:pointer}
+  color:var(--fg);padding:6px 10px;border-radius:7px;font:inherit;min-width:160px}
 .spacer{flex:1}
-.count{color:var(--muted);font-size:12px;white-space:nowrap}
+.count{color:var(--muted);font-size:12px}
 
-/* ---------- полотно ---------- */
-#canvas{position:absolute;inset:52px 0 0 0;overflow:auto}
-#world{position:relative;transform-origin:0 0}
+/* ---------- путь, по которому пришли ---------- */
+#trail{position:fixed;top:52px;left:0;right:0;z-index:35;display:flex;
+       align-items:center;gap:6px;padding:7px 14px;overflow-x:auto;
+       background:rgba(22,27,34,.92);border-bottom:1px solid var(--border);
+       white-space:nowrap;font-size:12px}
+#trail a{color:var(--muted);cursor:pointer;text-decoration:none}
+#trail a:hover{color:var(--accent)}
+#trail a.cur{color:var(--fg);font-weight:600}
+#trail .sep{color:#3b4451}
+body.map #trail{display:none}
+
+#canvas{position:absolute;inset:86px 0 0 0;overflow:auto}
+body.map #canvas{inset:52px 0 0 0}
+#world{position:relative}
 svg#wires{position:absolute;left:0;top:0;pointer-events:none;overflow:visible}
-svg#wires path{fill:none;stroke:#30425c;stroke-width:1.4}
-svg#wires path.hot{stroke:var(--accent);stroke-width:2.2}
+svg#wires path{fill:none;stroke:#2c3a4e;stroke-width:1.4;
+                transition:stroke .2s,stroke-width .2s,opacity .2s}
+svg#wires path.near{stroke:#6ea8d8;stroke-width:2.2;opacity:1}
+svg#wires path.lit{stroke:var(--accent);stroke-width:2.4;opacity:1;
+  stroke-dasharray:7 7;animation:flow .7s linear infinite}
+svg#wires path.back{stroke:var(--violet);stroke-width:2;opacity:1;
+  stroke-dasharray:5 6;animation:flowback .9s linear infinite}
+@keyframes flow{to{stroke-dashoffset:-14}}
+@keyframes flowback{to{stroke-dashoffset:22}}
+body.map svg#wires path{opacity:.2}
 
-/* ---------- карточка экрана ---------- */
+/* ---------- карточка ---------- */
 .card{position:absolute;width:300px;background:var(--bg2);
       border:1px solid var(--border);border-radius:10px;
-      box-shadow:0 6px 18px rgba(0,0,0,.35)}
-.card.hot{border-color:var(--accent)}
-.card.dim{opacity:.28}
-.card .head{padding:8px 10px;border-bottom:1px solid var(--border);cursor:grab;
-            border-radius:10px 10px 0 0;background:var(--bg3)}
-.card .head:active{cursor:grabbing}
+      box-shadow:0 8px 22px rgba(0,0,0,.4);
+      transition:left .35s cubic-bezier(.3,.8,.3,1),
+                 top .35s cubic-bezier(.3,.8,.3,1),
+                 opacity .25s,border-color .2s;
+      animation:pop .28s ease-out both}
+@keyframes pop{from{opacity:0;transform:translateY(8px) scale(.97)}
+               to{opacity:1;transform:none}}
+.card.cur{border-color:var(--accent);
+          box-shadow:0 0 0 1px var(--accent),0 10px 30px rgba(88,166,255,.18)}
+.card.lit{border-color:#3c5a78}
+.card.dim{opacity:.3}
+.card .head{padding:8px 10px;border-bottom:1px solid var(--border);
+            border-radius:10px 10px 0 0;background:var(--bg3);cursor:pointer}
+.card .head:hover{background:var(--bg4)}
+.card.cur .head{cursor:grab}
 .card .name{font-weight:600;font-size:13px;word-break:break-word}
 .card .meta{font-family:var(--font-mono);font-size:10.5px;color:var(--muted);
             margin-top:3px}
@@ -89,32 +120,40 @@ svg#wires path.hot{stroke:var(--accent);stroke-width:2.2}
 .badge.menu{border-color:var(--good);color:var(--good)}
 .badge.router{border-color:var(--amber);color:var(--amber)}
 .badge.root{border-color:var(--accent);color:var(--accent)}
+.badge.n{border-color:#3b4451}
 
-.btns{list-style:none;margin:0;padding:5px;min-height:26px}
+.btns{list-style:none;margin:0;padding:5px;min-height:20px}
+.card.folded .btns{display:none}
 .btns li{display:flex;align-items:flex-start;gap:6px;padding:5px 6px;
-         border-radius:7px;cursor:grab;border:1px solid transparent}
+         border-radius:7px;cursor:grab;border:1px solid transparent;
+         transition:background .15s,border-color .15s}
 .btns li:hover{background:var(--bg3);border-color:var(--border)}
 .btns li.dragging{opacity:.4}
 .btns li.moved{border-color:var(--violet)}
-.grip{color:var(--muted);font-size:11px;line-height:18px;user-select:none}
+.grip{color:#4a545f;font-size:11px;line-height:18px;user-select:none}
 .lab{flex:1;outline:none;line-height:1.35;word-break:break-word}
-.lab:focus{background:var(--bg);box-shadow:0 0 0 2px var(--accent) inset;
-           border-radius:4px;padding:0 3px}
+.lab[contenteditable=true]:focus{background:var(--bg);
+  box-shadow:0 0 0 2px var(--accent) inset;border-radius:4px;padding:0 3px}
 .lab.edited{color:var(--violet)}
 .sub{font-family:var(--font-mono);font-size:10px;color:var(--muted);
      margin-top:2px;word-break:break-all}
-.sub .to{color:#4d7ea8;cursor:pointer}
+.sub .to{color:#5b8db8;cursor:pointer}
 .sub .to:hover{color:var(--accent);text-decoration:underline}
 .sub .dead{color:var(--red)}
 .sub .vary{color:var(--amber)}
 .drop-here{outline:2px dashed var(--accent);outline-offset:-3px}
+.morecard{cursor:pointer;background:var(--bg3);border-style:dashed}
+.morecard:hover{border-color:var(--accent)}
+.morecard .head{background:none;border:0;text-align:center;color:var(--muted)}
+.colhead{position:absolute;font-size:11px;color:var(--muted);
+         letter-spacing:.06em;text-transform:uppercase}
 
-/* ---------- боковая панель правок ---------- */
-aside{position:fixed;top:52px;right:0;bottom:0;width:390px;max-width:92vw;
-      background:var(--bg2);border-left:1px solid var(--border);z-index:25;
+aside{position:fixed;top:52px;right:0;bottom:0;width:400px;max-width:94vw;
+      background:var(--bg2);border-left:1px solid var(--border);z-index:45;
       display:none;flex-direction:column}
 aside.on{display:flex}
-aside h2{margin:0;padding:12px 14px;font-size:14px;border-bottom:1px solid var(--border)}
+aside h2{margin:0;padding:12px 14px;font-size:14px;
+         border-bottom:1px solid var(--border)}
 aside .body{flex:1;overflow:auto;padding:12px 14px}
 aside .foot{padding:10px 14px;border-top:1px solid var(--border);
             display:flex;gap:8px;flex-wrap:wrap}
@@ -125,40 +164,39 @@ aside .foot{padding:10px 14px;border-top:1px solid var(--border);
 .diff li{margin-bottom:5px;line-height:1.4}
 .was{color:var(--muted);text-decoration:line-through}
 .now{color:var(--violet)}
-textarea{width:100%;height:150px;background:var(--bg);color:var(--fg);
-         border:1px solid var(--border);border-radius:7px;font-family:var(--font-mono);
-         font-size:11px;padding:8px;resize:vertical}
-.empty{color:var(--muted);line-height:1.5}
-.hint{color:var(--muted);font-size:12px;line-height:1.5;margin:0 0 12px}
+textarea{width:100%;height:170px;background:var(--bg);color:var(--fg);
+         border:1px solid var(--border);border-radius:7px;
+         font-family:var(--font-mono);font-size:11px;padding:8px;resize:vertical}
+.empty,.hint{color:var(--muted);line-height:1.5}
+.hint{font-size:12px;margin:0 0 12px}
 
-@media (max-width:760px){
-  .card{width:260px}
-  aside{width:100%}
-}
+@media (max-width:760px){ .card{width:262px} aside{width:100%} }
 </style>
 </head>
-<body>
+<body class="branch">
 
 <header>
-  <h1>Карта экранов<small id="stamp"></small></h1>
-  <div class="tabs" id="tabs">
+  <h1>Карта экранов</h1>
+  <div class="tabs" id="sides">
     <button data-side="admin" class="on">Админ</button>
     <button data-side="client">Клиент</button>
-    <button data-side="all">Всё</button>
+  </div>
+  <div class="tabs" id="modes">
+    <button data-mode="branch" class="on">Ветка</button>
+    <button data-mode="map">Вся карта</button>
   </div>
   <input type="search" id="q" placeholder="искать кнопку или экран…">
-  <label class="chk"><input type="checkbox" id="showWires" checked> связи</label>
-  <label class="chk"><input type="checkbox" id="showOrphans"> недостижимые</label>
   <span class="spacer"></span>
   <span class="count" id="count"></span>
-  <button class="btn" id="relayout">Разложить заново</button>
-  <button class="btn" id="openDiff">Мои правки <span id="diffN"></span></button>
+  <button class="btn" id="home">В начало</button>
+  <button class="btn" id="openDiff">Имена кнопок <span id="diffN"></span></button>
 </header>
 
+<div id="trail"></div>
 <div id="canvas"><div id="world"><svg id="wires"></svg></div></div>
 
 <aside id="panel">
-  <h2>Что я здесь поменял</h2>
+  <h2>Имена кнопок</h2>
   <div class="body" id="diffBody"></div>
   <div class="foot">
     <button class="btn" id="copyDiff">Скопировать</button>
@@ -176,107 +214,79 @@ textarea{width:100%;height:150px;background:var(--bg);color:var(--fg);
 var DATA = window.FRONTMAP;
 if (!DATA) {
   document.body.innerHTML =
-    '<div style="padding:40px;line-height:1.6">' +
-    '<b>Нет файла с картой.</b><br>Соберите его: ' +
+    '<div style="padding:40px;line-height:1.7">' +
+    '<b>Нет файла с картой.</b><br>Соберите его:<br>' +
     '<code>python docs/assets/build_frontmap.py</code></div>';
   return;
 }
 
-// Корни: с них человек начинает. Всё, до чего от них не дойти, — отдельный
-// разговор, и таких экранов в проекте хватает.
 var ROOT = {admin: "main_menu", client: "send_client_menu"};
-var STORE = "frontmap.v1";
+var STORE = "frontmap.v2";
+var W = 300, COL = 372, GAP = 14, PAD = 28;
 
-// ---------------------------------------------------------------- состояние
-// Правки живут отдельно от данных: данные пересобираются из кода в любой
-// момент, и затирать ими чужую работу нельзя. Поэтому храним не карту целиком,
-// а только отличия — куда сдвинули, что переименовали, что переставили.
+// ------------------------------------------------------------------ состояние
 var edits = load();
 function load() {
   try {
-    var raw = localStorage.getItem(STORE);
-    var v = raw ? JSON.parse(raw) : null;
-    if (v && v.labels && v.pos && v.moves) return v;
-  } catch (e) { /* приватное окно или очищенные данные — начнём с чистого */ }
-  return {labels: {}, pos: {}, moves: {}, order: {}, side: "admin"};
+    var v = JSON.parse(localStorage.getItem(STORE) || "null");
+    if (v && v.labels) {
+      v.pos = v.pos || {}; v.moves = v.moves || {}; v.order = v.order || {};
+      return v;
+    }
+  } catch (e) { /* приватное окно — начнём с чистого */ }
+  return {labels: {}, pos: {}, moves: {}, order: {},
+          side: "admin", mode: "branch", at: null};
 }
 function save() {
-  try { localStorage.setItem(STORE, JSON.stringify(edits)); }
-  catch (e) { /* не сохранилось — работать это не мешает */ }
+  try { localStorage.setItem(STORE, JSON.stringify(edits)); } catch (e) {}
   paintDiffCount();
 }
 
 var byId = {};
-DATA.screens.forEach(function (s) {
-  // Имя экрана встречается дважды, если функция определена в двух местах.
-  // Берём первую: карта показывает связи, а не таблицу символов.
-  if (!byId[s.id]) byId[s.id] = s;
-});
+DATA.screens.forEach(function (s) { if (!byId[s.id]) byId[s.id] = s; });
 
-// Ключ кнопки: экран + её callback_data. `data` бывает одинаковой на разных
-// экранах («🔙 Главное меню» везде), поэтому экран в ключе обязателен.
+var side = edits.side || "admin";
+var mode = edits.mode || "branch";
+var at = (edits.at && byId[edits.at]) ? edits.at : ROOT[side];
+var trailPath = [at];
+
+// Разворачивать ли колонку «сюда ведут» целиком. Живёт только на время
+// просмотра: это способ посмотреть, а не настройка.
+var insOpen = false;
+
+var world = document.getElementById("world");
+var wires = document.getElementById("wires");
+var canvas = document.getElementById("canvas");
+var cards = {};
+
+// --------------------------------------------------------------------- кнопки
 function keyOf(sid, b) { return sid + " " + b.data + " " + b.line; }
 
-// Подпись — это НАСТРОЙКА, а не пометка на картинке. Ключ у неё один на весь
-// проект: `callback_data`. Поэтому переименование кнопки «🔙 Главное меню»
-// меняет её на всех экранах разом — так же, как это сделает сам бот, прочитав
-// config/buttons.json. Показать здесь иначе значило бы соврать о последствиях.
-function labelOf(sid, b) {
-  var d = b.data;
-  if (d in edits.labels) return edits.labels[d];
-  return b.label;
+// Подпись — НАСТРОЙКА, а не пометка на картинке. Ключ у неё один на весь
+// проект: `callback_data`. Поэтому переименование «🔙 Главное меню» меняет её
+// на всех экранах разом — так же, как это сделает бот, прочитав конфиг.
+function labelOf(b) {
+  return (b.data in edits.labels) ? edits.labels[b.data] : b.label;
 }
 
 // Кнопку с подписью или адресом «на лету» настроить нельзя: её `callback_data`
-// каждый раз другая, и ключа для конфига просто не существует.
+// каждый раз другая, и постоянного ключа для конфига не существует.
 function tunable(b) {
   return b.data && b.data !== "«меняется»" &&
          b.data.indexOf("…") < 0 && b.data.indexOf("url:") !== 0;
 }
 
-// Сколько экранов покажут эту же кнопку. Переименовывая, человек должен
-// видеть, что трогает не одно место.
 var spread = {};
 DATA.screens.forEach(function (s) {
   s.buttons.forEach(function (b) {
-    if (!spread[b.data]) spread[b.data] = {};
-    spread[b.data][s.id] = 1;
+    (spread[b.data] = spread[b.data] || {})[s.id] = 1;
   });
 });
 function spreadOf(d) { return Object.keys(spread[d] || {}).length; }
 
-// Где кнопка живёт сейчас: на своём экране или перенесённая на другой.
-function homeOf(sid, b) {
-  var k = keyOf(sid, b);
-  return edits.moves[k] || sid;
-}
+function homeOf(sid, b) { return edits.moves[keyOf(sid, b)] || sid; }
 
-var side = edits.side || "admin";
-var wires = document.getElementById("wires");
-var world = document.getElementById("world");
-var canvas = document.getElementById("canvas");
-
-// --------------------------------------------------------------- досягаемость
-// Глубина от корня. Она же задаёт колонки: чем дальше от начала, тем правее.
-function depths(rootId) {
-  var d = {}, queue = [rootId], i = 0;
-  if (!byId[rootId]) return d;
-  d[rootId] = 0;
-  while (i < queue.length) {
-    var id = queue[i++], s = byId[id];
-    if (!s) continue;
-    visibleButtons(id).forEach(function (b) {
-      var to = b.to;
-      if (!to || !byId[to] || to in d) return;
-      d[to] = d[id] + 1;
-      queue.push(to);
-    });
-  }
-  return d;
-}
-
-// Кнопки экрана с учётом правок: свои минус унесённые, плюс принесённые.
-function visibleButtons(sid) {
+function buttonsOf(sid) {
   var out = [];
   DATA.screens.forEach(function (s) {
     s.buttons.forEach(function (b) {
@@ -287,100 +297,188 @@ function visibleButtons(sid) {
   if (ord) {
     out.sort(function (x, y) {
       var a = ord.indexOf(keyOf(x.from, x.b)), c = ord.indexOf(keyOf(y.from, y.b));
-      return (a < 0 ? 999 : a) - (c < 0 ? 999 : c);
+      return (a < 0 ? 1e6 : a) - (c < 0 ? 1e6 : c);
     });
   }
-  return out.map(function (x) { return {b: x.b, from: x.from, to: x.b.to,
-                                        data: x.b.data, line: x.b.line}; });
+  return out;
 }
 
-// ------------------------------------------------------------------- отрисовка
-var cards = {};
-
-function screensFor(sideName) {
-  var all = DATA.screens.filter(function (s) {
-    return sideName === "all" ? true : s.side === sideName;
-  });
-  // У клиента корень — его кабинет; на «всё» считаем от обоих.
-  var d = {};
-  var roots = sideName === "all" ? [ROOT.admin, ROOT.client] : [ROOT[sideName]];
-  roots.forEach(function (r) {
-    var got = depths(r);
-    Object.keys(got).forEach(function (k) {
-      if (!(k in d) || got[k] < d[k]) d[k] = got[k];
+// ----------------------------------------------------------------------- граф
+var kids = {}, parents = {};
+function buildGraph() {
+  kids = {}; parents = {};
+  DATA.screens.forEach(function (s) {
+    kids[s.id] = kids[s.id] || [];
+    buttonsOf(s.id).forEach(function (x) {
+      var to = x.b.to;
+      if (!to || !byId[to] || to === s.id) return;
+      if (kids[s.id].indexOf(to) < 0) kids[s.id].push(to);
+      parents[to] = parents[to] || [];
+      if (parents[to].indexOf(s.id) < 0) parents[to].push(s.id);
     });
   });
-  var seen = {};
-  var list = [];
-  all.forEach(function (s) {
-    if (seen[s.id]) return;
-    seen[s.id] = 1;
-    list.push({s: s, depth: (s.id in d) ? d[s.id] : -1});
-  });
-  return list;
 }
 
-function layout(list) {
-  // Раскладываем колонками по глубине. Недостижимые — в свою колонку справа,
-  // за отбивкой: смешивать их с деревом значит прятать их среди рабочих.
-  var cols = {}, maxDepth = 0;
-  list.forEach(function (it) {
-    if (it.depth > maxDepth) maxDepth = it.depth;
-  });
-  var COLW = 340, GAP = 16, PAD = 24;
-  list.forEach(function (it) {
-    var col = it.depth < 0 ? maxDepth + 2 : it.depth;
-    if (!cols[col]) cols[col] = 0;
-    it.x = PAD + col * COLW;
-    it.y = PAD + cols[col];
-    cols[col] += 70 + 30 * Math.max(1, countButtons(it.s.id)) + GAP;
-  });
-  var w = PAD + (maxDepth + 3) * COLW;
-  var h = PAD;
-  Object.keys(cols).forEach(function (c) { if (cols[c] + PAD > h) h = cols[c] + PAD; });
-  world.style.width = w + "px";
-  world.style.height = h + "px";
-  wires.setAttribute("width", w);
-  wires.setAttribute("height", h);
+function depthsFrom(root) {
+  var d = {}, q = [root], i = 0;
+  if (!byId[root]) return d;
+  d[root] = 0;
+  while (i < q.length) {
+    var id = q[i++];
+    (kids[id] || []).forEach(function (k) {
+      if (k in d) return;
+      d[k] = d[id] + 1;
+      q.push(k);
+    });
+  }
+  return d;
 }
 
-function countButtons(sid) {
-  var n = 0;
-  DATA.screens.forEach(function (s) {
-    s.buttons.forEach(function (b) { if (homeOf(s.id, b) === sid) n++; });
+// --------------------------------------------------------------- отрисовка
+function clear() {
+  Object.keys(cards).forEach(function (k) { cards[k].el.remove(); });
+  cards = {};
+  Array.prototype.forEach.call(world.querySelectorAll(".colhead, .morecard"),
+    function (n) { n.remove(); });
+}
+
+function place(id, x, y, cls) {
+  var el = card(byId[id], cls);
+  world.appendChild(el);
+  el.style.left = x + "px";
+  el.style.top = y + "px";
+  cards[id] = {el: el, x: x, y: y};
+  return el;
+}
+
+// Карточка-кнопка «и ещё N». Не экран, поэтому и выглядит иначе: связей у неё
+// нет, перетаскивать нечего, дело у неё одно.
+function more(x, y, text) {
+  var d = document.createElement("div");
+  d.className = "card morecard";
+  d.style.left = x + "px";
+  d.style.top = y + "px";
+  d.innerHTML = '<div class="head"><div class="name">' + esc(text) + '</div></div>';
+  d.addEventListener("click", function () { insOpen = !insOpen; renderBranch(); });
+  world.appendChild(d);
+}
+
+function colhead(text, x, y) {
+  var d = document.createElement("div");
+  d.className = "colhead";
+  d.textContent = text;
+  d.style.left = x + "px";
+  d.style.top = y + "px";
+  world.appendChild(d);
+}
+
+// Ветка: откуда пришли · где стоим · куда ведёт. Ровно то, что нужно, чтобы
+// пройти по боту шаг за шагом и не утонуть в двухстах карточках.
+function renderBranch() {
+  clear();
+  var cur = byId[at] ? at : ROOT[side];
+  at = cur;
+  var allIns = (parents[cur] || []).filter(function (p) { return byId[p]; });
+  var outs = (kids[cur] || []).filter(function (k) { return byId[k]; });
+
+  // Входящих бывает три десятка: на «Администрирование» ведёт кнопка возврата
+  // почти с каждого экрана. Показать их все значит утопить колонку в списке
+  // «откуда сюда можно попасть» — а он и так почти всегда «отовсюду».
+  // Поэтому первые восемь, остальные — по требованию.
+  var IN_MAX = 8;
+  var ins = (insOpen || allIns.length <= IN_MAX)
+    ? allIns : allIns.slice(0, IN_MAX);
+
+  var x0 = PAD, x1 = PAD + COL, x2 = PAD + COL * 2;
+  var step = 78;
+  var hIn = (ins.length + 1) * step, hOut = outs.length * step;
+  var hCur = 68 + Math.max(1, buttonsOf(cur).length) * 44;
+  var H = Math.max(hIn, hOut, hCur) + PAD * 2 + 30;
+
+  world.style.width = (x2 + W + PAD) + "px";
+  world.style.height = H + "px";
+  wires.setAttribute("width", x2 + W + PAD);
+  wires.setAttribute("height", H);
+
+  var top = PAD + 22;
+  if (ins.length) colhead("сюда ведут", x0, PAD);
+  colhead("экран", x1, PAD);
+  if (outs.length) colhead("отсюда можно", x2, PAD);
+
+  ins.forEach(function (p, i) { place(p, x0, top + i * step, "folded"); });
+  if (allIns.length > ins.length) more(x0, top + ins.length * step,
+    "и ещё " + (allIns.length - ins.length) + " — показать");
+  else if (insOpen && allIns.length > IN_MAX) more(x0, top + ins.length * step,
+    "свернуть до " + IN_MAX);
+  place(cur, x1, top, "cur");
+  outs.forEach(function (k, i) { place(k, x2, top + i * step, "folded"); });
+
+  drawWires();
+  litFor(cur);
+  paintTrail();
+  document.getElementById("count").textContent =
+    allIns.length + " ← " + buttonsOf(cur).length + " кнопок → " + outs.length;
+}
+
+// Вся карта: колонками по глубине, порядок внутри колонки — по родителям,
+// чтобы линии не плелись через весь экран. Карточки свёрнуты: разворачивает
+// их щелчок, иначе двести открытых списков и есть та самая каша.
+function renderMap() {
+  clear();
+  var root = ROOT[side];
+  var d = depthsFrom(root);
+  var cols = [];
+  Object.keys(d).forEach(function (id) {
+    (cols[d[id]] = cols[d[id]] || []).push(id);
   });
-  return n;
+
+  // Порядок внутри колонки — по среднему положению родителей. Соседи по смыслу
+  // оказываются соседями на экране, и линии перестают расходиться веером.
+  var yIndex = {};
+  cols.forEach(function (col, level) {
+    if (level === 0) { col.forEach(function (id, i) { yIndex[id] = i; }); return; }
+    col.sort(function (a, b) { return bary(a) - bary(b); });
+    col.forEach(function (id, i) { yIndex[id] = i; });
+    function bary(id) {
+      var ps = (parents[id] || []).filter(function (p) { return p in yIndex; });
+      if (!ps.length) return 1e6;
+      return ps.reduce(function (s, p) { return s + yIndex[p]; }, 0) / ps.length;
+    }
+  });
+
+  var rowH = 74, maxRows = 0;
+  cols.forEach(function (col) { if (col.length > maxRows) maxRows = col.length; });
+  var H = PAD * 2 + 22 + maxRows * (rowH + GAP);
+  var Wd = PAD * 2 + cols.length * COL;
+  world.style.width = Wd + "px";
+  world.style.height = H + "px";
+  wires.setAttribute("width", Wd);
+  wires.setAttribute("height", H);
+
+  cols.forEach(function (col, level) {
+    var x = PAD + level * COL;
+    colhead(level === 0 ? "начало" : "шаг " + level, x, PAD);
+    col.forEach(function (id, i) {
+      place(id, x, PAD + 22 + i * (rowH + GAP), "folded");
+    });
+  });
+
+  drawWires();
+  litFor(cards[at] ? at : root);
+  document.getElementById("count").textContent =
+    Object.keys(d).length + " экранов · глубина " + (cols.length - 1);
 }
 
 function render() {
-  Object.keys(cards).forEach(function (k) { cards[k].el.remove(); });
-  cards = {};
-  var list = screensFor(side);
-  var showOrphans = document.getElementById("showOrphans").checked;
-  if (!showOrphans) list = list.filter(function (it) { return it.depth >= 0; });
-  layout(list);
-
-  list.forEach(function (it) {
-    var el = card(it);
-    world.appendChild(el);
-    var p = edits.pos[it.s.id];
-    var x = p ? p[0] : it.x, y = p ? p[1] : it.y;
-    el.style.left = x + "px";
-    el.style.top = y + "px";
-    cards[it.s.id] = {el: el, s: it.s, x: x, y: y};
-  });
-
-  document.getElementById("count").textContent =
-    list.length + " экранов · " +
-    list.reduce(function (a, it) { return a + countButtons(it.s.id); }, 0) + " кнопок";
-  drawWires();
+  buildGraph();
+  document.body.className = mode;
+  if (mode === "branch") renderBranch(); else renderMap();
   applySearch();
 }
 
-function card(it) {
-  var s = it.s;
+function card(s, cls) {
   var el = document.createElement("div");
-  el.className = "card";
+  el.className = "card " + (cls || "");
   el.dataset.id = s.id;
 
   var head = document.createElement("div");
@@ -388,22 +486,32 @@ function card(it) {
   var kind = s.kind === "step" ? "шаг" : s.kind === "menu" ? "меню"
            : s.kind === "router" ? "роутер" : "";
   var isRoot = s.id === ROOT.admin || s.id === ROOT.client;
+  var n = buttonsOf(s.id).length;
   head.innerHTML =
     '<div class="name">' + esc(s.title || s.id) +
     (isRoot ? '<span class="badge root">начало</span>' : '') +
     (kind ? '<span class="badge ' + s.kind + '">' + kind + '</span>' : '') +
-    (it.depth < 0 ? '<span class="badge">не дойти</span>' : '') +
-    '</div>' +
-    '<div class="meta">' + esc(s.id) + ' · ' + esc(s.file) + ':' + s.line + '</div>';
+    (n ? '<span class="badge n">' + n + '</span>' : '') +
+    '</div><div class="meta">' + esc(s.id) + ' · ' + esc(s.file) + ':' + s.line +
+    '</div>';
   el.appendChild(head);
 
   var ul = document.createElement("ul");
   ul.className = "btns";
   ul.dataset.screen = s.id;
-  visibleButtons(s.id).forEach(function (x) { ul.appendChild(row(s.id, x)); });
+  buttonsOf(s.id).forEach(function (x) { ul.appendChild(row(s.id, x)); });
   el.appendChild(ul);
 
-  dragCard(el, head, s.id);
+  head.addEventListener("click", function () {
+    if (el.classList.contains("cur")) {
+      el.classList.toggle("folded");
+      drawWires();
+      litFor(at);
+      return;
+    }
+    goTo(s.id);
+  });
+  if (cls === "cur") dragCard(el, head, s.id);
   return el;
 }
 
@@ -411,7 +519,6 @@ function row(sid, x) {
   var b = x.b, li = document.createElement("li");
   li.draggable = true;
   li.dataset.key = keyOf(x.from, b);
-  li.dataset.from = x.from;
   if (x.from !== sid) li.className = "moved";
 
   var grip = document.createElement("span");
@@ -421,14 +528,17 @@ function row(sid, x) {
 
   var wrap = document.createElement("div");
   wrap.style.flex = "1";
-  var lab = document.createElement("div");
+
   var canEdit = tunable(b);
+  var lab = document.createElement("div");
   lab.className = "lab" + ((b.data in edits.labels) ? " edited" : "");
   lab.contentEditable = canEdit ? "true" : "false";
   lab.spellcheck = false;
-  lab.textContent = labelOf(x.from, b);
+  lab.textContent = labelOf(b);
   if (!canEdit) lab.title = "Подпись собирается на лету — настроить нельзя";
+  lab.addEventListener("focus", function () { li.draggable = false; });
   lab.addEventListener("blur", function () {
+    li.draggable = true;
     if (!canEdit) return;
     var v = lab.textContent.trim();
     var base = (b.code_label !== undefined) ? b.code_label : b.label;
@@ -436,40 +546,37 @@ function row(sid, x) {
     else edits.labels[b.data] = v;
     lab.classList.toggle("edited", b.data in edits.labels);
     save();
-    render();
   });
   lab.addEventListener("keydown", function (e) {
     if (e.key === "Enter") { e.preventDefault(); lab.blur(); }
   });
-  // Перетаскивание и правка текста дерутся за мышь: пока правим — не тащим.
-  lab.addEventListener("focus", function () { li.draggable = false; });
-  lab.addEventListener("blur", function () { li.draggable = true; });
   wrap.appendChild(lab);
 
   var sub = document.createElement("div");
   sub.className = "sub";
   var dataTxt = b.data === "«меняется»"
-    ? '<span class="vary">подпись и адрес собираются на лету</span>'
-    : esc(b.data);
-  var toTxt = b.to && byId[b.to]
-    ? ' → <span class="to" data-to="' + esc(b.to) + '">' + esc(b.to) + '</span>'
-    : b.to
-      ? ' → ' + esc(b.to) + ' <span class="vary">(не экран)</span>'
-      : (b.how === "подставляется на лету"
-          ? ' <span class="vary">→ разбирается на лету</span>'
-          : String(b.data).indexOf("url:") === 0
-            ? ' <span class="vary">→ внешняя ссылка</span>'
-            : ' <span class="dead">→ ветки в роутере нет</span>');
+    ? '<span class="vary">адрес собирается на лету</span>' : esc(b.data);
+  var toTxt = (b.to && byId[b.to])
+      ? ' → <span class="to" data-to="' + esc(b.to) + '">' + esc(b.to) + '</span>'
+    : b.to ? ' → ' + esc(b.to) + ' <span class="vary">(не экран)</span>'
+    : (b.how === "подставляется на лету")
+        ? ' <span class="vary">→ разбирается на лету</span>'
+      : (String(b.data).indexOf("url:") === 0)
+        ? ' <span class="vary">→ внешняя ссылка</span>'
+        : ' <span class="dead">→ ветки в роутере нет</span>';
   var n = spreadOf(b.data);
-  var many = (n > 1 && tunable(b))
-    ? ' <span class="vary">· на ' + n + ' экранах</span>' : '';
-  sub.innerHTML = dataTxt + toTxt + many;
+  sub.innerHTML = dataTxt + toTxt +
+    ((n > 1 && canEdit) ? ' <span class="vary">· на ' + n + ' экранах</span>' : '');
   wrap.appendChild(sub);
   li.appendChild(wrap);
 
+  // Наведение на кнопку зажигает именно её линию: видно, куда она ведёт, ещё
+  // до того как по ней щёлкнули.
+  li.addEventListener("mouseenter", function () { aim(sid, b.to); });
+  li.addEventListener("mouseleave", function () { aim(null, null); });
   sub.addEventListener("click", function (e) {
     var t = e.target.getAttribute("data-to");
-    if (t) focusCard(t);
+    if (t && byId[t]) goTo(t);
   });
   return li;
 }
@@ -480,27 +587,119 @@ function esc(s) {
   });
 }
 
-// ---------------------------------------------------------- перетаскивание
+// ------------------------------------------------------------------- переходы
+function goTo(id) {
+  if (!byId[id]) return;
+  var i = trailPath.indexOf(id);
+  if (i >= 0) trailPath = trailPath.slice(0, i + 1);
+  else trailPath.push(id);
+  at = id;
+  edits.at = id;
+  save();
+  insOpen = false;
+  if (mode === "branch") render();
+  else { litFor(id); focusOn(id); }
+}
+
+function paintTrail() {
+  document.getElementById("trail").innerHTML = trailPath.map(function (id, i) {
+    var s = byId[id];
+    return (i ? '<span class="sep">›</span>' : '') +
+      '<a data-go="' + esc(id) + '"' +
+      (i === trailPath.length - 1 ? ' class="cur"' : '') + '>' +
+      esc((s && s.title) || id) + '</a>';
+  }).join(" ");
+}
+document.getElementById("trail").addEventListener("click", function (e) {
+  var g = e.target.getAttribute("data-go");
+  if (g) goTo(g);
+});
+
+function focusOn(id) {
+  var c = cards[id];
+  if (!c) return;
+  canvas.scrollTo({left: Math.max(0, c.x - canvas.clientWidth / 2 + W / 2),
+                   top: Math.max(0, c.y - 120), behavior: "smooth"});
+}
+
+// --------------------------------------------------------------------- связи
+function drawWires() {
+  var seen = {}, parts = [];
+  Object.keys(cards).forEach(function (sid) {
+    (kids[sid] || []).forEach(function (to) {
+      if (!cards[to] || seen[sid + ">" + to]) return;
+      seen[sid + ">" + to] = 1;
+      parts.push(pathFor(sid, to));
+    });
+  });
+  wires.innerHTML = parts.join("");
+}
+
+function pathFor(a, b) {
+  var A = cards[a], B = cards[b];
+  var ah = A.el.offsetHeight || 60, bh = B.el.offsetHeight || 60;
+  var y1 = A.y + ah / 2, y2 = B.y + bh / 2, x1, x2;
+  // Линия выходит с той стороны, где стоит цель: иначе связь «назад» прошивает
+  // карточку насквозь и читается как чужая.
+  if (B.x >= A.x) { x1 = A.x + W; x2 = B.x; }
+  else { x1 = A.x; x2 = B.x + W; }
+  var dx = Math.max(46, Math.abs(x2 - x1) / 2);
+  var c1 = (B.x >= A.x) ? x1 + dx : x1 - dx;
+  var c2 = (B.x >= A.x) ? x2 - dx : x2 + dx;
+  return '<path data-a="' + esc(a) + '" data-b="' + esc(b) + '" d="M' +
+    x1 + ',' + y1 + ' C' + c1 + ',' + y1 + ' ' + c2 + ',' + y2 + ' ' +
+    x2 + ',' + y2 + '"/>';
+}
+
+// Зажигаем всё, что связано с выбранным экраном: исходящие — синим, бегущим по
+// ходу движения, входящие — фиолетовым, против хода. Так видно не только «что
+// соединено», но и в какую сторону.
+function litFor(id) {
+  Array.prototype.forEach.call(wires.querySelectorAll("path"), function (p) {
+    var a = p.getAttribute("data-a"), b = p.getAttribute("data-b");
+    p.classList.remove("lit", "back", "near");
+    if (a === id) p.classList.add("lit");
+    else if (b === id) p.classList.add("back");
+  });
+  Object.keys(cards).forEach(function (k) {
+    cards[k].el.classList.toggle("cur", k === id);
+    cards[k].el.classList.toggle("lit",
+      k !== id && (((kids[id] || []).indexOf(k) >= 0) ||
+                   ((parents[id] || []).indexOf(k) >= 0)));
+  });
+}
+
+function aim(sid, to) {
+  Array.prototype.forEach.call(wires.querySelectorAll("path.near"),
+    function (p) { p.classList.remove("near"); });
+  if (!to || !cards[to]) return;
+  Array.prototype.forEach.call(wires.querySelectorAll("path"), function (p) {
+    if (p.getAttribute("data-a") === sid && p.getAttribute("data-b") === to)
+      p.classList.add("near");
+  });
+}
+
+// -------------------------------------------------------- перетаскивание
 function dragCard(el, handle, id) {
   handle.addEventListener("mousedown", function (e) {
     if (e.button !== 0) return;
-    e.preventDefault();
-    var sx = e.clientX, sy = e.clientY;
+    var sx = e.clientX, sy = e.clientY, moved = false;
     var ox = parseFloat(el.style.left), oy = parseFloat(el.style.top);
-    el.style.zIndex = 10;
+    el.style.transition = "none";
     function move(ev) {
-      var x = Math.max(0, ox + ev.clientX - sx), y = Math.max(0, oy + ev.clientY - sy);
-      el.style.left = x + "px";
-      el.style.top = y + "px";
+      if (Math.abs(ev.clientX - sx) + Math.abs(ev.clientY - sy) > 3) moved = true;
+      if (!moved) return;
+      var x = Math.max(0, ox + ev.clientX - sx);
+      var y = Math.max(0, oy + ev.clientY - sy);
+      el.style.left = x + "px"; el.style.top = y + "px";
       cards[id].x = x; cards[id].y = y;
-      drawWires();
+      drawWires(); litFor(at);
     }
     function up() {
       document.removeEventListener("mousemove", move);
       document.removeEventListener("mouseup", up);
-      el.style.zIndex = "";
-      edits.pos[id] = [cards[id].x, cards[id].y];
-      save();
+      el.style.transition = "";
+      if (moved) { edits.pos[id] = [cards[id].x, cards[id].y]; save(); }
     }
     document.addEventListener("mousemove", move);
     document.addEventListener("mouseup", up);
@@ -509,7 +708,7 @@ function dragCard(el, handle, id) {
 
 var dragging = null;
 document.addEventListener("dragstart", function (e) {
-  var li = e.target.closest ? e.target.closest("li[data-key]") : null;
+  var li = e.target.closest && e.target.closest("li[data-key]");
   if (!li) return;
   dragging = li;
   li.classList.add("dragging");
@@ -519,25 +718,23 @@ document.addEventListener("dragstart", function (e) {
 document.addEventListener("dragend", function () {
   if (dragging) dragging.classList.remove("dragging");
   dragging = null;
-  document.querySelectorAll(".drop-here").forEach(function (n) {
-    n.classList.remove("drop-here");
-  });
+  Array.prototype.forEach.call(document.querySelectorAll(".drop-here"),
+    function (n) { n.classList.remove("drop-here"); });
 });
 document.addEventListener("dragover", function (e) {
-  var ul = e.target.closest ? e.target.closest("ul.btns") : null;
+  var ul = e.target.closest && e.target.closest("ul.btns");
   if (!ul || !dragging) return;
   e.preventDefault();
   ul.classList.add("drop-here");
   var after = below(ul, e.clientY);
-  if (after == null) ul.appendChild(dragging);
-  else ul.insertBefore(dragging, after);
+  if (after == null) ul.appendChild(dragging); else ul.insertBefore(dragging, after);
 });
 document.addEventListener("dragleave", function (e) {
-  var ul = e.target.closest ? e.target.closest("ul.btns") : null;
+  var ul = e.target.closest && e.target.closest("ul.btns");
   if (ul) ul.classList.remove("drop-here");
 });
 document.addEventListener("drop", function (e) {
-  var ul = e.target.closest ? e.target.closest("ul.btns") : null;
+  var ul = e.target.closest && e.target.closest("ul.btns");
   if (!ul || !dragging) return;
   e.preventDefault();
   ul.classList.remove("drop-here");
@@ -545,14 +742,13 @@ document.addEventListener("drop", function (e) {
   var origin = key.split(" ")[0];
   if (origin === sid) delete edits.moves[key]; else edits.moves[key] = sid;
   dragging.classList.toggle("moved", origin !== sid);
-  // Порядок запоминаем целиком по этому экрану: иначе при следующем открытии
-  // кнопки встанут как в коде, и работа пропадёт.
   edits.order[sid] = Array.prototype.map.call(
     ul.querySelectorAll("li[data-key]"), function (n) { return n.dataset.key; });
   save();
+  buildGraph();
   drawWires();
+  litFor(at);
 });
-
 function below(ul, y) {
   var items = Array.prototype.slice.call(
     ul.querySelectorAll("li[data-key]:not(.dragging)"));
@@ -563,71 +759,37 @@ function below(ul, y) {
   return null;
 }
 
-// -------------------------------------------------------------------- связи
-function drawWires() {
-  if (!document.getElementById("showWires").checked) { wires.innerHTML = ""; return; }
-  var seen = {}, parts = [];
-  Object.keys(cards).forEach(function (sid) {
-    visibleButtons(sid).forEach(function (x) {
-      var to = x.b.to;
-      if (!to || !cards[to] || to === sid) return;
-      var k = sid + ">" + to;
-      if (seen[k]) return;
-      seen[k] = 1;
-      var a = cards[sid], c = cards[to];
-      var ah = a.el.offsetHeight, ch = c.el.offsetHeight;
-      var x1 = a.x + a.el.offsetWidth, y1 = a.y + ah / 2;
-      var x2 = c.x, y2 = c.y + ch / 2;
-      var dx = Math.max(40, Math.abs(x2 - x1) / 2);
-      parts.push('<path data-a="' + esc(sid) + '" data-b="' + esc(to) + '" d="M' +
-        x1 + ',' + y1 + ' C' + (x1 + dx) + ',' + y1 + ' ' +
-        (x2 - dx) + ',' + y2 + ' ' + x2 + ',' + y2 + '"/>');
-    });
-  });
-  wires.innerHTML = parts.join("");
-}
-
-function focusCard(id) {
-  var c = cards[id];
-  if (!c) return;
-  Object.keys(cards).forEach(function (k) { cards[k].el.classList.remove("hot"); });
-  c.el.classList.add("hot");
-  canvas.scrollTo({left: Math.max(0, c.x - 120), top: Math.max(0, c.y - 80),
-                   behavior: "smooth"});
-}
-
 // -------------------------------------------------------------------- поиск
 function applySearch() {
   var q = document.getElementById("q").value.trim().toLowerCase();
   Object.keys(cards).forEach(function (id) {
     if (!q) { cards[id].el.classList.remove("dim"); return; }
-    var hay = (id + " " + (cards[id].s.title || "") + " " +
-      visibleButtons(id).map(function (x) {
-        return labelOf(x.from, x.b) + " " + x.b.data;
+    var s = byId[id];
+    var hay = (id + " " + (s.title || "") + " " + s.file + " " +
+      buttonsOf(id).map(function (x) {
+        return labelOf(x.b) + " " + x.b.data;
       }).join(" ")).toLowerCase();
     cards[id].el.classList.toggle("dim", hay.indexOf(q) < 0);
   });
 }
 
-// -------------------------------------------------------------------- правки
+// ------------------------------------------------------------------- конфиг
 function diffList() {
-  var out = {labels: [], moves: [], order: [], pos: 0};
-  var seenData = {};
+  var out = {labels: [], moves: [], order: [], pos: 0}, seen = {};
   DATA.screens.forEach(function (s) {
     s.buttons.forEach(function (b) {
       var base = (b.code_label !== undefined) ? b.code_label : b.label;
-      if ((b.data in edits.labels) && edits.labels[b.data] !== base
-          && !seenData[b.data]) {
-        seenData[b.data] = 1;
+      if ((b.data in edits.labels) && edits.labels[b.data] !== base && !seen[b.data]) {
+        seen[b.data] = 1;
         out.labels.push({was: base, now: edits.labels[b.data], data: b.data,
                          where: spreadOf(b.data)});
       }
       var k = keyOf(s.id, b);
       if (edits.moves[k])
-        out.moves.push({label: labelOf(s.id, b), from: s.id, to: edits.moves[k]});
+        out.moves.push({label: labelOf(b), from: s.id, to: edits.moves[k]});
     });
   });
-  Object.keys(edits.order).forEach(function (sid) { out.order.push(sid); });
+  out.order = Object.keys(edits.order);
   out.pos = Object.keys(edits.pos).length;
   return out;
 }
@@ -645,23 +807,21 @@ function configJson() {
 }
 
 function paintDiffCount() {
-  var d = diffList();
-  var n = d.labels.length + d.moves.length;
-  document.getElementById("diffN").textContent = n ? "· " + n : "";
+  document.getElementById("diffN").textContent =
+    diffList().labels.length ? "· " + diffList().labels.length : "";
 }
 
 function paintDiff() {
   var d = diffList(), h = [];
   h.push('<p class="hint">Подписи — настоящая настройка: сохраните файл в ' +
          '<b>config/buttons.json</b>, и бот возьмёт их при следующей выкладке. ' +
-         'Раскладка (порядок, переносы, положение) остаётся наброском — её ' +
-         'переносят в код руками.</p>');
+         'Раскладка — порядок и переносы — остаётся наброском.</p>');
   if (d.labels.length) {
     h.push('<div class="diff"><h3>Переименовано · поедет в бота</h3><ul>');
     d.labels.forEach(function (x) {
-      h.push('<li><span class="was">' + esc(x.was) + '</span> → <span class="now">' +
-             esc(x.now) + '</span><div class="sub">' + esc(x.data) +
-             (x.where > 1 ? ' · на ' + x.where + ' экранах' : '') +
+      h.push('<li><span class="was">' + esc(x.was) + '</span> → ' +
+             '<span class="now">' + esc(x.now) + '</span><div class="sub">' +
+             esc(x.data) + (x.where > 1 ? ' · на ' + x.where + ' экранах' : '') +
              '</div></li>');
     });
     h.push('</ul></div>');
@@ -669,48 +829,56 @@ function paintDiff() {
   if (d.moves.length) {
     h.push('<div class="diff"><h3>Перенесено · только набросок</h3><ul>');
     d.moves.forEach(function (x) {
-      h.push('<li>«' + esc(x.label) + '»<div class="sub">' + esc(x.from) +
-             ' → ' + esc(x.to) + '</div></li>');
+      h.push('<li>«' + esc(x.label) + '»<div class="sub">' +
+             esc(x.from) + ' → ' + esc(x.to) + '</div></li>');
     });
     h.push('</ul></div>');
   }
-  if (d.order.length) {
-    h.push('<div class="diff"><h3>Изменён порядок кнопок</h3><ul><li>' +
-           d.order.map(esc).join(', ') + '</li></ul></div>');
-  }
-  if (d.pos) {
-    h.push('<div class="diff"><h3>Расположение</h3><ul><li>сдвинуто экранов: ' +
-           d.pos + '</li></ul></div>');
-  }
-  if (!d.labels.length && !d.moves.length && !d.order.length && !d.pos) {
+  if (d.order.length)
+    h.push('<div class="diff"><h3>Изменён порядок · набросок</h3><ul><li>' +
+           d.order.map(esc).join(", ") + '</li></ul></div>');
+  if (!d.labels.length && !d.moves.length && !d.order.length)
     h.push('<p class="empty">Пока ничего. Щёлкните по подписи кнопки и ' +
-           'напишите своё — она окажется здесь и уедет в конфиг. Карточки ' +
-           'и порядок кнопок тоже можно двигать.</p>');
-  }
+           'напишите своё — она окажется здесь и уедет в конфиг.</p>');
   h.push('<div class="diff"><h3>config/buttons.json</h3></div>');
   h.push('<textarea id="dump" readonly>' + esc(configJson()) + '</textarea>');
   document.getElementById("diffBody").innerHTML = h.join("");
 }
 
 // ------------------------------------------------------------------ обвязка
-document.getElementById("tabs").addEventListener("click", function (e) {
+document.getElementById("sides").addEventListener("click", function (e) {
   var b = e.target.closest("button");
   if (!b) return;
-  Array.prototype.forEach.call(this.children, function (n) { n.classList.remove("on"); });
+  Array.prototype.forEach.call(this.children,
+    function (n) { n.classList.remove("on"); });
   b.classList.add("on");
   side = b.dataset.side;
-  edits.side = side;
+  at = ROOT[side];
+  trailPath = [at];
+  edits.side = side; edits.at = at;
+  save();
+  render();
+});
+document.getElementById("modes").addEventListener("click", function (e) {
+  var b = e.target.closest("button");
+  if (!b) return;
+  Array.prototype.forEach.call(this.children,
+    function (n) { n.classList.remove("on"); });
+  b.classList.add("on");
+  mode = b.dataset.mode;
+  edits.mode = mode;
+  save();
+  render();
+  if (mode === "map") setTimeout(function () { focusOn(at); }, 60);
+});
+document.getElementById("home").addEventListener("click", function () {
+  at = ROOT[side];
+  trailPath = [at];
+  edits.at = at;
   save();
   render();
 });
 document.getElementById("q").addEventListener("input", applySearch);
-document.getElementById("showWires").addEventListener("change", drawWires);
-document.getElementById("showOrphans").addEventListener("change", render);
-document.getElementById("relayout").addEventListener("click", function () {
-  edits.pos = {};
-  save();
-  render();
-});
 document.getElementById("openDiff").addEventListener("click", function () {
   paintDiff();
   document.getElementById("panel").classList.add("on");
@@ -719,11 +887,10 @@ document.getElementById("closeDiff").addEventListener("click", function () {
   document.getElementById("panel").classList.remove("on");
 });
 document.getElementById("copyDiff").addEventListener("click", function () {
-  var t = document.getElementById("dump");
+  var t = document.getElementById("dump"), me = this;
   t.select();
-  try { document.execCommand("copy"); this.textContent = "Скопировано"; }
-  catch (e) { this.textContent = "Выделено — Ctrl+C"; }
-  var me = this;
+  try { document.execCommand("copy"); me.textContent = "Скопировано"; }
+  catch (e) { me.textContent = "Выделено — Ctrl+C"; }
   setTimeout(function () { me.textContent = "Скопировать"; }, 1600);
 });
 document.getElementById("saveFile").addEventListener("click", function () {
@@ -735,22 +902,18 @@ document.getElementById("saveFile").addEventListener("click", function () {
   setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
 });
 document.getElementById("reset").addEventListener("click", function () {
-  // Спрашиваем: работа могла копиться неделями, а кнопка стоит рядом с
-  // «закрыть» и промахнуться мимо неё легко.
   if (!confirm("Стереть все правки и вернуть карту к тому, что в коде?")) return;
-  edits = {labels: {}, pos: {}, moves: {}, order: {}, side: side};
+  edits = {labels: {}, pos: {}, moves: {}, order: {},
+           side: side, mode: mode, at: at};
   save();
   render();
   paintDiff();
 });
 
-document.getElementById("stamp").textContent =
-  " — " + DATA.counts.screens + " экранов, " + DATA.counts.buttons + " кнопок";
-
-// Вкладка запоминается: возвращаясь, человек хочет туда же, где был.
-Array.prototype.forEach.call(document.getElementById("tabs").children, function (b) {
-  b.classList.toggle("on", b.dataset.side === side);
-});
+Array.prototype.forEach.call(document.getElementById("sides").children,
+  function (b) { b.classList.toggle("on", b.dataset.side === side); });
+Array.prototype.forEach.call(document.getElementById("modes").children,
+  function (b) { b.classList.toggle("on", b.dataset.mode === mode); });
 
 render();
 paintDiffCount();
