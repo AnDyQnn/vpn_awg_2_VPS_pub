@@ -105,7 +105,7 @@ run_bot() {
             -v "$(dpath "$TESTS_DIR")/out:/out" \
             -v "$(dpath "$TESTS_DIR")/contract/node_contract.py:/app/node_contract.py" \
             -v "$(dpath "$ROOT")/CHANGELOG.md:/app/CHANGELOG.md" \
-            -v "$(dpath "$ROOT")/VERSION:/app/VERSION_FILE" \
+            -v "$(dpath "$ROOT")/VERSION:/app/VERSION_FILE"             -v "$(dpath "$ROOT")/config/buttons.json:/app/buttons.json:ro" \
             vpn-bot-test "/app/$t" 2>&1) || true
         report "$t" "$out"
     done

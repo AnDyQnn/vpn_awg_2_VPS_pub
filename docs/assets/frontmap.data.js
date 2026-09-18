@@ -1,6 +1,7 @@
 // Собрано из исходников: python docs/assets/build_frontmap.py
 // Руками не править — перезапишется. Правки делаются в самом боте.
 window.FRONTMAP = {
+ "names": {},
  "generated": true,
  "screens": [
   {

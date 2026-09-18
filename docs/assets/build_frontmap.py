@@ -367,7 +367,28 @@ def main():
                                          if b["to"] in all_funcs
                                          else "обработчика с таким именем нет")})
 
+    # Действующий конфиг подписей: карта обязана показывать то, что человек
+    # видит СЕЙЧАС, а не то, что написано в коде. Иначе, переименовав кнопку
+    # через конфиг, он открыл бы карту и увидел старое имя — и решил, что
+    # переименование не сработало.
+    names = {}
+    cfg = os.path.join(ROOT, "config", "buttons.json")
+    try:
+        with io.open(cfg, encoding="utf-8") as f:
+            names = {k: v for k, v in json.load(f).items()
+                     if not k.startswith("_") and isinstance(v, str) and v.strip()}
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        print("Конфиг подписей не разобран: %s" % e)
+    for s in screens:
+        for b in s["buttons"]:
+            if b["data"] in names:
+                b["code_label"] = b["label"]
+                b["label"] = names[b["data"]]
+
     data = {
+        "names": names,
         "generated": True,
         "screens": screens,
         "dangling": dangling,
