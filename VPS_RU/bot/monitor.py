@@ -973,6 +973,101 @@ async def migration_watch_loop(app):
         await asyncio.sleep(86400)
 
 
+# Сколько ждём между проверками, кто вышел на связь по Xray. Раз в минуту:
+# трафик сборщик снимает чаще, а разглядывать его ещё чаще незачем.
+XRAY_WATCH_SECONDS = 60
+
+
+async def repair_xray_seen():
+    """Стирает отметки «подключился по Xray», поставленные за скачивание.
+
+    Раньше отметка ставилась в обработчике подписки — приложение забрало
+    список серверов, и человек считался переехавшим. По ней владельцу
+    открывается кнопка «Убрать AmneziaWG», то есть предлагалось снять рабочий
+    доступ тому, кто по Xray ещё ничего не передал.
+
+    Стираем один раз за всю жизнь установки: отметка поставится заново сама,
+    когда по адресу пойдут пакеты. Потерять тут нечего — хуже было держать
+    неправду, на которую опирается снятие доступа.
+    """
+    try:
+        if await db.get_setting("xray_seen_by_traffic"):
+            return 0
+        n = await db.fetch_val(
+            "SELECT COUNT(*) FROM xray_users "
+            "WHERE first_seen_at IS NOT NULL AND revoked_at IS NULL") or 0
+        await db.execute(
+            "UPDATE xray_users SET first_seen_at=NULL "
+            "WHERE first_seen_at IS NOT NULL AND revoked_at IS NULL")
+        await db.set_setting("xray_seen_by_traffic", "1")
+        if n:
+            await db.log_event(
+                "Xray",
+                "Отметки подключения сброшены (%d): раньше их ставило "
+                "скачивание подписки, теперь — живой трафик." % n)
+        return n
+    except Exception as e:
+        print("Xray: отметки подключения не сброшены: %s" % e)
+        return 0
+
+
+async def announce_xray_connects(app):
+    """Один проход: кто вышел на связь по Xray впервые. Возвращает, скольких.
+
+    У AmneziaWG есть рукопожатие, и по нему бот давно шлёт «Новое
+    подключение». У Xray рукопожатия нет, и не было ничего: человек включал
+    VPN, всё работало, а в боте — тишина. Владелец замечал это сам.
+
+    Признак связи здесь честнее рукопожатия: пакеты по адресу-двойнику. Оно
+    же и есть переезд — по нему открывается снятие AmneziaWG.
+    """
+    import xray
+    said = 0
+    for uuid_val in await xray.online_uuids():
+        rec = await db.get_xray_user(uuid_val)
+        if not rec or rec["first_seen_at"]:
+            continue
+        await db.mark_xray_seen(uuid_val)
+        user = await db.get_user_by_uuid(uuid_val)
+        if not user:
+            continue
+        safe = escape_md(user["name"])
+        await db.log_event("Connection",
+                           "Первое подключение по Xray: %s" % user["name"])
+        if ADMIN_ID:
+            await notify_admin(
+                app,
+                text=("🎉 **Новое подключение по Xray**\n\n"
+                      "👤 %s\n🆔 `%s`" % (safe, uuid_val)),
+                parse_mode="Markdown")
+        kb = InlineKeyboardMarkup(
+            [[InlineKeyboardButton("🏠 Личный кабинет",
+                                   callback_data="client_menu")]])
+        for tid in (user.get("tg_ids") or []):
+            try:
+                await app.bot.send_message(
+                    chat_id=tid,
+                    text="🟢 **VPN подключен!**\n\nКлюч: **%s**." % safe,
+                    parse_mode="Markdown", reply_markup=kb)
+            except Exception:
+                pass
+        said += 1
+    return said
+
+
+async def xray_connect_watch_loop(app):
+    """Держит сторож подключений живым. Перед первым заходом — разовая
+    починка отметок, поставленных когда-то скачиванием подписки."""
+    await asyncio.sleep(75)
+    await repair_xray_seen()
+    while True:
+        try:
+            await announce_xray_connects(app)
+        except Exception as e:
+            print("Xray: сторож подключений — %s" % e)
+        await asyncio.sleep(XRAY_WATCH_SECONDS)
+
+
 async def log_cleanup_loop(app):
     while True:
         try:
