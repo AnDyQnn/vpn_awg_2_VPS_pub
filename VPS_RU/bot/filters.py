@@ -239,12 +239,27 @@ async def filters_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             cat_names = ", ".join(TITLES_ALL.get(c, c) for c in cats)
             lines.append(f"• **{name}** — {cat_names}")
 
-    if sizes:
-        lines += ["", "_Загружено доменов: "
-                  + ", ".join(f"{TITLES_ALL.get(k, k)} — {v}" for k, v in sizes.items()) + "._"]
+    # Сколько доменов в списке — знание бесполезное: с ним ничего не сделаешь,
+    # а увидев одну категорию из многих, владелец решал, что остальные сломаны.
+    # Узел держит списки только тех категорий, которые кому-то включены, — и
+    # это ровно то, о чём стоит сказать: не размер списка, а не оказалась ли
+    # категория включённой БЕЗ списка. Вот это уже поломка: запрет стоит, а
+    # закрывать нечем, и человек ходит куда хотел.
+    on_now = set(common)
+    for cats in by_uuid.values():
+        on_now.update(cats)
+    empty = sorted(c for c in on_now if not sizes.get(c))
+    if empty:
+        lines += ["", "⚠️ **Списки не загрузились: "
+                  + ", ".join(TITLES_ALL.get(c, c) for c in empty)
+                  + ".** Запрет включён, а закрывать нечем — "
+                    "нажмите «Применить на узле»."]
 
-    lines += ["", "⚠️ _В браузере с DNS-over-HTTPS фильтр обходится: там запрос "
-                  "уходит внутри HTTPS и на уровне DNS его не видно._"]
+    # Оговорка нужна только тогда, когда фильтры кому-то включены: без них
+    # обходить нечего, и предупреждение просто занимает экран.
+    if on_now:
+        lines += ["", "⚠️ _В браузере с DNS-over-HTTPS фильтр обходится: там "
+                      "запрос уходит внутри HTTPS и на уровне DNS его не видно._"]
 
     kb = [[InlineKeyboardButton("🌍 Общие правила", callback_data="flt_common")],
           [InlineKeyboardButton("🟢 Исключения из запретов",
