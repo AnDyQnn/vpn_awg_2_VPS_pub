@@ -585,22 +585,35 @@ async def handout(update, context, uuid_val, name, tg_id=None):
     qr = await xray.qr_file(uuid_val)
     text = await instructions(uuid_val)
 
+    from delivery import to_self
+    # Ключ выдан самому владельцу? Тогда копия «для владельца» — это второй
+    # такой же QR и вторая такая же ссылка в тот же чат. Человеку уходит более
+    # полный набор — с подсказкой, что ставить и куда вставлять, — поэтому
+    # лишней оказывается именно копия владельцу.
+    mine = to_self(chat_id, tg_id)
+
     await context.bot.send_message(
         chat_id=chat_id,
         text=f"✅ **Ключ создан: {escape_md(name)}**\n\nВыдан по Xray — ссылкой.",
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=exit_kb(("👥 Люди", "list_users")))
-    if qr:
-        await context.bot.send_photo(chat_id=chat_id, photo=open(qr, "rb"))
-    # Ссылка отдельным сообщением и кодом: не ломается о собственные
-    # подчёркивания. Кнопка «скопировать» кладёт её в буфер по нажатию —
-    # раньше человек тыкал в адрес подписки, попадал в браузер и видел гору
-    # base64 вместо подписки.
-    #
-    # Кнопка именно копирующая, а не ссылочная: схему `vless://` Telegram в
-    # ссылке не принимает вовсе.
-    await send_copyable(context.bot, chat_id, link,
-                        reply_markup=InlineKeyboardMarkup([[copy_button(link)]]))
+
+    async def _owner_copy():
+        if qr:
+            await context.bot.send_photo(chat_id=chat_id, photo=open(qr, "rb"))
+        # Ссылка отдельным сообщением и кодом: не ломается о собственные
+        # подчёркивания. Кнопка «скопировать» кладёт её в буфер по нажатию —
+        # раньше человек тыкал в адрес подписки, попадал в браузер и видел
+        # гору base64 вместо подписки.
+        #
+        # Кнопка именно копирующая, а не ссылочная: схему `vless://` Telegram
+        # в ссылке не принимает вовсе.
+        await send_copyable(context.bot, chat_id, link,
+                            reply_markup=InlineKeyboardMarkup(
+                                [[copy_button(link)]]))
+
+    if not mine:
+        await _owner_copy()
 
     if tg_id:
         from delivery import track_send
@@ -614,10 +627,18 @@ async def handout(update, context, uuid_val, name, tg_id=None):
                 raise RuntimeError("профиль не собрался")
 
         sent, err = await track_send(uuid_val, tg_id, _send)
+        # Не дошло, а копию владельцу мы придержали — отдаём её сейчас:
+        # остаться совсем без ссылки хуже, чем получить её дважды.
+        if mine and not sent:
+            await _owner_copy()
+        if mine:
+            note = ("✅ Ключ ваш — подключение выше." if sent
+                    else f"⚠️ Ссылка не ушла: `{err}` — доступ выше.")
+        else:
+            note = (f"✅ Ссылка отправлена клиенту `{tg_id}`." if sent
+                    else f"⚠️ Клиент `{tg_id}` ссылку не получил: `{err}`")
         await context.bot.send_message(
-            chat_id=chat_id,
-            text=(f"✅ Ссылка отправлена клиенту `{tg_id}`." if sent
-                  else f"⚠️ Клиент `{tg_id}` ссылку не получил: `{err}`"),
+            chat_id=chat_id, text=note,
             parse_mode=ParseMode.MARKDOWN,
         reply_markup=exit_kb(("👥 Люди", "list_users")))
 

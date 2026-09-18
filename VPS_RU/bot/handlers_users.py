@@ -561,10 +561,23 @@ async def finish_key_creation(update: Update, context: ContextTypes.DEFAULT_TYPE
             context.user_data["proto"] = "xray"
             return
         
+        from delivery import to_self
+        # Ключ выдан самому владельцу? Тогда копия «для владельца» — это тот же
+        # конфиг и тот же QR вторым заходом в один и тот же чат. Человеку уходит
+        # более полный набор, с приветствием и меню, — лишней оказывается копия
+        # владельцу.
+        mine = to_self(chat_id, tg_id)
+
+        async def _owner_copy():
+            await context.bot.send_document(chat_id=chat_id,
+                                            document=open(c_path, "rb"),
+                                            caption=f"📄 {name}")
+            await context.bot.send_photo(chat_id=chat_id, photo=open(q_path, "rb"))
+
         await context.bot.send_message(chat_id=chat_id, text=f"✅ **Ключ сгенерирован!**\n\nВы можете добавить его в приложение AmneziaWG.", parse_mode=ParseMode.MARKDOWN,
         reply_markup=exit_kb(("👥 Люди", "list_users")))
-        await context.bot.send_document(chat_id=chat_id, document=open(c_path, "rb"), caption=f"📄 {name}")
-        await context.bot.send_photo(chat_id=chat_id, photo=open(q_path, "rb"))
+        if not mine:
+            await _owner_copy()
         
         if tg_id:
             # Исход отправки записываем: «не дошло» — это не строчка в логе,
@@ -576,8 +589,12 @@ async def finish_key_creation(update: Update, context: ContextTypes.DEFAULT_TYPE
                 await send_client_menu(context, tg_id)
 
             ok, err = await track_send(new_uid, tg_id, _send_to_client)
+            # Не дошло, а копию владельцу мы придержали — отдаём её сейчас:
+            # остаться совсем без конфига хуже, чем получить его дважды.
+            if mine and not ok:
+                await _owner_copy()
             if ok:
-                await context.bot.send_message(chat_id=chat_id, text=f"✅ Конфиг и меню успешно отправлены клиенту `{tg_id}`.",
+                await context.bot.send_message(chat_id=chat_id, text=("✅ Ключ ваш — конфиг и меню выше." if mine else f"✅ Конфиг и меню успешно отправлены клиенту `{tg_id}`."),
         reply_markup=exit_kb(("👥 Люди", "list_users")))
             else:
                 await context.bot.send_message(chat_id=chat_id, text=f"⚠️ Клиент `{tg_id}` не получил конфиг (возможно, он не запустил бота командой /start):\n`{err}`", parse_mode=ParseMode.MARKDOWN,
