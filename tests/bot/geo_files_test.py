@@ -62,21 +62,35 @@ async def main():
     with open(os.path.join(S.GEO_DIR, "geosite.dat"), "wb") as f:
         f.write(b"x" * 4096)
 
-    r = await S.handle_geo(Req("geosite.dat"))
-    check("готовый файл отдаётся", r.status == 200, "код %s" % r.status)
-
-    r = await S.handle_geo(Req("geoip.dat"))
-    check("которого нет — 404", r.status == 404,
+    check("готовый файл отдаётся", bool(S.geo_path("geosite.dat")))
+    check("которого нет — не отдаётся", not S.geo_path("geoip.dat"),
           "приложение попробует снова, лишнего чужому знать незачем")
 
     for bad in ("../../etc/passwd", "wg0.conf", "", "geosite.dat/../x"):
-        r = await S.handle_geo(Req(bad))
-        if r.status != 404:
-            check("чужое имя не отдаётся: %r" % bad, False, "код %s" % r.status)
+        if S.geo_path(bad):
+            check("чужое имя не отдаётся: %r" % bad, False, "отдали")
             break
     else:
         check("чужие имена не отдаются", True,
               "имя сверяется со списком, а не берётся из запроса")
+
+    # Отдаём поток кусками, а не FileResponse. Тот зовёт `loop.sendfile`, а
+    # поверх TLS его нет: asyncio уходит в запасной путь и падает там с
+    # AttributeError, обрывая передачу на середине. Человек видит «не удалось
+    # скачать файл», а без гео-файлов приложение считает профиль испорченным
+    # целиком — не работает ничего. Проверяем текстом, потому что проверить
+    # поведением можно только с настоящим сокетом и настоящим TLS.
+    src = open("/app/subscription.py", encoding="utf-8").read()
+    part = src[src.index("async def handle_geo"):][:2200]
+    # Считаем только код: пояснение, ПОЧЕМУ мы ушли от FileResponse, обязано
+    # его называть, и запрещать это было бы глупо.
+    code = chr(10).join(l for l in part.splitlines()
+                        if not l.lstrip().startswith("#"))
+    check("через FileResponse не отдаём", "FileResponse" not in code,
+          "он падает на TLS и рвёт закачку")
+    check("отдаём потоком", "StreamResponse" in part)
+    check("и кусками, а не целиком в память", "f.read(" in part,
+          "двадцать семь мегабайт на двоих, а памяти на узле два гигабайта")
 
     print()
     print("=== обрубок не кладётся на место целого ===")
