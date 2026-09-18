@@ -110,7 +110,7 @@ async def donate_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if rem:
             kb.append([InlineKeyboardButton(f"⏱ Периодичность · {days} дн.",
                                             callback_data="don_period")])
-        kb.append([InlineKeyboardButton("👁 Показать глазами человека",
+        kb.append([InlineKeyboardButton("👁 Предпросмотр",
                                         callback_data="don_preview")])
     kb.append([InlineKeyboardButton("🔙 Администрирование", callback_data="svc_menu")])
 
@@ -325,7 +325,7 @@ async def handle_donate_input(update, context, state):
         await db.log_event("Донаты", "Изменён текст обращения")
         await context.bot.send_message(
             chat_id=chat_id, reply_markup=back,
-            text="✅ Текст сохранён. Посмотрите его кнопкой «Показать глазами человека».")
+            text="✅ Текст сохранён. Посмотрите его кнопкой «Предпросмотр».")
         return True
 
     parts = [p.strip() for p in raw.split(",")]
