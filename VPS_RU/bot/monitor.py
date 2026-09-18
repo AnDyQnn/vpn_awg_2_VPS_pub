@@ -977,6 +977,11 @@ async def log_cleanup_loop(app):
     while True:
         try:
             await db.cleanup_old_logs(days=7)
+            # Инциденты: разобранные месяц, неразобранные квартал. Раньше
+            # они не убирались вовсе и копились с первого дня.
+            gone = await db.cleanup_filter_hits()
+            if gone:
+                print("Инциденты: убрано старых — %d" % gone)
             os.makedirs("/volumes/flags", exist_ok=True)
             with open("/volumes/flags/do_cleanup", "w") as f: f.write("true")
         except Exception as e: print(f"🧹 Cleanup error: {e}")
