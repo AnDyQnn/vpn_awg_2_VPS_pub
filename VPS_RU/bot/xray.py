@@ -522,7 +522,12 @@ async def subscription_body(token: str, extra=None) -> str:
     links = await profile_links(rec["user_uuid"])
     if not links:
         return ""
-    await db.mark_xray_seen(rec["user_uuid"])
+    # Отметку «подключился» здесь НЕ ставим. Сюда приходит приложение за
+    # списком серверов — это выдача, а не связь. Разница не словесная: по
+    # этой отметке владельцу открывается кнопка «Убрать AmneziaWG», и
+    # поставленная авансом она предлагает снять рабочий доступ человеку,
+    # который по Xray ещё ни байта не передал. Ставит её теперь сборщик
+    # трафика — когда по адресу реально пошли пакеты.
     return base64.b64encode("\n".join(links + list(extra or [])).encode()).decode()
 
 
