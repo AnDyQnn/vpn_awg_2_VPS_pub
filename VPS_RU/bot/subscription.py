@@ -400,24 +400,75 @@ GEO_DIR = os.getenv("SUB_GEO_DIR", "/volumes/geo")
 GEO_FILES = ("geosite.dat", "geoip.dat")
 
 
+def geo_path(name):
+    """Путь к гео-файлу, если его можно отдавать. Иначе None.
+
+    Отделено от самой отдачи нарочно: здесь живёт всё, что решает «можно или
+    нет», и это единственная часть, которую надо уметь проверить тестом. Сама
+    отдача — поток байтов в сокет, её без настоящего сокета не проверишь.
+    """
+    # Имя берём не из запроса, а сверяем со списком: иначе адрес превращается
+    # в способ читать файлы узла.
+    if name not in GEO_FILES:
+        return None
+    path = os.path.join(GEO_DIR, name)
+    try:
+        if os.path.getsize(path) < 1024:
+            return None
+    except OSError:
+        # Ещё не скачали — молчим так же, как на всё остальное. Приложение
+        # попробует снова, а лишних подробностей чужому знать незачем.
+        return None
+    return path
+
+
 async def handle_geo(request):
     """Отдаёт гео-файл. Только эти два имени и ничего больше.
 
     Имя берём не из запроса, а сверяем со списком: иначе адрес превращается в
     способ читать файлы узла.
     """
-    name = request.match_info.get("name", "")
-    if name not in GEO_FILES:
+    path = geo_path(request.match_info.get("name", ""))
+    if not path:
         return web.Response(status=404, text="not found")
-    path = os.path.join(GEO_DIR, name)
+    # Отдаём кусками руками, а не FileResponse.
+    #
+    # FileResponse зовёт `loop.sendfile`, а поверх TLS ядерного sendfile нет —
+    # asyncio уходит в запасной путь и падает там на ровном месте:
+    #
+    #     base_events.py _sendfile_fallback > proto.restore()
+    #     sslproto.py set_protocol
+    #     AttributeError: 'NoneType' object has no attribute '_set_app_protocol'
+    #
+    # Соединение при этом рвётся посреди передачи. Снаружи это выглядит как
+    # «не удалось скачать файл»: человек жмёт «Повторить», получает то же самое
+    # и остаётся без гео-файлов — а без них приложение считает профиль
+    # маршрутизации испорченным ЦЕЛИКОМ. Не работает ни сплит, ни наш DNS, ни
+    # исключения. То есть падение на отдаче одного файла выглядит как «VPN не
+    # работает вообще», и искать причину идут куда угодно, только не сюда.
+    #
+    # Целиком в память тоже нельзя: файлы весят двадцать семь мегабайт на
+    # двоих, а памяти на узле два гигабайта на всё. Поэтому поток кусками —
+    # ровно то, что FileResponse делал бы без TLS.
+    resp = web.StreamResponse(headers={
+        "Cache-Control": "public, max-age=3600",
+        "Content-Type": "application/octet-stream",
+        "Content-Length": str(os.path.getsize(path)),
+    })
+    await resp.prepare(request)
     try:
-        if os.path.getsize(path) < 1024:
-            raise OSError("слишком мал")
-    except OSError:
-        # Ещё не скачали — молчим так же, как на всё остальное. Приложение
-        # попробует снова, а лишних подробностей чужому знать незачем.
-        return web.Response(status=404, text="not found")
-    return web.FileResponse(path, headers={"Cache-Control": "public, max-age=3600"})
+        with open(path, "rb") as f:
+            while True:
+                chunk = f.read(64 * 1024)
+                if not chunk:
+                    break
+                await resp.write(chunk)
+        await resp.write_eof()
+    except (ConnectionResetError, ConnectionAbortedError, asyncio.CancelledError):
+        # Человек ушёл из сети посреди закачки — обычное дело на телефоне, и
+        # не повод для строки в журнале.
+        pass
+    return resp
 
 
 async def handle_root(request):
