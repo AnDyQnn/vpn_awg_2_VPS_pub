@@ -34,8 +34,11 @@ class FakeResp:
 class FakeSession:
     last = None
 
+    last_zone = None
+
     def post(self, url, json=None, timeout=None):
         FakeSession.last = json["names"]
+        FakeSession.last_zone = json.get("zone")
         return FakeResp({"status": "ok"})
 
     async def __aenter__(self):
@@ -143,10 +146,37 @@ async def main():
     print("\n=== раскладка на узел идёт уже в новой зоне ===")
     ok, msg = await dn.apply_names("тест переезда")
     assert ok, msg
-    assert all(n.endswith("example.ru") or n.startswith("xn--")
-               for n in FakeSession.last), FakeSession.last
+    # В таблице три вида записей: полное имя, его punycode и короткая форма.
+    # Короткая — удобство поверх: полное остаётся главным, на него ссылаются
+    # правила доступа.
+    for n in FakeSession.last:
+        assert (n.endswith("example.ru") or n.startswith("xn--")
+                or "." not in n), (n, FakeSession.last)
     print("  ", sorted(n for n in FakeSession.last if not n.startswith("xn--")))
     print("узел получил имена в настоящей зоне: ок")
+
+    print("\n=== короткое имя работает наравне с полным ===")
+    # Третий уровень в адресной строке каждый раз — ровно та мелочь, из-за
+    # которой удобной вещью перестают пользоваться.
+    table = FakeSession.last
+    print("  ", sorted(k for k in table if not k.startswith("xn--")))
+    assert table.get("дом") == table.get("дом.example.ru"), table
+    assert table.get("kino") == table.get("kino.example.ru"), table
+    assert "дом.example.ru" in table, "полное имя обязано остаться главным"
+    print("отвечает и на «дом», и на «дом.example.ru»: ок")
+
+    print("\n=== короткое идёт за своим полным ===")
+    await db.set_dns_name("kino.example.ru", target_ip="10.13.13.77")
+    table2, _ = await dn.resolve_all()
+    assert table2["kino.example.ru"] == "10.13.13.77", table2
+    assert table2["kino"] == "10.13.13.77", table2.get("kino")
+    print("сменилась цель — сменилось и короткое: ок")
+
+    print("\n=== зона уезжает на узел вместе с именами ===")
+    # Из неё узел делает поисковый домен для новых конфигов.
+    assert FakeSession.last_zone == "example.ru", FakeSession.last_zone
+    print("  зона:", FakeSession.last_zone)
+    print("узел знает, чем достраивать короткое имя: ок")
 
     print("\n=== имя убрали — возвращаемся в местную зону ===")
     set_domain("")

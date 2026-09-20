@@ -212,6 +212,10 @@ class DnsFilters(BaseModel):
     bot_link: str = ""          # куда человеку идти с вопросом «почему закрыто»
 
 class DnsNames(BaseModel):
+    # Зона имён. Узел кладёт её в новые конфиги поисковым доменом: тогда система
+    # достраивает короткое имя до полного сама, и человеку не надо набирать
+    # третий уровень руками.
+    zone: str = ""
     # имя → адрес в туннеле. Разрешать имена в адреса — дело бота: у него база.
     names: dict = {}
     # адрес человека → верхний DNS, который он выбрал при выдаче ключа.
@@ -829,7 +833,7 @@ def apply_dns_filters(clients, everyone=False):
 DNS_NAMES_FILE = f"{CONF_DIR}/dns_names.json"
 
 
-def apply_dns_names(names, upstreams=None):
+def apply_dns_names(names, upstreams=None, zone=None):
     """Записывает таблицу имён и пересобирает заворот DNS.
 
     Заворот общий, а не по адресам: имя должно работать у всех, иначе «зайди на
@@ -838,9 +842,24 @@ def apply_dns_names(names, upstreams=None):
     возможности."""
     with open(DNS_NAMES_FILE, "w") as f:
         json.dump({"names": names or {}, "upstreams": upstreams or {},
-                   "saved_at": int(time.time())}, f)
+                   "zone": zone or "", "saved_at": int(time.time())}, f)
     rebuild_dns_chain(names=names)
     return len(names or {})
+
+
+def dns_search_zone():
+    """Зона имён, если она есть. Идёт в новые конфиги поисковым доменом.
+
+    Смысл в одном: человек набирает «homelab», а система сама достраивает до
+    «homelab.имя-узла». Без этого третий уровень приходится набирать руками
+    каждый раз, а это ровно та мелочь, из-за которой удобной вещью перестают
+    пользоваться.
+    """
+    try:
+        with open(DNS_NAMES_FILE) as f:
+            return str(json.load(f).get("zone") or "").strip().lower()
+    except Exception:
+        return ""
 
 
 def read_dns_names():
@@ -1761,7 +1780,7 @@ def set_dns_names(req: DnsNames):
         names = {str(k).lower().rstrip("."): str(v)
                  for k, v in (req.names or {}).items() if v}
         ups = {str(k): str(v) for k, v in (req.upstreams or {}).items() if v}
-        count = apply_dns_names(names, ups)
+        count = apply_dns_names(names, ups, (req.zone or "").strip().lower())
         return {"status": "ok", "names": count}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -2067,6 +2086,15 @@ def create_peer(req: PeerCreate):
 
         target_dns = "94.140.14.14, 94.140.15.15" if req.dns_type == "adblock" else "1.1.1.1, 1.0.0.1"
 
+        # Поисковый домен. Клиенты WireGuard понимают в строке DNS не только
+        # адреса: имя без точек-адреса они кладут в список поиска системы. Тогда
+        # короткое «homelab» достраивается до полного самой системой — надёжнее,
+        # чем если бы это делали мы.
+        #
+        # Агенту не нужен: он не человек и в адресную строку ничего не набирает.
+        _zone = "" if is_de_agent else dns_search_zone()
+        search_suffix = (", " + _zone) if _zone else ""
+
         client_allowed_ips = "10.13.13.0/24" if is_de_agent else build_split_allowed_ips(req.bypass_cidrs)
 
         server_allowed_ips = "0.0.0.0/0, 10.13.13.254/32" if is_de_agent else f"{client_ip}/32"
@@ -2075,7 +2103,7 @@ def create_peer(req: PeerCreate):
 [Interface]
 PrivateKey = {priv_key}
 Address = {client_ip}/32
-DNS = {target_dns}
+DNS = {target_dns}{search_suffix}
 MTU = 1280
 {OBFUSCATION_PARAMS}
 

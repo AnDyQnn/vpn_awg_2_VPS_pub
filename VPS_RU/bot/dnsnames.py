@@ -214,6 +214,20 @@ async def resolve_all():
         puny = to_punycode(row["name"])
         if puny != row["name"]:
             table[puny] = ip
+
+        # И короткая форма — одно слово, без зоны. Набирать третий уровень в
+        # адресной строке каждый раз незачем, а односложных имён в интернете не
+        # бывает: перехватить этим чужое нельзя.
+        #
+        # Работает сразу и у всех, без перевыдачи ключей. Полное имя при этом
+        # остаётся главным: на него ссылаются правила доступа, и короткое —
+        # только удобство поверх.
+        head = row["name"].split(".", 1)[0]
+        if head and head not in table:
+            table[head] = ip
+            puny_head = to_punycode(head)
+            if puny_head != head:
+                table[puny_head] = ip
     return table, skipped
 
 
@@ -256,6 +270,7 @@ async def apply_names(reason: str = ""):
         async with api_session() as session:
             async with session.post(f"{WG_API_URL}/dns/names",
                                     json={"names": table,
+                                          "zone": zone(),
                                           "upstreams": await client_upstreams()},
                                     timeout=15) as resp:
                 if resp.status != 200:
