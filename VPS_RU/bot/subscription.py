@@ -165,32 +165,95 @@ def on_decoy(request) -> bool:
         return False
 
 
-def decoy_page():
+_DECOY_STARTED = time.time()
+_DECOY_ETAG = None
+
+
+def _decoy_etag():
+    """Метка версии страницы. Считается один раз: страница не меняется."""
+    global _DECOY_ETAG
+    if _DECOY_ETAG is None:
+        import hashlib
+        import decoy
+        _DECOY_ETAG = '"%s"' % hashlib.sha256(decoy.BODY).hexdigest()[:16]
+    return _DECOY_ETAG
+
+
+def _http_date(ts):
+    """Дата в том виде, в каком её пишут веб-серверы."""
+    from email.utils import formatdate
+    return formatdate(ts, usegmt=True)
+
+
+def decoy_page(request=None, status=200):
     """Страница, которую видит посторонний.
 
-    Она намеренно тупая: один и тот же ответ побайтово, ни чтения с диска по
-    просьбе гостя, ни состояния, ни форм. Форма тут особенно неуместна — любое
-    поле ввода приглашает его попробовать, а нам нечего с ним делать.
+    Отвечает как живой сайт: 200 на главной, 404 на чепухе, заголовки с датой и
+    меткой версии, поддержка HEAD и «если не менялось». Сервер, одинаково
+    отвечающий «временно недоступен» на любой запрос, — сам по себе примета.
 
-    Маленькая, а не на десять мегабайт. Совет «пусть весит побольше, чтобы
-    объём трафика выглядел правдоподобно» делает из узла усилитель: каждый
-    случайный сканер вынудит машину с одним ядром отдать десять мегабайт, а
-    таких запросов бывают тысячи в сутки. Правдоподобия это всё равно не даёт —
-    через VPN за вечер проходят гигабайты.
+    При этом внутри она по-прежнему нема: ни чтения с диска по просьбе гостя, ни
+    состояния, ни форм. Всё, что она умеет, — это то, что можно против нас
+    применить.
     """
     import decoy
-    return web.Response(
-        body=decoy.BODY, status=503, content_type="text/html", charset="utf-8",
-        headers={
-            # Кэш: повторный визит того же сканера не стоит нам ничего.
-            "Cache-Control": "public, max-age=3600",
-            "Retry-After": "7200",
-            # Ни версии, ни имени движка: это бесплатная подсказка тому, кто
-            # ищет, чем нас пробовать.
-            "Server": "nginx",
-            "X-Content-Type-Options": "nosniff",
-            "Referrer-Policy": "no-referrer",
-        })
+    etag = _decoy_etag()
+    headers = {
+        "Date": _http_date(time.time()),
+        "Last-Modified": _http_date(_DECOY_STARTED),
+        "ETag": etag,
+        "Cache-Control": "public, max-age=3600",
+        "Accept-Ranges": "bytes",
+        # Ни версии, ни имени движка: это бесплатная подсказка тому, кто ищет,
+        # чем нас пробовать.
+        "Server": "nginx",
+        "X-Content-Type-Options": "nosniff",
+        "Referrer-Policy": "no-referrer",
+    }
+
+    # «У меня уже есть эта версия» — обычный разговор живого сайта с браузером.
+    if request is not None and status == 200:
+        if (request.headers.get("If-None-Match") or "").find(etag) >= 0:
+            return web.Response(status=304, headers=headers)
+
+    body = decoy.BODY if status == 200 else decoy.NOT_FOUND
+    if request is not None and request.method == "HEAD":
+        headers["Content-Length"] = str(len(body))
+        return web.Response(status=status, headers=headers,
+                            content_type="text/html", charset="utf-8")
+    return web.Response(body=body, status=status, content_type="text/html",
+                        charset="utf-8", headers=headers)
+
+
+def decoy_reply(request):
+    """Что ответить гостю, пришедшему не за подпиской.
+
+    Разбор здесь ровно один — путь целиком, без разбора на части. Разбирать
+    глубже нечего: у сайта нет ни страниц, ни файлов, а каждая попытка разбора —
+    это место, где можно ошибиться на виду у всего интернета.
+    """
+    import decoy
+    # Метод разбираем здесь же: рубеж ниже сюда уже не доберётся, а живой сайт
+    # на POST отвечает «метод не поддержан», а не выдачей главной страницы.
+    if request.method not in ("GET", "HEAD"):
+        return web.Response(status=405,
+                            headers={"Allow": "GET, HEAD",
+                                     "Date": _http_date(time.time()),
+                                     "Server": "nginx"})
+    path = request.path
+    if path in ("/", "/index.html"):
+        return decoy_page(request, 200)
+    if path == "/robots.txt":
+        return web.Response(
+            text=decoy.ROBOTS, content_type="text/plain", charset="utf-8",
+            headers={"Date": _http_date(time.time()), "Server": "nginx",
+                     "Cache-Control": "public, max-age=86400"})
+    if path == "/favicon.ico":
+        return web.Response(
+            body=decoy.FAVICON, content_type="image/svg+xml",
+            headers={"Date": _http_date(time.time()), "Server": "nginx",
+                     "Cache-Control": "public, max-age=86400"})
+    return decoy_page(request, 404)
 
 
 @web.middleware
@@ -207,7 +270,7 @@ async def guard(request, handler):
     # работать у своих. Reality уводит сюда КАЖДОГО, кто не прошёл проверку,
     # поэтому таких стуков будут тысячи.
     if on_decoy(request) and not _is_sub_path(request.path):
-        return decoy_page()
+        return decoy_reply(request)
 
     now = time.time()
     ip = request.remote or "?"

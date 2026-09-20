@@ -202,7 +202,19 @@ echo "[Deploy] Шаг 3: Сборка новых образов (старые к
 # отдельная запись на каждую перерисовку: на узле выхода за один деплой
 # так набежало 2,5 миллиона строк и полгигабайта syslog при диске в 10 ГБ.
 # `--progress plain` пишет по строке на шаг, а не на кадр.
-if ! docker compose build --progress plain; then
+# Сборка идёт с пониженным приоритетом. На одном ядре она иначе забирает узел
+# себе: замеренная средняя нагрузка доходила до пяти, и люди в этот момент
+# чувствовали VPN тормозящим — хотя ничего не ломалось, просто очередь.
+#
+# Сборке спешить некуда, туннелю — есть куда. nice отдаёт ей процессор по
+# остаточному принципу, ionice — диск (а пишет она много и мелко), и один поток
+# вместо нескольких: на одном ядре параллельные шаги ничего не ускоряют, а
+# очередь удлиняют.
+BUILD_NICE=""
+command -v nice >/dev/null 2>&1 && BUILD_NICE="nice -n 15"
+command -v ionice >/dev/null 2>&1 && BUILD_NICE="$BUILD_NICE ionice -c2 -n7"
+
+if ! env BUILDKIT_MAX_PARALLELISM=1 $BUILD_NICE docker compose build --progress plain; then
     echo "[Deploy] ❌ Сборка не удалась — работающие контейнеры НЕ трогаю."
     echo "[Deploy] Деплой отменён, VPN продолжает работать на старой версии."
     exit 1
@@ -282,7 +294,8 @@ if [ -n "$problem" ] && [ -n "$PREV_HASH" ]; then
     echo "[Deploy] ↩️  ОТКАТ на предыдущую версию ${PREV_HASH:0:7}..."
     cd "$PROJECT_ROOT" && git reset --hard "$PREV_HASH"
     cd "$NODE_DIR"
-    if docker compose build --progress plain && docker compose up -d; then
+    if env BUILDKIT_MAX_PARALLELISM=1 $BUILD_NICE docker compose build --progress plain \
+            && docker compose up -d; then
         echo "${PREV_HASH:0:7}" > "$NODE_DIR/volumes/VERSION"
         echo "[Deploy] ✅ Откат выполнен — прод снова на рабочей версии ${PREV_HASH:0:7}."
         echo "[Deploy] ℹ️  Бэкап БД до апдейта: $PRE_BACKUP (восстановить вручную при необходимости)."

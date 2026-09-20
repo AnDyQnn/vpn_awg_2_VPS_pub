@@ -811,9 +811,17 @@ class Database:
                 pass
         # Отметки ещё нет — первый запуск после обновления. Берём по записям:
         # это ровно то, что было раньше, и повторов не создаст.
+        #
+        # И СРАЗУ ЗАПОМИНАЕМ. Иначе отметка появилась бы только с приходом
+        # следующего инцидента, а до тех пор удаление по-прежнему откатывало бы
+        # её назад — то есть починка не работала бы ровно там, где она нужна:
+        # на уже накопившемся.
         row = await self.fetch_val(
             "SELECT EXTRACT(EPOCH FROM MAX(happened_at)) FROM filter_hits")
-        return int(row or 0)
+        ts = int(row or 0)
+        if ts:
+            await self.set_setting(self.HITS_MARK_KEY, ts)
+        return ts
 
     async def note_filter_hit_ts(self, ts):
         """Двигает отметку вперёд. Назад — никогда: забранное забрано."""

@@ -94,39 +94,7 @@ def admin_text(limit=SHOW_RELEASES):
     if not releases:
         return "📄 История изменений пока пуста."
 
-    parts = ["📄 **Что нового**", ""]
-    budget = 3500          # с запасом под подпись и ссылку на репозиторий
-    used = len(parts[0])
-    skipped = 0
-
-    for ver, when, body in releases:
-        head = f"**{ver}**" + (f" · {when}" if when else "")
-        parts.append(head)
-        used += len(head)
-        for name, items in _by_section(body).items():
-            items = [i for i in items if i.strip()]
-            if not items:
-                continue
-            title = f"_{name}_"
-            shown = 0
-            for item in items:
-                line = f"• {_short(item)}"
-                # Место кончилось — дальше только считаем, что не поместилось:
-                # обрывать текст на полуслове хуже, чем честно сказать сколько.
-                if used + len(line) + len(title) > budget:
-                    skipped += 1
-                    continue
-                if shown == 0:
-                    parts.append(title)
-                    used += len(title)
-                parts.append(line)
-                used += len(line)
-                shown += 1
-        parts.append("")
-
-    if skipped:
-        parts.append(f"_И ещё {skipped} пунктов — целиком в CHANGELOG.md._")
-    return "\n".join(parts).strip()
+    return _render(releases, "📄 **Что нового**")
 
 
 def _by_section(body):
@@ -191,20 +159,54 @@ def _plain(text):
     return text.strip()
 
 
-def user_text(since_version=None):
-    """Для человека: только накопленное с версии, которую он видел в прошлый раз.
+def _render(releases, head, budget=3500):
+    """Складывает записи в текст. Один рендер на всех — чтобы не было двух
+    разных правд об одном и том же обновлении."""
+    parts = [head, ""]
+    used = len(head)
+    skipped = 0
 
-    Если в записи есть раздел «Для пользователей» — берём его: это текст, написанный
-    специально для людей. Если нет — отбираем пункты, где нет технических слов,
-    чтобы человек не читал про digest образов и миграции таблиц.
+    for ver, when, body in releases:
+        title_line = f"**{ver}**" + (f" · {when}" if when else "")
+        parts.append(title_line)
+        used += len(title_line)
+        for name, items in _by_section(body).items():
+            items = [i for i in items if i.strip()]
+            if not items:
+                continue
+            title = f"_{name}_"
+            shown = 0
+            for item in items:
+                line = f"• {_short(item)}"
+                # Место кончилось — дальше только считаем, что не поместилось:
+                # обрывать текст на полуслове хуже, чем честно сказать сколько.
+                if used + len(line) + len(title) > budget:
+                    skipped += 1
+                    continue
+                if shown == 0:
+                    parts.append(title)
+                    used += len(title)
+                parts.append(line)
+                used += len(line)
+                shown += 1
+        parts.append("")
+
+    if skipped:
+        parts.append(f"_И ещё {skipped} пунктов — целиком в CHANGELOG.md._")
+    return "\n".join(parts).strip()
+
+
+def user_text(since_version=None):
+    """Для человека: всё, что появилось с версии, которую он видел в прошлый раз.
+
+    Текст тот же самый, что видит владелец. Раньше человеку показывались только
+    пункты из раздела «Для пользователей» — а мы такой раздел пишем не всегда, и
+    человек видел «нового пока нет» там, где менялось многое.
     """
     # Окно должно покрывать всё, что новее виденного человеком, а не
     # фиксированное число записей. Линейка 8.0 набрала одиннадцать бет подряд,
     # и при окне в десять текст для людей, написанный в первой из них, вылетал:
     # человек на 7.x видел «нового пока нет» про смену протокола.
-    #
-    # Разбор дешёвый — это чтение одного файла, — а отсекаем всё равно по
-    # номеру версии, так что лишние записи просто не дойдут до вывода.
     releases = parse_releases(limit=200)
     if not releases:
         return None
@@ -217,30 +219,16 @@ def user_text(since_version=None):
     if not fresh:
         return None
 
-    # Ограничивать надо длину того, что уходит человеку, а не глубину поиска.
-    # Записи без текста для него в вывод не попадают вовсе, сколько бы их ни
-    # было, — а вот обрезание списка версий однажды уже спрятало от людей целый
-    # раздел про смену протокола. Поэтому считаем пункты, а не версии.
-    MAX_ITEMS = 20
+    # Сколько версий показывать за раз. Человек, не заходивший месяц, иначе
+    # получит стену: читать её он не станет, и вместе с ней пролистает то
+    # единственное, что его касается.
+    MAX_RELEASES = 5
+    shown = fresh[:MAX_RELEASES]
+    text = _render(shown, "✨ **Что изменилось**")
+    if len(fresh) > MAX_RELEASES:
+        text += ("\n\n_И более ранние версии — целиком в истории изменений._")
+    return text
 
-    lines = ["✨ **Что изменилось**", ""]
-    for ver, _when, body in fresh:
-        # Только раздел, написанный для людей. Раньше при его отсутствии брались
-        # все пункты, кроме «технических на вид», и человеку прилетало про экраны
-        # админки и обходы проверок. Нет раздела — значит для него ничего нового.
-        items = _bullets(body, only_section="Для пользователей")
-        for item in items:
-            if len(lines) - 2 >= MAX_ITEMS:
-                break
-            lines.append(f"• {_short(item, 120)}")
-        if len(lines) - 2 >= MAX_ITEMS:
-            break
-
-    if len(lines) <= 2:
-        return None
-    lines.append("")
-    lines.append(f"Версия: {fresh[0][0]}")
-    return "\n".join(lines)
 
 
 def last_user_text():

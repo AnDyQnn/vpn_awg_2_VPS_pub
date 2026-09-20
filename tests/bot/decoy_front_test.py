@@ -3,8 +3,12 @@
 
 Через неё подписка попадает на 443 — Reality уводит туда всех, кто не прошёл
 проверку, а это ровно наши клиенты. Значит на этой двери оказывается и весь
-интернет, и проверять надо две вещи: посторонний видит только страницу, а
-сканеры не съедают запас, на котором живёт подписка.
+интернет, и проверять надо три вещи: посторонний видит обычный сайт, сканеры не
+съедают запас подписки, а сама подписка работает как раньше.
+
+Почему «обычный сайт» — это проверка, а не украшение. Сервер, отвечающий
+«временно недоступен» одинаково на любой запрос и год подряд, — сам по себе
+примета, заметная именно тому, кто приметы и ищет.
 """
 import asyncio
 
@@ -22,15 +26,18 @@ class FakeTransport:
 
 
 class FakeReq:
-    def __init__(self, port, path="/", method="GET"):
+    def __init__(self, port, path="/", method="GET", headers=None):
         self.transport = FakeTransport(port)
         self.path = path
         self.method = method
         self.remote = "203.0.113.7"
         self.match_info = {}
+        self.headers = headers or {}
 
 
 async def main():
+    import decoy
+
     print("=== дверь опознаётся по порту, а не по имени ===")
     # Имя приходит от гостя и может быть любым. Порт приходит от ядра.
     assert S.on_decoy(FakeReq(S.DECOY_PORT))
@@ -49,27 +56,57 @@ async def main():
     assert S._is_sub_path("/geo/geoip.dat")
     assert not S._is_sub_path("/")
     assert not S._is_sub_path("/admin")
-    assert not S._is_sub_path("/wp-login.php")
     print("только подписка, маршруты и гео: ок")
 
-    print("\n=== посторонний видит страницу, и одну и ту же ===")
-    import decoy
-    r1 = S.decoy_page()
-    r2 = S.decoy_page()
-    print("  ", r1.status, r1.content_type, len(r1.body), "байт")
-    assert r1.status == 503
-    assert r1.content_type == "text/html"
-    assert r1.body == r2.body == decoy.BODY, "ответ обязан быть один и тот же"
-    assert r1.headers["Server"] == "nginx", "своё имя называть незачем"
-    # Размер — именно обычный. Десять мегабайт «для правдоподобия» сделали бы
-    # из узла усилитель: каждый сканер вынуждал бы отдать их целиком.
-    assert len(r1.body) < 64 * 1024, len(r1.body)
-    print("одна страница, чужое имя движка, обычный размер: ок")
+    print("\n=== главная отвечает как живой сайт ===")
+    r = S.decoy_reply(FakeReq(S.DECOY_PORT, "/"))
+    print("  /", r.status, r.content_type, len(r.body), "байт")
+    assert r.status == 200, "живой сайт на главной отвечает 200, а не ошибкой"
+    assert r.body == decoy.BODY
+    assert r.headers["Server"] == "nginx", "своё имя называть незачем"
+    for h in ("Date", "Last-Modified", "ETag"):
+        assert h in r.headers, h
+    print("200, дата, метка версии, чужое имя движка: ок")
+
+    print("\n=== чепуха получает 404, а не главную ===")
+    r = S.decoy_reply(FakeReq(S.DECOY_PORT, "/wp-login.php"))
+    print("  /wp-login.php", r.status, len(r.body), "байт")
+    assert r.status == 404
+    assert r.body == decoy.NOT_FOUND
+    assert r.body != decoy.BODY, "404 обязана отличаться от главной"
+    print("отдельная страница на несуществующий путь: ок")
+
+    print("\n=== мелочи, по отсутствию которых узнают не-сайт ===")
+    r = S.decoy_reply(FakeReq(S.DECOY_PORT, "/robots.txt"))
+    assert r.status == 200 and "text/plain" in r.content_type
+    r = S.decoy_reply(FakeReq(S.DECOY_PORT, "/favicon.ico"))
+    assert r.status == 200 and "svg" in r.content_type
+    print("robots.txt и значок вкладки на месте: ок")
+
+    print("\n=== HEAD отвечает заголовками без тела ===")
+    r = S.decoy_reply(FakeReq(S.DECOY_PORT, "/", "HEAD"))
+    assert r.status == 200
+    assert not r.body, "на HEAD тело не отдают"
+    assert r.headers.get("Content-Length") == str(len(decoy.BODY))
+    print("как положено: ок")
+
+    print("\n=== «у меня уже есть эта версия» ===")
+    etag = S._decoy_etag()
+    r = S.decoy_reply(FakeReq(S.DECOY_PORT, "/", headers={"If-None-Match": etag}))
+    print("  повторный визит:", r.status)
+    assert r.status == 304, "живой сайт отвечает 304, а не шлёт страницу снова"
+    print("повторный визит не стоит нам ничего: ок")
+
+    print("\n=== страница собрана заранее и не меняется ===")
+    a = S.decoy_reply(FakeReq(S.DECOY_PORT, "/")).body
+    b = S.decoy_reply(FakeReq(S.DECOY_PORT, "/")).body
+    assert a == b == decoy.BODY
+    # Размер обычный. Десять мегабайт «для правдоподобия объёма» сделали бы из
+    # узла усилитель: каждый сканер вынуждал бы отдать их целиком.
+    assert len(a) < 64 * 1024, len(a)
+    print("одна и та же, обычного размера: ок")
 
     print("\n=== сканеры не съедают запас подписки ===")
-    # Reality уводит к маске КАЖДОГО, кто не прошёл проверку. Если такие стуки
-    # пойдут через общий счётчик, достаточно постучаться тысячу раз — и подписка
-    # перестанет работать у своих.
     S._rate.clear()
     S._miss.clear()
     hit = {"n": 0}
@@ -80,7 +117,7 @@ async def main():
 
     for _ in range(200):
         resp = await S.guard(FakeReq(S.DECOY_PORT, "/wp-login.php"), handler)
-        assert resp.status == 503, resp.status
+        assert resp.status == 404, resp.status
     assert hit["n"] == 0, "страница не должна доходить до обработчиков"
     assert not S._rate, "стуки в заглушку не должны попадать в счётчик"
     print("  двести стуков:", "счётчик пуст" if not S._rate else S._rate)
@@ -94,12 +131,13 @@ async def main():
     print("  запросов к обработчику:", hit["n"])
     print("подписка на 443 работает, рубеж на ней остаётся: ок")
 
-    print("\n=== чужой метод не проходит и здесь ===")
-    resp = await S.guard(FakeReq(S.DECOY_PORT, "/sub/" + "a" * 20, "POST"),
-                         handler)
-    assert resp.status == 404, resp.status
+    print("\n=== чужой метод: отказ как у веб-сервера ===")
+    resp = await S.guard(FakeReq(S.DECOY_PORT, "/", "POST"), handler)
+    print("  POST →", resp.status, resp.headers.get("Allow"))
+    assert resp.status == 405, "живой сайт говорит «метод не поддержан»"
+    assert resp.headers.get("Allow") == "GET, HEAD"
     assert hit["n"] == 1
-    print("только чтение: ок")
+    print("405 с перечнем методов: ок")
 
     S._rate.clear()
     S._miss.clear()

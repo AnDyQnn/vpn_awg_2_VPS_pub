@@ -13,6 +13,7 @@ from telegram.ext import ContextTypes
 import xray
 from database import db
 from utils import (exit_kb, escape_md, show_screen, send_copyable,
+                   GOSUSLUGI_APP_WARNING,
                    copy_button)
 
 BACK_SERVICE = [InlineKeyboardButton("🔙 Администрирование", callback_data="svc_menu")]
@@ -616,10 +617,31 @@ async def instructions(uuid_val=None, platform=None):
             "Больше ничего делать не нужно: новые сервера и настройки "
             "приложение подтянет само.",
         ]
+
+    # Про сплит — обязательно. Человек, не знающий, что российские сервисы идут
+    # мимо туннеля сами, при первом же «а банк-то работает» решает, что VPN
+    # отключился, и лезет чинить исправное.
+    try:
+        from happ_routing import profile as _profile
+        prof = await _profile(uuid_val)
+        nets = len(prof.get("DirectIp") or [])
+        sites = len(prof.get("DirectSites") or [])
+    except Exception:
+        nets = sites = 0
+    if nets or sites:
+        lines += [
+            "",
+            "**Российские сервисы идут мимо VPN сами** — банки, госуслуги, "
+            "маркетплейсы. Их список приезжает вместе с настройками и "
+            "обновляется без вашего участия.",
+        ]
+
     lines += [
         "",
         "⚠️ Это ваш личный доступ. По нему подключаются к вашему VPN — "
         "не передавайте его никому.",
+        "",
+        GOSUSLUGI_APP_WARNING,
     ]
     return "\n".join(lines)
 

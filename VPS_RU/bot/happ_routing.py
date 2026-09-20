@@ -162,6 +162,34 @@ async def _stamp(prof, uuid_val):
     return now
 
 
+# Резолвер по умолчанию для трафика мимо туннеля. Яндекс, потому что он быстрее
+# отвечает из России, а сюда идёт именно то, что решили не заворачивать.
+DIRECT_DNS_DEFAULT = "77.88.8.8"
+
+
+async def _direct_dns(uuid_val):
+    """Какой резолвер человек выбрал при выдаче ключа.
+
+    Читаем из его же конфига, а не спрашиваем заново: там это и записано, и
+    другого источника правды нет. Нет конфига (человек только на Xray) — берём
+    обычный.
+    """
+    if not uuid_val:
+        return DIRECT_DNS_DEFAULT
+    try:
+        from acl import peer_ip_map
+        from dnsnames import client_upstreams
+        ip = (await peer_ip_map()).get(uuid_val)
+        if not ip:
+            return DIRECT_DNS_DEFAULT
+        chosen = (await client_upstreams()).get(ip)
+        return chosen or DIRECT_DNS_DEFAULT
+    except Exception:
+        # Это удобство, а не рубеж: не вышло — профиль всё равно должен
+        # собраться, иначе человек останется вообще без настроек.
+        return DIRECT_DNS_DEFAULT
+
+
 async def profile(uuid_val=None):
     """Профиль маршрутизации для приложения.
 
@@ -254,10 +282,13 @@ async def profile(uuid_val=None):
         "RemoteDNSDomain": "",
         "RemoteDNSIP": TUNNEL_DNS,
         # А для того, что идёт мимо туннеля, наш резолвер недостижим: туда
-        # ходят напрямую, в том числе при выключенном VPN.
+        # ходят напрямую, в том числе при выключенном VPN. Поэтому здесь —
+        # выбор самого человека, тот же, что он сделал при выдаче ключа
+        # AmneziaWG. Иначе, перейдя на второй протокол, он молча терял бы
+        # резку рекламы и не мог понять, почему она вернулась.
         "DomesticDNSType": "DoU",
         "DomesticDNSDomain": "",
-        "DomesticDNSIP": "77.88.8.8",
+        "DomesticDNSIP": await _direct_dns(uuid_val),
         "DirectSites": sorted(set(domains)),
         "DirectIp": self_direct + list(ALWAYS_DIRECT) + _collapse(listed),
         # Имя, не совпавшее ни с одним правилом по имени, проверяется ещё и по
