@@ -97,7 +97,15 @@ zone_parts() {   # zone_parts <полное имя из certbot>
         say "имени узла нет — не знаю, в какой зоне писать"
         return 1
     fi
-    case ".$1" in
+    # Сам домен — это пустой поддомен. Отдельной веткой, а не общим правилом:
+    # «example.ru» не заканчивается на «.example.ru», и отсечение суффикса
+    # здесь молча не делает ничего — имя уезжает к регистратору целиком, а он
+    # приписывает домен второй раз.
+    if [ "$1" = "$ZONE" ]; then
+        SUB="@"
+        return 0
+    fi
+    case "$1" in
         *".$ZONE") SUB="${1%".$ZONE"}" ;;
         *)
             say "имя «$1» не из зоны «$ZONE» — не трогаю чужое"
@@ -174,8 +182,9 @@ case "${1:-}" in
         printf '%s\n' "$ANSWER" | head -3 | sed 's/^/[dns-01]   /'
         exit 1
     fi
-    say "запись положена: $NAME.$ZONE"
-    wait_visible "$NAME.$ZONE" "$CERTBOT_VALIDATION"
+    FQDN="_acme-challenge.$CERTBOT_DOMAIN"
+    say "запись положена: $FQDN"
+    wait_visible "$FQDN" "$CERTBOT_VALIDATION"
     ;;
 
   clean)

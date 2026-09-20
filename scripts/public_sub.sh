@@ -265,7 +265,7 @@ issue() {
             --manual-auth-hook "bash $HOOK add" \
             --manual-cleanup-hook "bash $HOOK clean" \
             --cert-name "$CERT_NAME" \
-            -d "$DOMAIN" -d "*.$DOMAIN" >/tmp/certbot.log 2>&1
+            -d "$DOMAIN" -d "*.$DOMAIN" >/tmp/certbot-wild.log 2>&1
         if [ $? -eq 0 ]; then
             copy_cert && report "on" "сертификат на «$DOMAIN» и «*.$DOMAIN» выдан"
             return $?
@@ -284,12 +284,12 @@ issue() {
         # действует, а следующая попытка будет при следующей выкладке или по
         # таймеру продления.
         if cert_is_wild && [ "$(cert_until)" -gt "$(date +%s)" ]; then
-            report "warning" "«звёздочку» продлить не вышло, действующая осталась; подробности в /tmp/certbot.log"
-            tail -5 /tmp/certbot.log | sed 's/^/[подписка]   /'
+            report "warning" "«звёздочку» продлить не вышло, действующая осталась; подробности в /tmp/certbot-wild.log"
+            tail -5 /tmp/certbot-wild.log | sed 's/^/[подписка]   /'
             return 0
         fi
-        say "на «звёздочку» не вышло, беру обычный сертификат; подробности в /tmp/certbot.log"
-        tail -5 /tmp/certbot.log | sed 's/^/[подписка]   /'
+        say "на «звёздочку» не вышло, беру обычный сертификат; подробности в /tmp/certbot-wild.log"
+        tail -12 /tmp/certbot-wild.log | sed 's/^/[подписка]   /'
     fi
 
     if [ -n "$DOMAIN" ]; then

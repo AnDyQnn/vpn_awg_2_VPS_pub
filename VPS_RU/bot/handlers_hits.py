@@ -63,6 +63,7 @@ async def collect_hits():
 
     names, publics = {}, {}
     added = 0
+    newest = 0
     for row in rows:
         ip = row.get("ip") or ""
         uuid_val = who.get(ip)
@@ -85,15 +86,22 @@ async def collect_hits():
                 except Exception:
                     publics[uuid_val] = None
             public = publics[uuid_val]
+        ts = int(row.get("ts") or 0)
+        if ts > newest:
+            newest = ts
         try:
             await db.add_filter_hit(
-                datetime.utcfromtimestamp(int(row.get("ts") or 0)),
+                datetime.utcfromtimestamp(ts),
                 uuid_val, name, ip, public,
                 (row.get("domain") or "").lower(), row.get("category"),
                 row.get("ref"))
             added += 1
         except Exception:
             pass
+    # Отметку двигаем по ЗАБРАННОМУ, а не по тому, что осталось лежать. Иначе
+    # удаление карточек возвращает их же обратно следующим заходом.
+    if newest:
+        await db.note_filter_hit_ts(newest)
     return added
 
 

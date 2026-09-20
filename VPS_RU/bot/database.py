@@ -793,10 +793,36 @@ class Database:
             happened_at, uuid_val, name, tunnel_ip, public_ip, domain,
             category, ref)
 
+    HITS_MARK_KEY = "hits_taken_ts"
+
     async def last_filter_hit_ts(self):
+        """До какого времени мы у узла уже забрали.
+
+        Отметка хранится отдельно от самих записей, и это принципиально. Пока
+        она бралась у самой свежей записи, удаление карточек откатывало её
+        назад — и узел честно присылал всё заново, уже как непросмотренное.
+        Удаление выглядело сработавшим и тут же отменялось само.
+        """
+        mark = await self.get_setting(self.HITS_MARK_KEY)
+        if mark:
+            try:
+                return int(float(mark))
+            except (TypeError, ValueError):
+                pass
+        # Отметки ещё нет — первый запуск после обновления. Берём по записям:
+        # это ровно то, что было раньше, и повторов не создаст.
         row = await self.fetch_val(
             "SELECT EXTRACT(EPOCH FROM MAX(happened_at)) FROM filter_hits")
         return int(row or 0)
+
+    async def note_filter_hit_ts(self, ts):
+        """Двигает отметку вперёд. Назад — никогда: забранное забрано."""
+        try:
+            ts = int(ts)
+        except (TypeError, ValueError):
+            return
+        if ts > await self.last_filter_hit_ts():
+            await self.set_setting(self.HITS_MARK_KEY, ts)
 
     async def list_filter_hits(self, limit=20, offset=0, only_new=False):
         where = "WHERE seen_at IS NULL" if only_new else ""
