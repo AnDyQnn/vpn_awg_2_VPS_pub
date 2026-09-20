@@ -213,6 +213,29 @@ if command -v ufw >/dev/null 2>&1; then
             fi
         fi
     fi
+
+    # Правила из образа хостера. Наш узел ставится поверх готового образа, и в
+    # файрволе остаются двери от панели управления, которой тут нет и не будет.
+    # Сегодня за ними никто не слушает — но правило переживёт и нас, и того, кто
+    # однажды поставит на этот порт что-нибудь своё, не заметив, что он открыт.
+    #
+    # Снимаем только когда порт действительно пуст: вдруг кто-то занял его
+    # осознанно.
+    for STALE in ispmanager vesta cpanel plesk; do
+        ufw status 2>/dev/null | grep -q "^$STALE" || continue
+        BUSY=""
+        for SP in $(ufw app info "$STALE" 2>/dev/null |
+                    sed -n 's|^ *\([0-9,]*\)/tcp$|\1|p' | tr ',' ' '); do
+            ss -lnt 2>/dev/null | awk '{print $4}' |
+                grep -qE "(^|[.:])$SP\$" && BUSY="$BUSY $SP"
+        done
+        if [ -n "$BUSY" ]; then
+            echo "[maintenance] Правило «$STALE» оставлено: порты заняты —$BUSY"
+            continue
+        fi
+        ufw delete allow "$STALE" >/dev/null 2>&1 || true
+        echo "[maintenance] Снято чужое правило ufw «$STALE»: панели тут нет."
+    done
 fi
 
 # 5. Сторож узла — отдельной службой, а не внутри бота.

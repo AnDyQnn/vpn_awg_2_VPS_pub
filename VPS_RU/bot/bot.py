@@ -37,6 +37,7 @@ from monitor import (
     xray_connect_watch_loop
 )
 from billing import reminder_loop as billing_reminder_loop
+from decoy import start as decoy_start
 from wireguard_manager import pause_peer, resume_peer
 
 from handlers_client import (
@@ -1639,6 +1640,10 @@ async def post_init(application):
         asyncio.create_task(hits_loop(application)),
         # Гео-файлы для приложения: без них профиль маршрутизации не применяется.
         asyncio.create_task(geo_files_loop(application)),
+        # Сайт-заглушка на петле: её показывает Xray тому, кто пришёл без
+        # ключа. Нужна, чтобы маска была своя, а не чужой сайт, от которого
+        # мы зависим целиком.
+        asyncio.create_task(decoy_start(application)),
         # Счета за сервера: напомнить об оплате заранее. Забытый платёж —
         # это выключенный узел и тридцать человек без связи.
         asyncio.create_task(billing_reminder_loop(application)),
