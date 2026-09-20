@@ -130,8 +130,12 @@ async def screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else "**без сертификата** — браузер ругается на наши страницы"))
 
     port = st.get("port", 2096)
+    # Не просто «открыт/закрыт»: само слово ничего не объясняет, а решение по
+    # нему принимают. Говорим, что это значит для человека.
     lines.append("**Доступ снаружи:** " + (
-        ("открыт, порт `%s`" % port) if on else "закрыт, подписка только внутри"))
+        ("открыт, порт `%s` — люди обновляют профиль даже с выключенным VPN"
+         % port) if on else
+        "закрыт — профиль обновляется только из туннеля"))
 
     # --- Что делать дальше. Только когда есть что ---
     # Что делать дальше — одной строкой. Подробности живут в документации, а
@@ -277,12 +281,36 @@ async def _wait_screen(update, context, what):
                                                  callback_data="psub_menu")]]),
                       parse_mode=ParseMode.MARKDOWN)
     flag = os.path.join(FLAGS_DIR, "do_public_sub")
+    taken = False
     for _ in range(90):
         await asyncio.sleep(1)
         if not os.path.exists(flag):
             # Демон забрал просьбу. Дадим скрипту доработать и покажем итог.
+            taken = True
             await asyncio.sleep(3)
             break
+
+    if not taken:
+        # Просьба всё ещё лежит. Ждать дальше незачем — выпуск сертификата
+        # занимает минуты, а экран не должен висеть столько. Но и молчать
+        # нельзя: молчание здесь читается как «кнопка не работает».
+        busy = os.path.exists(os.path.join(FLAGS_DIR, "do_update"))
+        why = ("сейчас идёт обновление системы" if busy
+               else "демон занят другой задачей")
+        await show_screen(
+            query, context,
+            "⏳ **Просьба принята, но ещё не выполнена**\n\n"
+            "Служба на сервере одна на все задачи, и %s. Ваша просьба в "
+            "очереди и не потеряется — выполнится сама.\n\n"
+            "_Выпуск сертификата занимает несколько минут: временная запись "
+            "должна разойтись по серверам имён. Загляните сюда через "
+            "пять-десять минут._" % why,
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🔄 Проверить сейчас",
+                                       callback_data="psub_menu")]]),
+            parse_mode=ParseMode.MARKDOWN)
+        return
+
     await screen(update, context)
 
 

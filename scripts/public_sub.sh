@@ -250,11 +250,20 @@ issue() {
         say "выпускаю на домен и «звёздочку» через запись в DNS (срок 90 дней)"
         say "проверка идёт через зону — это занимает несколько минут"
         HOOK="$SELF_DIR/dns_regru.sh"
-        NODE_DIR="$NODE_DIR" "$CB" certonly --manual --non-interactive --agree-tos \
+        # NODE_DIR отдаём ОКРУЖЕНИЕМ, а не приставкой к команде крючка.
+        # Приставка выглядит естественно, но certbot проверяет крючок как
+        # существующую программу и ищет файл с именем «NODE_DIR=/root/...».
+        # Не находит — и выпуск падает ещё до первого запроса к центру, с
+        # сообщением, в котором виновата будто бы система.
+        #
+        # Своё окружение certbot передаёт крючкам целиком, так что
+        # переменная до скрипта доедет.
+        export NODE_DIR
+        "$CB" certonly --manual --non-interactive --agree-tos \
             --register-unsafely-without-email \
             --preferred-challenges dns \
-            --manual-auth-hook "NODE_DIR=$NODE_DIR bash $HOOK add" \
-            --manual-cleanup-hook "NODE_DIR=$NODE_DIR bash $HOOK clean" \
+            --manual-auth-hook "bash $HOOK add" \
+            --manual-cleanup-hook "bash $HOOK clean" \
             --cert-name "$CERT_NAME" \
             -d "$DOMAIN" -d "*.$DOMAIN" >/tmp/certbot.log 2>&1
         if [ $? -eq 0 ]; then
