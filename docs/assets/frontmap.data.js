@@ -1000,7 +1000,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Администрирование",
      "data": "svc_menu",
-     "line": 196,
+     "line": 203,
      "dynamic": false,
      "to": "service_menu",
      "how": "точно",
@@ -1009,7 +1009,7 @@ window.FRONTMAP = {
     {
      "label": "1️⃣ Вписать имя узла",
      "data": "psub_domain",
-     "line": 173,
+     "line": 180,
      "dynamic": false,
      "to": "domain_screen",
      "how": "точно",
@@ -1018,7 +1018,7 @@ window.FRONTMAP = {
     {
      "label": "«меняется»",
      "data": "psub_domain",
-     "line": 176,
+     "line": 183,
      "dynamic": true,
      "to": "domain_screen",
      "how": "точно",
@@ -1027,25 +1027,25 @@ window.FRONTMAP = {
     {
      "label": "🔄 Обновить сертификат",
      "data": "psub_renew",
-     "line": 188,
+     "line": 195,
      "dynamic": false,
      "to": "renew_now",
      "how": "точно",
      "inherited": "screen"
     },
     {
-     "label": "🔒 Убрать подписку из интернета",
+     "label": "🔒 Снять с публикации",
      "data": "psub_off",
-     "line": 190,
+     "line": 197,
      "dynamic": false,
      "to": "turn_off",
      "how": "точно",
      "inherited": "screen"
     },
     {
-     "label": "🌐 Опубликовать подписку в интернет",
+     "label": "🌐 Опубликовать подписку",
      "data": "psub_on",
-     "line": 193,
+     "line": 200,
      "dynamic": false,
      "to": "turn_on",
      "how": "точно",
@@ -1054,7 +1054,7 @@ window.FRONTMAP = {
     {
      "label": "🔑 Сертификат внутренних имён · есть",
      "data": "psub_zone",
-     "line": 179,
+     "line": 186,
      "dynamic": false,
      "to": "zone_screen",
      "how": "точно",
@@ -1063,7 +1063,7 @@ window.FRONTMAP = {
     {
      "label": "2️⃣ Сертификат внутренних имён",
      "data": "psub_zone",
-     "line": 183,
+     "line": 190,
      "dynamic": false,
      "to": "zone_screen",
      "how": "точно",
@@ -1086,7 +1086,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Администрирование",
      "data": "svc_menu",
-     "line": 196,
+     "line": 203,
      "dynamic": false,
      "to": "service_menu",
      "how": "точно",
@@ -1095,7 +1095,7 @@ window.FRONTMAP = {
     {
      "label": "1️⃣ Вписать имя узла",
      "data": "psub_domain",
-     "line": 173,
+     "line": 180,
      "dynamic": false,
      "to": "domain_screen",
      "how": "точно",
@@ -1104,7 +1104,7 @@ window.FRONTMAP = {
     {
      "label": "«меняется»",
      "data": "psub_domain",
-     "line": 176,
+     "line": 183,
      "dynamic": true,
      "to": "domain_screen",
      "how": "точно",
@@ -1113,25 +1113,25 @@ window.FRONTMAP = {
     {
      "label": "🔄 Обновить сертификат",
      "data": "psub_renew",
-     "line": 188,
+     "line": 195,
      "dynamic": false,
      "to": "renew_now",
      "how": "точно",
      "inherited": "screen"
     },
     {
-     "label": "🔒 Убрать подписку из интернета",
+     "label": "🔒 Снять с публикации",
      "data": "psub_off",
-     "line": 190,
+     "line": 197,
      "dynamic": false,
      "to": "turn_off",
      "how": "точно",
      "inherited": "screen"
     },
     {
-     "label": "🌐 Опубликовать подписку в интернет",
+     "label": "🌐 Опубликовать подписку",
      "data": "psub_on",
-     "line": 193,
+     "line": 200,
      "dynamic": false,
      "to": "turn_on",
      "how": "точно",
@@ -1140,7 +1140,7 @@ window.FRONTMAP = {
     {
      "label": "🔑 Сертификат внутренних имён · есть",
      "data": "psub_zone",
-     "line": 179,
+     "line": 186,
      "dynamic": false,
      "to": "zone_screen",
      "how": "точно",
@@ -1149,7 +1149,7 @@ window.FRONTMAP = {
     {
      "label": "2️⃣ Сертификат внутренних имён",
      "data": "psub_zone",
-     "line": 183,
+     "line": 190,
      "dynamic": false,
      "to": "zone_screen",
      "how": "точно",
@@ -6082,7 +6082,7 @@ window.FRONTMAP = {
     {
      "label": "🔎 Найти по номеру",
      "data": "hit_find",
-     "line": 354,
+     "line": 359,
      "dynamic": false,
      "to": "hit_find_request",
      "how": "точно"
@@ -6090,7 +6090,7 @@ window.FRONTMAP = {
     {
      "label": "🗓 Сколько хранить",
      "data": "hit_keep",
-     "line": 355,
+     "line": 360,
      "dynamic": false,
      "to": "keep_screen",
      "how": "точно"
@@ -6098,7 +6098,7 @@ window.FRONTMAP = {
     {
      "label": "🔔 Сводка",
      "data": "hit_notify",
-     "line": 356,
+     "line": 361,
      "dynamic": false,
      "to": "notify_screen",
      "how": "точно"
@@ -6106,7 +6106,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Администрирование",
      "data": "svc_menu",
-     "line": 357,
+     "line": 362,
      "dynamic": false,
      "to": "service_menu",
      "how": "точно"
@@ -6120,18 +6120,18 @@ window.FRONTMAP = {
      "how": null
     },
     {
-     "label": "✅ Отметить все разобранными",
+     "label": "«меняется»",
      "data": "hit_seen_all",
-     "line": 347,
-     "dynamic": false,
+     "line": 351,
+     "dynamic": true,
      "to": "hits_seen_all",
      "how": "точно"
     },
     {
-     "label": "🗑 Удалить разобранные",
+     "label": "«меняется»",
      "data": "hit_drop_seen",
-     "line": 350,
-     "dynamic": false,
+     "line": 355,
+     "dynamic": true,
      "to": "drop_seen",
      "how": "точно"
     }
@@ -6140,110 +6140,40 @@ window.FRONTMAP = {
   {
    "id": "drop_seen",
    "file": "handlers_hits.py",
-   "line": 364,
-   "title": "Удаляет разобранные — сейчас, а не по сроку.",
+   "line": 369,
+   "title": "Удаляет просмотренные — сейчас, а не по сроку.",
    "side": "admin",
    "kind": "screen",
    "calls": [
-    "hits_screen"
+    "hits_screen",
+    "show_screen",
+    "InlineKeyboardMarkup",
+    "InlineKeyboardButton",
+    "InlineKeyboardButton"
    ],
    "buttons": [
     {
-     "label": "◀️ / ·",
-     "data": "svc_noop",
-     "line": 335,
-     "dynamic": false,
-     "to": "(без перехода)",
-     "how": "точно",
-     "inherited": "hits_screen"
-    },
-    {
-     "label": "«меняется»",
-     "data": "svc_noop",
-     "line": 338,
-     "dynamic": true,
-     "to": "(без перехода)",
-     "how": "точно",
-     "inherited": "hits_screen"
-    },
-    {
-     "label": "▶️ / ·",
-     "data": "svc_noop",
-     "line": 340,
-     "dynamic": false,
-     "to": "(без перехода)",
-     "how": "точно",
-     "inherited": "hits_screen"
-    },
-    {
-     "label": "🔎 Найти по номеру",
-     "data": "hit_find",
-     "line": 354,
-     "dynamic": false,
-     "to": "hit_find_request",
-     "how": "точно",
-     "inherited": "hits_screen"
-    },
-    {
-     "label": "🗓 Сколько хранить",
-     "data": "hit_keep",
-     "line": 355,
-     "dynamic": false,
-     "to": "keep_screen",
-     "how": "точно",
-     "inherited": "hits_screen"
-    },
-    {
-     "label": "🔔 Сводка",
-     "data": "hit_notify",
-     "line": 356,
-     "dynamic": false,
-     "to": "notify_screen",
-     "how": "точно",
-     "inherited": "hits_screen"
-    },
-    {
-     "label": "🔙 Администрирование",
-     "data": "svc_menu",
-     "line": 357,
-     "dynamic": false,
-     "to": "service_menu",
-     "how": "точно",
-     "inherited": "hits_screen"
-    },
-    {
-     "label": "«меняется»",
-     "data": "«меняется»",
-     "line": 327,
-     "dynamic": true,
-     "to": null,
-     "how": null,
-     "inherited": "hits_screen"
-    },
-    {
-     "label": "✅ Отметить все разобранными",
-     "data": "hit_seen_all",
-     "line": 347,
-     "dynamic": false,
-     "to": "hits_seen_all",
-     "how": "точно",
-     "inherited": "hits_screen"
-    },
-    {
-     "label": "🗑 Удалить разобранные",
+     "label": "🗑 Да, удалить",
      "data": "hit_drop_seen",
-     "line": 350,
+     "line": 387,
      "dynamic": false,
      "to": "drop_seen",
-     "how": "точно",
-     "inherited": "hits_screen"
+     "how": "точно"
+    },
+    {
+     "label": "✖️ Отмена",
+     "data": "hit_list",
+     "line": 389,
+     "dynamic": false,
+     "to": "hits_screen",
+     "how": "точно"
     }
    ]
   },
   {
    "id": "hit_open",
    "file": "handlers_hits.py",
-   "line": 377,
+   "line": 403,
    "title": "Одна заявка целиком — всё, что нужно для разбора, на одном экране.",
    "side": "admin",
    "kind": "screen",
@@ -6263,7 +6193,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 К списку",
      "data": "hit_list",
-     "line": 409,
+     "line": 435,
      "dynamic": false,
      "to": "hits_screen",
      "how": "точно"
@@ -6271,7 +6201,7 @@ window.FRONTMAP = {
     {
      "label": "🔑 Открыть ключ",
      "data": "user_detail_…",
-     "line": 405,
+     "line": 431,
      "dynamic": false,
      "to": "user_detail_menu",
      "how": "по приставке «user_detail_»"
@@ -6279,7 +6209,7 @@ window.FRONTMAP = {
     {
      "label": "🧹 Фильтры этого ключа",
      "data": "flt_user_…",
-     "line": 407,
+     "line": 433,
      "dynamic": false,
      "to": "user_filters_screen",
      "how": "по приставке «flt_user_»"
@@ -6289,7 +6219,7 @@ window.FRONTMAP = {
   {
    "id": "hit_find_request",
    "file": "handlers_hits.py",
-   "line": 417,
+   "line": 443,
    "title": "Просит номер. Он приходит от человека — с экрана, из переписки, вслух.",
    "side": "admin",
    "kind": "screen",
@@ -6302,7 +6232,7 @@ window.FRONTMAP = {
     {
      "label": "✖️ Отмена",
      "data": "hit_list",
-     "line": 428,
+     "line": 454,
      "dynamic": false,
      "to": "hits_screen",
      "how": "точно"
@@ -6312,7 +6242,7 @@ window.FRONTMAP = {
   {
    "id": "hit_find_entered",
    "file": "handlers_hits.py",
-   "line": 432,
+   "line": 458,
    "title": "Разбирает присланный номер и открывает инцидент.",
    "side": "admin",
    "kind": "screen",
@@ -6334,7 +6264,7 @@ window.FRONTMAP = {
     {
      "label": "🚨 К инцидентам",
      "data": "hit_list",
-     "line": 472,
+     "line": 498,
      "dynamic": false,
      "to": "hits_screen",
      "how": "точно"
@@ -6342,7 +6272,7 @@ window.FRONTMAP = {
     {
      "label": "🚨 К инцидентам",
      "data": "hit_list",
-     "line": 445,
+     "line": 471,
      "dynamic": false,
      "to": "hits_screen",
      "how": "точно"
@@ -6350,7 +6280,7 @@ window.FRONTMAP = {
     {
      "label": "🔑 Открыть ключ",
      "data": "user_detail_…",
-     "line": 468,
+     "line": 494,
      "dynamic": false,
      "to": "user_detail_menu",
      "how": "по приставке «user_detail_»"
@@ -6358,7 +6288,7 @@ window.FRONTMAP = {
     {
      "label": "🧹 Фильтры этого ключа",
      "data": "flt_user_…",
-     "line": 470,
+     "line": 496,
      "dynamic": false,
      "to": "user_filters_screen",
      "how": "по приставке «flt_user_»"
@@ -6368,7 +6298,7 @@ window.FRONTMAP = {
   {
    "id": "hits_seen_all",
    "file": "handlers_hits.py",
-   "line": 483,
+   "line": 509,
    "title": "",
    "side": "admin",
    "kind": "screen",
@@ -6406,7 +6336,7 @@ window.FRONTMAP = {
     {
      "label": "🔎 Найти по номеру",
      "data": "hit_find",
-     "line": 354,
+     "line": 359,
      "dynamic": false,
      "to": "hit_find_request",
      "how": "точно",
@@ -6415,7 +6345,7 @@ window.FRONTMAP = {
     {
      "label": "🗓 Сколько хранить",
      "data": "hit_keep",
-     "line": 355,
+     "line": 360,
      "dynamic": false,
      "to": "keep_screen",
      "how": "точно",
@@ -6424,7 +6354,7 @@ window.FRONTMAP = {
     {
      "label": "🔔 Сводка",
      "data": "hit_notify",
-     "line": 356,
+     "line": 361,
      "dynamic": false,
      "to": "notify_screen",
      "how": "точно",
@@ -6433,7 +6363,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Администрирование",
      "data": "svc_menu",
-     "line": 357,
+     "line": 362,
      "dynamic": false,
      "to": "service_menu",
      "how": "точно",
@@ -6449,19 +6379,19 @@ window.FRONTMAP = {
      "inherited": "hits_screen"
     },
     {
-     "label": "✅ Отметить все разобранными",
+     "label": "«меняется»",
      "data": "hit_seen_all",
-     "line": 347,
-     "dynamic": false,
+     "line": 351,
+     "dynamic": true,
      "to": "hits_seen_all",
      "how": "точно",
      "inherited": "hits_screen"
     },
     {
-     "label": "🗑 Удалить разобранные",
+     "label": "«меняется»",
      "data": "hit_drop_seen",
-     "line": 350,
-     "dynamic": false,
+     "line": 355,
+     "dynamic": true,
      "to": "drop_seen",
      "how": "точно",
      "inherited": "hits_screen"
@@ -6471,7 +6401,7 @@ window.FRONTMAP = {
   {
    "id": "keep_screen",
    "file": "handlers_hits.py",
-   "line": 489,
+   "line": 515,
    "title": "Сколько хранить карточки.",
    "side": "admin",
    "kind": "menu",
@@ -6490,7 +6420,7 @@ window.FRONTMAP = {
     {
      "label": "«меняется»",
      "data": "hit_keep_seen_…",
-     "line": 510,
+     "line": 536,
      "dynamic": true,
      "to": "keep_set",
      "how": "по приставке «hit_keep_seen_»"
@@ -6498,7 +6428,7 @@ window.FRONTMAP = {
     {
      "label": "«меняется»",
      "data": "hit_keep_new_…",
-     "line": 513,
+     "line": 539,
      "dynamic": true,
      "to": "keep_set",
      "how": "по приставке «hit_keep_new_»"
@@ -6506,7 +6436,7 @@ window.FRONTMAP = {
     {
      "label": "🧹 Убрать то, что старше срока",
      "data": "hit_keep_now",
-     "line": 516,
+     "line": 542,
      "dynamic": false,
      "to": "keep_now",
      "how": "точно"
@@ -6514,7 +6444,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 К инцидентам",
      "data": "hit_list",
-     "line": 518,
+     "line": 544,
      "dynamic": false,
      "to": "hits_screen",
      "how": "точно"
@@ -6524,7 +6454,7 @@ window.FRONTMAP = {
   {
    "id": "keep_set",
    "file": "handlers_hits.py",
-   "line": 526,
+   "line": 552,
    "title": "",
    "side": "admin",
    "kind": "screen",
@@ -6535,7 +6465,7 @@ window.FRONTMAP = {
     {
      "label": "«меняется»",
      "data": "hit_keep_seen_…",
-     "line": 510,
+     "line": 536,
      "dynamic": true,
      "to": "keep_set",
      "how": "по приставке «hit_keep_seen_»",
@@ -6544,7 +6474,7 @@ window.FRONTMAP = {
     {
      "label": "«меняется»",
      "data": "hit_keep_new_…",
-     "line": 513,
+     "line": 539,
      "dynamic": true,
      "to": "keep_set",
      "how": "по приставке «hit_keep_new_»",
@@ -6553,7 +6483,7 @@ window.FRONTMAP = {
     {
      "label": "🧹 Убрать то, что старше срока",
      "data": "hit_keep_now",
-     "line": 516,
+     "line": 542,
      "dynamic": false,
      "to": "keep_now",
      "how": "точно",
@@ -6562,7 +6492,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 К инцидентам",
      "data": "hit_list",
-     "line": 518,
+     "line": 544,
      "dynamic": false,
      "to": "hits_screen",
      "how": "точно",
@@ -6573,7 +6503,7 @@ window.FRONTMAP = {
   {
    "id": "keep_now",
    "file": "handlers_hits.py",
-   "line": 544,
+   "line": 570,
    "title": "Убрать старое прямо сейчас, не дожидаясь уборки.",
    "side": "admin",
    "kind": "screen",
@@ -6584,7 +6514,7 @@ window.FRONTMAP = {
     {
      "label": "«меняется»",
      "data": "hit_keep_seen_…",
-     "line": 510,
+     "line": 536,
      "dynamic": true,
      "to": "keep_set",
      "how": "по приставке «hit_keep_seen_»",
@@ -6593,7 +6523,7 @@ window.FRONTMAP = {
     {
      "label": "«меняется»",
      "data": "hit_keep_new_…",
-     "line": 513,
+     "line": 539,
      "dynamic": true,
      "to": "keep_set",
      "how": "по приставке «hit_keep_new_»",
@@ -6602,7 +6532,7 @@ window.FRONTMAP = {
     {
      "label": "🧹 Убрать то, что старше срока",
      "data": "hit_keep_now",
-     "line": 516,
+     "line": 542,
      "dynamic": false,
      "to": "keep_now",
      "how": "точно",
@@ -6611,7 +6541,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 К инцидентам",
      "data": "hit_list",
-     "line": 518,
+     "line": 544,
      "dynamic": false,
      "to": "hits_screen",
      "how": "точно",
@@ -7623,6 +7553,7 @@ window.FRONTMAP = {
     "state",
     "current_domain",
     "wildcard_on",
+    "zone_api_on",
     "cert_days_left",
     "cert_named",
     "show_screen",
@@ -7640,7 +7571,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Администрирование",
      "data": "svc_menu",
-     "line": 196,
+     "line": 203,
      "dynamic": false,
      "to": "service_menu",
      "how": "точно"
@@ -7648,7 +7579,7 @@ window.FRONTMAP = {
     {
      "label": "1️⃣ Вписать имя узла",
      "data": "psub_domain",
-     "line": 173,
+     "line": 180,
      "dynamic": false,
      "to": "domain_screen",
      "how": "точно"
@@ -7656,7 +7587,7 @@ window.FRONTMAP = {
     {
      "label": "«меняется»",
      "data": "psub_domain",
-     "line": 176,
+     "line": 183,
      "dynamic": true,
      "to": "domain_screen",
      "how": "точно"
@@ -7664,23 +7595,23 @@ window.FRONTMAP = {
     {
      "label": "🔄 Обновить сертификат",
      "data": "psub_renew",
-     "line": 188,
+     "line": 195,
      "dynamic": false,
      "to": "renew_now",
      "how": "точно"
     },
     {
-     "label": "🔒 Убрать подписку из интернета",
+     "label": "🔒 Снять с публикации",
      "data": "psub_off",
-     "line": 190,
+     "line": 197,
      "dynamic": false,
      "to": "turn_off",
      "how": "точно"
     },
     {
-     "label": "🌐 Опубликовать подписку в интернет",
+     "label": "🌐 Опубликовать подписку",
      "data": "psub_on",
-     "line": 193,
+     "line": 200,
      "dynamic": false,
      "to": "turn_on",
      "how": "точно"
@@ -7688,7 +7619,7 @@ window.FRONTMAP = {
     {
      "label": "🔑 Сертификат внутренних имён · есть",
      "data": "psub_zone",
-     "line": 179,
+     "line": 186,
      "dynamic": false,
      "to": "zone_screen",
      "how": "точно"
@@ -7696,7 +7627,7 @@ window.FRONTMAP = {
     {
      "label": "2️⃣ Сертификат внутренних имён",
      "data": "psub_zone",
-     "line": 183,
+     "line": 190,
      "dynamic": false,
      "to": "zone_screen",
      "how": "точно"
@@ -7706,7 +7637,7 @@ window.FRONTMAP = {
   {
    "id": "turn_on",
    "file": "handlers_pubsub.py",
-   "line": 204,
+   "line": 211,
    "title": "Открыть обратно. Это возврат к обычному состоянию, поэтому без",
    "side": "admin",
    "kind": "screen",
@@ -7718,7 +7649,7 @@ window.FRONTMAP = {
     {
      "label": "🔄 Обновить",
      "data": "psub_menu",
-     "line": 280,
+     "line": 287,
      "dynamic": false,
      "to": "screen",
      "how": "точно",
@@ -7727,7 +7658,7 @@ window.FRONTMAP = {
     {
      "label": "🔄 Проверить сейчас",
      "data": "psub_menu",
-     "line": 309,
+     "line": 316,
      "dynamic": false,
      "to": "screen",
      "how": "точно",
@@ -7738,7 +7669,7 @@ window.FRONTMAP = {
   {
    "id": "turn_off",
    "file": "handlers_pubsub.py",
-   "line": 215,
+   "line": 222,
    "title": "Закрыть. Здесь спросить и надо: это выключает автообновление у всех.",
    "side": "admin",
    "kind": "screen",
@@ -7754,7 +7685,7 @@ window.FRONTMAP = {
     {
      "label": "🔒 Да, закрыть",
      "data": "psub_off",
-     "line": 248,
+     "line": 255,
      "dynamic": false,
      "to": "turn_off",
      "how": "точно"
@@ -7762,7 +7693,7 @@ window.FRONTMAP = {
     {
      "label": "✖️ Отмена",
      "data": "psub_menu",
-     "line": 249,
+     "line": 256,
      "dynamic": false,
      "to": "screen",
      "how": "точно"
@@ -7772,7 +7703,7 @@ window.FRONTMAP = {
   {
    "id": "renew_now",
    "file": "handlers_pubsub.py",
-   "line": 260,
+   "line": 267,
    "title": "Продлить руками. Тот же путь, которым ходит таймер.",
    "side": "admin",
    "kind": "screen",
@@ -7784,7 +7715,7 @@ window.FRONTMAP = {
     {
      "label": "🔄 Обновить",
      "data": "psub_menu",
-     "line": 280,
+     "line": 287,
      "dynamic": false,
      "to": "screen",
      "how": "точно",
@@ -7793,7 +7724,7 @@ window.FRONTMAP = {
     {
      "label": "🔄 Проверить сейчас",
      "data": "psub_menu",
-     "line": 309,
+     "line": 316,
      "dynamic": false,
      "to": "screen",
      "how": "точно",
@@ -7804,7 +7735,7 @@ window.FRONTMAP = {
   {
    "id": "_wait_screen",
    "file": "handlers_pubsub.py",
-   "line": 270,
+   "line": 277,
    "title": "Ждём хост и показываем, чем кончилось.",
    "side": "admin",
    "kind": "menu",
@@ -7822,7 +7753,7 @@ window.FRONTMAP = {
     {
      "label": "🔄 Обновить",
      "data": "psub_menu",
-     "line": 280,
+     "line": 287,
      "dynamic": false,
      "to": "screen",
      "how": "точно"
@@ -7830,7 +7761,7 @@ window.FRONTMAP = {
     {
      "label": "🔄 Проверить сейчас",
      "data": "psub_menu",
-     "line": 309,
+     "line": 316,
      "dynamic": false,
      "to": "screen",
      "how": "точно"
@@ -7840,7 +7771,7 @@ window.FRONTMAP = {
   {
    "id": "domain_screen",
    "file": "handlers_pubsub.py",
-   "line": 355,
+   "line": 362,
    "title": "Что даёт своё имя и как его задать.",
    "side": "admin",
    "kind": "screen",
@@ -7856,7 +7787,7 @@ window.FRONTMAP = {
     {
      "label": "✏️ Задать имя",
      "data": "psub_domain_set",
-     "line": 374,
+     "line": 381,
      "dynamic": false,
      "to": "domain_ask",
      "how": "точно"
@@ -7864,7 +7795,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Домен и сертификаты",
      "data": "psub_menu",
-     "line": 378,
+     "line": 385,
      "dynamic": false,
      "to": "screen",
      "how": "точно"
@@ -7872,7 +7803,7 @@ window.FRONTMAP = {
     {
      "label": "🗑 Убрать имя",
      "data": "psub_domain_off",
-     "line": 376,
+     "line": 383,
      "dynamic": false,
      "to": "domain_off",
      "how": "точно"
@@ -7882,7 +7813,7 @@ window.FRONTMAP = {
   {
    "id": "domain_ask",
    "file": "handlers_pubsub.py",
-   "line": 385,
+   "line": 392,
    "title": "Просит вписать имя.",
    "side": "admin",
    "kind": "screen",
@@ -7895,7 +7826,7 @@ window.FRONTMAP = {
     {
      "label": "✖️ Отмена",
      "data": "psub_domain",
-     "line": 394,
+     "line": 401,
      "dynamic": false,
      "to": "domain_screen",
      "how": "точно"
@@ -7905,7 +7836,7 @@ window.FRONTMAP = {
   {
    "id": "domain_off",
    "file": "handlers_pubsub.py",
-   "line": 398,
+   "line": 405,
    "title": "Убирает имя: возвращаемся на адрес.",
    "side": "admin",
    "kind": "screen",
@@ -7920,7 +7851,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Домен и сертификаты",
      "data": "psub_menu",
-     "line": 414,
+     "line": 421,
      "dynamic": false,
      "to": "screen",
      "how": "точно"
@@ -7930,7 +7861,7 @@ window.FRONTMAP = {
   {
    "id": "zone_screen",
    "file": "handlers_pubsub.py",
-   "line": 510,
+   "line": 517,
    "title": "Сертификат на внутренние имена: что сделать, а не зачем это нужно.",
    "side": "admin",
    "kind": "screen",
@@ -7953,7 +7884,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Домен и сертификаты",
      "data": "psub_menu",
-     "line": 565,
+     "line": 572,
      "dynamic": false,
      "to": "screen",
      "how": "точно"
@@ -7961,7 +7892,7 @@ window.FRONTMAP = {
     {
      "label": "✏️ Задать доступ / ✏️ Заменить пару",
      "data": "psub_zone_set",
-     "line": 554,
+     "line": 561,
      "dynamic": false,
      "to": "zone_ask",
      "how": "точно"
@@ -7969,7 +7900,7 @@ window.FRONTMAP = {
     {
      "label": "🌐 Сначала задать имя узла",
      "data": "psub_domain",
-     "line": 563,
+     "line": 570,
      "dynamic": false,
      "to": "domain_screen",
      "how": "точно"
@@ -7977,7 +7908,7 @@ window.FRONTMAP = {
     {
      "label": "🔍 Проверить доступ",
      "data": "psub_zone_check",
-     "line": 558,
+     "line": 565,
      "dynamic": false,
      "to": "zone_check",
      "how": "точно"
@@ -7985,7 +7916,7 @@ window.FRONTMAP = {
     {
      "label": "🗑 Убрать доступ",
      "data": "psub_zone_off",
-     "line": 560,
+     "line": 567,
      "dynamic": false,
      "to": "zone_off",
      "how": "точно"
@@ -7995,7 +7926,7 @@ window.FRONTMAP = {
   {
    "id": "zone_ask",
    "file": "handlers_pubsub.py",
-   "line": 573,
+   "line": 580,
    "title": "Спрашиваем логин. Про пароль спросим следующим шагом — там выбор.",
    "side": "admin",
    "kind": "screen",
@@ -8008,7 +7939,7 @@ window.FRONTMAP = {
     {
      "label": "✖️ Отмена",
      "data": "psub_zone",
-     "line": 582,
+     "line": 589,
      "dynamic": false,
      "to": "zone_screen",
      "how": "точно"
@@ -8018,7 +7949,7 @@ window.FRONTMAP = {
   {
    "id": "zone_password_step",
    "file": "handlers_pubsub.py",
-   "line": 612,
+   "line": 619,
    "title": "Выбор: придумать пароль здесь или вписать уже готовый.",
    "side": "admin",
    "kind": "screen",
@@ -8032,7 +7963,7 @@ window.FRONTMAP = {
     {
      "label": "🎲 Придумать пароль",
      "data": "psub_zone_gen",
-     "line": 626,
+     "line": 633,
      "dynamic": false,
      "to": "zone_generate",
      "how": "точно"
@@ -8040,7 +7971,7 @@ window.FRONTMAP = {
     {
      "label": "✏️ Вписать свой",
      "data": "psub_zone_own",
-     "line": 628,
+     "line": 635,
      "dynamic": false,
      "to": "zone_own",
      "how": "точно"
@@ -8048,7 +7979,7 @@ window.FRONTMAP = {
     {
      "label": "✖️ Отмена",
      "data": "psub_zone",
-     "line": 630,
+     "line": 637,
      "dynamic": false,
      "to": "zone_screen",
      "how": "точно"
@@ -8058,7 +7989,7 @@ window.FRONTMAP = {
   {
    "id": "zone_own",
    "file": "handlers_pubsub.py",
-   "line": 634,
+   "line": 641,
    "title": "Владелец задал пароль в панели сам — ждём его текстом.",
    "side": "admin",
    "kind": "screen",
@@ -8070,7 +8001,7 @@ window.FRONTMAP = {
     {
      "label": "✖️ Отмена",
      "data": "psub_zone",
-     "line": 645,
+     "line": 652,
      "dynamic": false,
      "to": "zone_screen",
      "how": "точно"
@@ -8080,7 +8011,7 @@ window.FRONTMAP = {
   {
    "id": "zone_generate",
    "file": "handlers_pubsub.py",
-   "line": 648,
+   "line": 655,
    "title": "Придумывает пароль, кладёт его на сервер и показывает владельцу.",
    "side": "admin",
    "kind": "screen",
@@ -8097,7 +8028,7 @@ window.FRONTMAP = {
     {
      "label": "🔍 Проверить доступ",
      "data": "psub_zone_check",
-     "line": 691,
+     "line": 698,
      "dynamic": false,
      "to": "zone_check",
      "how": "точно"
@@ -8105,7 +8036,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Назад",
      "data": "psub_zone",
-     "line": 693,
+     "line": 700,
      "dynamic": false,
      "to": "zone_screen",
      "how": "точно"
@@ -8115,7 +8046,7 @@ window.FRONTMAP = {
   {
    "id": "zone_off",
    "file": "handlers_pubsub.py",
-   "line": 696,
+   "line": 703,
    "title": "Убирает пару. Сертификат при этом остаётся — он уже выдан и живёт своё.",
    "side": "admin",
    "kind": "screen",
@@ -8129,7 +8060,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Назад",
      "data": "psub_zone",
-     "line": 712,
+     "line": 719,
      "dynamic": false,
      "to": "zone_screen",
      "how": "точно"
@@ -8139,7 +8070,7 @@ window.FRONTMAP = {
   {
    "id": "zone_check",
    "file": "handlers_pubsub.py",
-   "line": 716,
+   "line": 723,
    "title": "Проверка без выпуска: кладём временную запись и тут же убираем.",
    "side": "admin",
    "kind": "screen",
@@ -8155,7 +8086,7 @@ window.FRONTMAP = {
     {
      "label": "🔄 Обновить",
      "data": "psub_zone",
-     "line": 734,
+     "line": 741,
      "dynamic": false,
      "to": "zone_screen",
      "how": "точно"
@@ -13418,27 +13349,6 @@ window.FRONTMAP = {
    "why": "обработчика с таким именем нет"
   },
   {
-   "from": "drop_seen",
-   "label": "◀️ / ·",
-   "data": "svc_noop",
-   "to": "(без перехода)",
-   "why": "обработчика с таким именем нет"
-  },
-  {
-   "from": "drop_seen",
-   "label": "«меняется»",
-   "data": "svc_noop",
-   "to": "(без перехода)",
-   "why": "обработчика с таким именем нет"
-  },
-  {
-   "from": "drop_seen",
-   "label": "▶️ / ·",
-   "data": "svc_noop",
-   "to": "(без перехода)",
-   "why": "обработчика с таким именем нет"
-  },
-  {
    "from": "hits_seen_all",
    "label": "◀️ / ·",
    "data": "svc_noop",
@@ -13504,7 +13414,7 @@ window.FRONTMAP = {
  ],
  "counts": {
   "screens": 273,
-  "buttons": 957,
+  "buttons": 949,
   "admin": 228,
   "client": 45
  },

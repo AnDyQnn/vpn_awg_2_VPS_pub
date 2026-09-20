@@ -343,11 +343,16 @@ async def hits_screen(update: Update, context: ContextTypes.DEFAULT_TYPE, page=0
             else "svc_noop"))
         kb.append(nav)
 
+    # Две кнопки уборки стоят порознь и названы по-разному не для красоты.
+    # Нажатые подряд они означают «удалить всё»: сначала всё становится
+    # разобранным, потом разобранное исчезает. Рядом и одинаковыми они читались
+    # бы как два шага одной уборки — и однажды ею бы и стали.
     if fresh:
-        kb.append([InlineKeyboardButton("✅ Отметить все разобранными",
+        kb.append([InlineKeyboardButton("👁 Пометить просмотренными · %d" % fresh,
                                         callback_data="hit_seen_all")])
-    if total > fresh:
-        kb.append([InlineKeyboardButton("🗑 Удалить разобранные",
+    seen = total - fresh
+    if seen:
+        kb.append([InlineKeyboardButton("🗑 Удалить просмотренные · %d" % seen,
                                         callback_data="hit_drop_seen")])
     # Поиск по номеру — то, ради чего номер и показан человеку. Ставим рядом со
     # списком: сюда владелец приходит с номером в руках.
@@ -362,8 +367,29 @@ async def hits_screen(update: Update, context: ContextTypes.DEFAULT_TYPE, page=0
 
 
 async def drop_seen(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Удаляет разобранные — сейчас, а не по сроку."""
+    """Удаляет просмотренные — сейчас, а не по сроку.
+
+    С подтверждением: удаление безвозвратно, а кнопка стоит рядом с пометкой
+    «просмотрено». Промахнуться по соседней и стереть разбор целиком — слишком
+    дешёвая ошибка для такой цены.
+    """
     query = update.callback_query
+    if context.user_data.get("hit_drop_sure") != "1":
+        context.user_data["hit_drop_sure"] = "1"
+        seen = (await db.count_filter_hits()) - (await db.count_filter_hits(only_new=True))
+        await show_screen(
+            query, context,
+            "🗑 **Удалить просмотренные?**\n\n"
+            "Карточек: **%d**. Удаление безвозвратно — номера со страницы "
+            "отказа по ним больше не найдутся.\n\n"
+            "_Непросмотренные останутся на месте._" % seen,
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🗑 Да, удалить",
+                                       callback_data="hit_drop_seen")],
+                 [InlineKeyboardButton("✖️ Отмена", callback_data="hit_list")]]),
+            parse_mode=ParseMode.MARKDOWN)
+        return
+    context.user_data["hit_drop_sure"] = None
     try:
         gone = await db.delete_seen_hits()
     except Exception as e:

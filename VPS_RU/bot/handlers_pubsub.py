@@ -94,6 +94,7 @@ async def screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     st = state()
     have = current_domain()
     wild = wildcard_on()
+    api = zone_api_on()
 
     lines = ["🌐 **Домен и сертификаты**", ""]
 
@@ -147,9 +148,15 @@ async def screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif not named:
         lines += ["", "**Дальше:** «Обновить сертификат» — он выпустится уже "
                       "на имя. Занимает несколько минут."]
-    elif not wild:
+    elif not wild and not api:
         lines += ["", "**Дальше:** доступ к зоне домена — вторая кнопка. "
                       "Пароль бот придумает сам."]
+    elif not wild:
+        # Доступ к зоне уже задан — осталось выпустить. Отдельная ветка нужна
+        # потому, что иначе экран зовёт делать сделанное, а человек послушно
+        # делает и не понимает, почему ничего не меняется.
+        lines += ["", "**Дальше:** «Обновить сертификат» — доступ к зоне уже "
+                      "задан, осталось выпустить. Несколько минут."]
     elif not on:
         lines += ["", "**Дальше:** опубликовать подписку в интернет, иначе "
                       "она читается только из туннеля."]
@@ -187,10 +194,10 @@ async def screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if on:
         kb.append([InlineKeyboardButton("🔄 Обновить сертификат",
                                         callback_data="psub_renew")])
-        kb.append([InlineKeyboardButton("🔒 Убрать подписку из интернета",
+        kb.append([InlineKeyboardButton("🔒 Снять с публикации",
                                         callback_data="psub_off")])
     else:
-        kb.append([InlineKeyboardButton("🌐 Опубликовать подписку в интернет",
+        kb.append([InlineKeyboardButton("🌐 Опубликовать подписку",
                                         callback_data="psub_on")])
 
     kb.append([InlineKeyboardButton("🔙 Администрирование",
@@ -220,7 +227,7 @@ async def turn_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     if context.user_data.get("psub_sure") != "off":
         context.user_data["psub_sure"] = "off"
-        text = ("🔒 **Убрать подписку из интернета?**\n\n"
+        text = ("🔒 **Снять подписку с публикации?**\n\n"
                 "Она откроется только изнутри туннеля. Это значит:\n"
                 "• новые исключения и переезды перестанут доезжать сами;\n"
                 "• первую настройку снова придётся отдавать текстом;\n"
