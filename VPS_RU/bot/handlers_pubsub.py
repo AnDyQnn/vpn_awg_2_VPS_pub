@@ -110,7 +110,7 @@ async def screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Что за сертификат стоит СЕЙЧАС — по самому сертификату, а не по тому,
         # вписан ли домен. Между этими двумя вещами лежит отдельный шаг.
         if wild:
-            what = "на имя и «звёздочку»"
+            what = "на имя и все поддомены"
         elif named:
             what = "на имя"
         else:
@@ -713,7 +713,8 @@ async def zone_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await show_screen(
         query, context,
         "🔑 Доступ убран.\n\nНынешний сертификат продолжит работать до конца "
-        "срока, но продлить «звёздочку» будет нечем — при следующем продлении "
+        "срока, но продлить его на все поддомены будет нечем — при следующем "
+        "продлении "
         "она сменится на обычный, и предупреждения браузера вернутся.",
         reply_markup=InlineKeyboardMarkup(
             [[InlineKeyboardButton("🔙 Назад", callback_data="psub_zone")]]),
