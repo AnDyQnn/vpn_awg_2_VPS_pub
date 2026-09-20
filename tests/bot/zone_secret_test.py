@@ -58,6 +58,36 @@ async def main():
     assert not os.path.exists(hps.ZONE_SECRET + ".tmp"), "времянка должна исчезать"
     print("файл заменён целиком, демона не дёргали: ок")
 
+    print("\n=== пароль бот умеет придумать сам ===")
+    seen = set()
+    for _ in range(50):
+        pw = hps.make_password()
+        # Шестнадцать, а не больше: сорок reg.ru отвергает как «слишком
+        # длинный», а своего предела нигде не пишет.
+        assert len(pw) == 16, len(pw)
+        # Только буквы и цифры. Пароль проезжает через чужую панель, через JSON
+        # регистратора и через оболочку на хосте — знак со своим значением
+        # где-то в этой цепочке сломает всё на продлении через три месяца.
+        assert pw.isalnum() and pw.isascii(), pw
+        assert any(c.isupper() for c in pw), pw
+        assert any(c.islower() for c in pw), pw
+        assert any(c.isdigit() for c in pw), pw
+        seen.add(pw)
+    assert len(seen) == 50, "пароли обязаны быть разными"
+    print("  пример:", hps.make_password())
+    print("шестнадцать знаков, три вида, каждый раз новый: ок")
+
+    print("\n=== придуманный пароль сразу ложится на сервер ===")
+    # Показать и не записать значит оставить человека с паролем, который он
+    # вставит в панель, а на сервере его не будет — и выпуск сертификата
+    # провалится без всякой видимой причины.
+    hps.zone_creds_clear()
+    pw = hps.make_password()
+    hps.zone_creds_write("ivan", pw)
+    assert hps.zone_api_on()
+    assert pw in open(hps.ZONE_SECRET, encoding="utf-8").read()
+    print("записан до показа: ок")
+
     print("\n=== снятие убирает насовсем ===")
     hps.zone_creds_clear()
     assert not os.path.exists(hps.ZONE_SECRET)

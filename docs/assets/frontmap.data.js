@@ -417,7 +417,7 @@ window.FRONTMAP = {
     {
      "label": "🌐 К списку исключений",
      "data": "bypass_list",
-     "line": 842,
+     "line": 836,
      "dynamic": false,
      "to": "bypass_list_handler",
      "how": "точно"
@@ -425,7 +425,7 @@ window.FRONTMAP = {
     {
      "label": "🌐 К списку исключений",
      "data": "bypass_list",
-     "line": 824,
+     "line": 818,
      "dynamic": false,
      "to": "bypass_list_handler",
      "how": "точно"
@@ -433,7 +433,7 @@ window.FRONTMAP = {
     {
      "label": "🌐 К списку исключений",
      "data": "bypass_list",
-     "line": 832,
+     "line": 826,
      "dynamic": false,
      "to": "bypass_list_handler",
      "how": "точно"
@@ -441,7 +441,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Главное меню",
      "data": "back_to_main",
-     "line": 861,
+     "line": 855,
      "dynamic": false,
      "to": "return_to_main_menu",
      "how": "точно"
@@ -449,7 +449,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 К списку обращений",
      "data": "support_admin_menu",
-     "line": 896,
+     "line": 890,
      "dynamic": false,
      "to": "support_admin_menu",
      "how": "точно"
@@ -457,7 +457,7 @@ window.FRONTMAP = {
     {
      "label": "⏩ Пропустить/Отмена",
      "data": "skip_tg_link",
-     "line": 939,
+     "line": 933,
      "dynamic": false,
      "to": "finish_key_creation",
      "how": "точно"
@@ -481,7 +481,7 @@ window.FRONTMAP = {
     {
      "label": "✅ Добавить в исключения",
      "data": "bypass_addreq_…",
-     "line": 771,
+     "line": 765,
      "dynamic": false,
      "to": "bypass_add_request_handler",
      "how": "по приставке «bypass_addreq_»"
@@ -489,7 +489,7 @@ window.FRONTMAP = {
     {
      "label": "❌ Отклонить",
      "data": "bypass_rejreq_…",
-     "line": 772,
+     "line": 766,
      "dynamic": false,
      "to": "bypass_add_request_handler",
      "how": "по приставке «bypass_rejreq_»"
@@ -497,7 +497,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Отмена",
      "data": "back_to_main",
-     "line": 873,
+     "line": 867,
      "dynamic": false,
      "to": "return_to_main_menu",
      "how": "точно"
@@ -505,7 +505,7 @@ window.FRONTMAP = {
     {
      "label": "🔑 К сертификату внутренних имён",
      "data": "psub_zone",
-     "line": 624,
+     "line": 618,
      "dynamic": false,
      "to": "zone_screen",
      "how": "точно"
@@ -513,7 +513,7 @@ window.FRONTMAP = {
     {
      "label": "💳 Счета",
      "data": "bill_menu",
-     "line": 653,
+     "line": 647,
      "dynamic": false,
      "to": "menu",
      "how": "точно"
@@ -521,7 +521,7 @@ window.FRONTMAP = {
     {
      "label": "💳 К сервису",
      "data": "«меняется»",
-     "line": 689,
+     "line": 683,
      "dynamic": true,
      "to": null,
      "how": null
@@ -529,7 +529,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 В меню",
      "data": "back_to_main",
-     "line": 708,
+     "line": 702,
      "dynamic": false,
      "to": "return_to_main_menu",
      "how": "точно"
@@ -539,7 +539,7 @@ window.FRONTMAP = {
   {
    "id": "button_router",
    "file": "bot.py",
-   "line": 976,
+   "line": 970,
    "title": "",
    "side": "admin",
    "kind": "router",
@@ -808,7 +808,7 @@ window.FRONTMAP = {
     {
      "label": "✍️ Своя рассылка (свой текст)",
      "data": "broadcast_custom",
-     "line": 1370,
+     "line": 1366,
      "dynamic": false,
      "to": "шаг: broadcast_custom",
      "how": "точно"
@@ -816,7 +816,7 @@ window.FRONTMAP = {
     {
      "label": "⚠️ Стандартное: тех. работы",
      "data": "do_maintenance_warn",
-     "line": 1371,
+     "line": 1367,
      "dynamic": false,
      "to": "broadcast_message",
      "how": "точно"
@@ -824,7 +824,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Отмена",
      "data": "back_to_main",
-     "line": 1372,
+     "line": 1368,
      "dynamic": false,
      "to": "return_to_main_menu",
      "how": "точно"
@@ -832,7 +832,7 @@ window.FRONTMAP = {
     {
      "label": "⏩ Пропустить",
      "data": "skip_tg_link",
-     "line": 1432,
+     "line": 1428,
      "dynamic": false,
      "to": "finish_key_creation",
      "how": "точно"
@@ -840,7 +840,7 @@ window.FRONTMAP = {
     {
      "label": "⏩ Пропустить",
      "data": "skip_tg_link",
-     "line": 1441,
+     "line": 1437,
      "dynamic": false,
      "to": "finish_key_creation",
      "how": "точно"
@@ -848,7 +848,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Отмена",
      "data": "user_detail_…",
-     "line": 1452,
+     "line": 1448,
      "dynamic": false,
      "to": "user_detail_menu",
      "how": "по приставке «user_detail_»"
@@ -856,7 +856,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Отмена",
      "data": "user_detail_…",
-     "line": 1464,
+     "line": 1460,
      "dynamic": false,
      "to": "user_detail_menu",
      "how": "по приставке «user_detail_»"
@@ -864,7 +864,7 @@ window.FRONTMAP = {
     {
      "label": "❌ …",
      "data": "do_unlink_…_…",
-     "line": 1473,
+     "line": 1469,
      "dynamic": false,
      "to": "user_detail_menu",
      "how": "по приставке «do_unlink_»"
@@ -872,7 +872,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Назад",
      "data": "user_detail_…",
-     "line": 1474,
+     "line": 1470,
      "dynamic": false,
      "to": "user_detail_menu",
      "how": "по приставке «user_detail_»"
@@ -880,7 +880,7 @@ window.FRONTMAP = {
     {
      "label": "🌍 Классический DNS (1.1.1.1)",
      "data": "set_dns_classic",
-     "line": 1426,
+     "line": 1422,
      "dynamic": false,
      "to": "шаг: set_dns_",
      "how": "по приставке «set_dns_»"
@@ -888,7 +888,7 @@ window.FRONTMAP = {
     {
      "label": "🛡 AdBlock DNS (Без рекламы)",
      "data": "set_dns_adblock",
-     "line": 1426,
+     "line": 1422,
      "dynamic": false,
      "to": "шаг: set_dns_",
      "how": "по приставке «set_dns_»"
@@ -896,7 +896,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Отмена",
      "data": "back_to_main",
-     "line": 1426,
+     "line": 1422,
      "dynamic": false,
      "to": "return_to_main_menu",
      "how": "точно"
@@ -904,7 +904,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Отмена",
      "data": "back_to_main",
-     "line": 1383,
+     "line": 1379,
      "dynamic": false,
      "to": "return_to_main_menu",
      "how": "точно"
@@ -912,7 +912,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 В меню",
      "data": "back_to_main",
-     "line": 1389,
+     "line": 1385,
      "dynamic": false,
      "to": "return_to_main_menu",
      "how": "точно"
@@ -920,7 +920,7 @@ window.FRONTMAP = {
     {
      "label": "✖️ Отмена",
      "data": "«меняется»",
-     "line": 1101,
+     "line": 1097,
      "dynamic": true,
      "to": null,
      "how": null
@@ -7124,7 +7124,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Подписка наружу",
      "data": "psub_menu",
-     "line": 520,
+     "line": 523,
      "dynamic": false,
      "to": "screen",
      "how": "точно"
@@ -7132,7 +7132,7 @@ window.FRONTMAP = {
     {
      "label": "✏️ Задать доступ / ✏️ Заменить пару",
      "data": "psub_zone_set",
-     "line": 509,
+     "line": 512,
      "dynamic": false,
      "to": "zone_ask",
      "how": "точно"
@@ -7140,7 +7140,7 @@ window.FRONTMAP = {
     {
      "label": "🌐 Сначала задать имя узла",
      "data": "psub_domain",
-     "line": 518,
+     "line": 521,
      "dynamic": false,
      "to": "domain_screen",
      "how": "точно"
@@ -7148,7 +7148,7 @@ window.FRONTMAP = {
     {
      "label": "🔍 Проверить доступ",
      "data": "psub_zone_check",
-     "line": 513,
+     "line": 516,
      "dynamic": false,
      "to": "zone_check",
      "how": "точно"
@@ -7156,7 +7156,7 @@ window.FRONTMAP = {
     {
      "label": "🗑 Убрать доступ",
      "data": "psub_zone_off",
-     "line": 515,
+     "line": 518,
      "dynamic": false,
      "to": "zone_off",
      "how": "точно"
@@ -7166,8 +7166,8 @@ window.FRONTMAP = {
   {
    "id": "zone_ask",
    "file": "handlers_pubsub.py",
-   "line": 526,
-   "title": "Спрашиваем логин. Пароль — следующим сообщением, и оно сразу удаляется.",
+   "line": 529,
+   "title": "Спрашиваем логин. Про пароль спросим следующим шагом — там выбор.",
    "side": "admin",
    "kind": "screen",
    "calls": [
@@ -7179,7 +7179,92 @@ window.FRONTMAP = {
     {
      "label": "✖️ Отмена",
      "data": "psub_zone",
-     "line": 536,
+     "line": 539,
+     "dynamic": false,
+     "to": "zone_screen",
+     "how": "точно"
+    }
+   ]
+  },
+  {
+   "id": "zone_password_step",
+   "file": "handlers_pubsub.py",
+   "line": 569,
+   "title": "Выбор: придумать пароль здесь или вписать уже готовый.",
+   "side": "admin",
+   "kind": "screen",
+   "calls": [
+    "InlineKeyboardMarkup",
+    "InlineKeyboardButton",
+    "InlineKeyboardButton",
+    "InlineKeyboardButton"
+   ],
+   "buttons": [
+    {
+     "label": "🎲 Придумать пароль",
+     "data": "psub_zone_gen",
+     "line": 587,
+     "dynamic": false,
+     "to": "zone_generate",
+     "how": "точно"
+    },
+    {
+     "label": "✏️ Вписать свой",
+     "data": "psub_zone_own",
+     "line": 589,
+     "dynamic": false,
+     "to": "zone_own",
+     "how": "точно"
+    },
+    {
+     "label": "✖️ Отмена",
+     "data": "psub_zone",
+     "line": 591,
+     "dynamic": false,
+     "to": "zone_screen",
+     "how": "точно"
+    }
+   ]
+  },
+  {
+   "id": "zone_own",
+   "file": "handlers_pubsub.py",
+   "line": 595,
+   "title": "Владелец задал пароль в панели сам — ждём его текстом.",
+   "side": "admin",
+   "kind": "screen",
+   "calls": [],
+   "buttons": []
+  },
+  {
+   "id": "zone_generate",
+   "file": "handlers_pubsub.py",
+   "line": 607,
+   "title": "Придумывает пароль, кладёт его на сервер и показывает владельцу.",
+   "side": "admin",
+   "kind": "screen",
+   "calls": [
+    "make_password",
+    "zone_creds_write",
+    "send_copyable",
+    "zone_screen",
+    "InlineKeyboardMarkup",
+    "InlineKeyboardButton",
+    "InlineKeyboardButton"
+   ],
+   "buttons": [
+    {
+     "label": "🔍 Проверить доступ",
+     "data": "psub_zone_check",
+     "line": 650,
+     "dynamic": false,
+     "to": "zone_check",
+     "how": "точно"
+    },
+    {
+     "label": "🔙 Назад",
+     "data": "psub_zone",
+     "line": 652,
      "dynamic": false,
      "to": "zone_screen",
      "how": "точно"
@@ -7189,7 +7274,7 @@ window.FRONTMAP = {
   {
    "id": "zone_off",
    "file": "handlers_pubsub.py",
-   "line": 540,
+   "line": 655,
    "title": "Убирает пару. Сертификат при этом остаётся — он уже выдан и живёт своё.",
    "side": "admin",
    "kind": "screen",
@@ -7203,7 +7288,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Назад",
      "data": "psub_zone",
-     "line": 556,
+     "line": 671,
      "dynamic": false,
      "to": "zone_screen",
      "how": "точно"
@@ -7213,7 +7298,7 @@ window.FRONTMAP = {
   {
    "id": "zone_check",
    "file": "handlers_pubsub.py",
-   "line": 560,
+   "line": 675,
    "title": "Проверка без выпуска: кладём временную запись и тут же убираем.",
    "side": "admin",
    "kind": "screen",
@@ -7229,7 +7314,7 @@ window.FRONTMAP = {
     {
      "label": "🔄 Обновить",
      "data": "psub_zone",
-     "line": 578,
+     "line": 693,
      "dynamic": false,
      "to": "zone_screen",
      "how": "точно"
@@ -12265,7 +12350,7 @@ window.FRONTMAP = {
   {
    "id": "шаг: maintenance_warn",
    "file": "bot.py",
-   "line": 1368,
+   "line": 1364,
    "title": "шаг мастера, нарисован прямо в роутере",
    "side": "admin",
    "kind": "step",
@@ -12274,7 +12359,7 @@ window.FRONTMAP = {
     {
      "label": "✍️ Своя рассылка (свой текст)",
      "data": "broadcast_custom",
-     "line": 1370,
+     "line": 1366,
      "dynamic": false,
      "to": "шаг: broadcast_custom",
      "how": "точно"
@@ -12282,7 +12367,7 @@ window.FRONTMAP = {
     {
      "label": "⚠️ Стандартное: тех. работы",
      "data": "do_maintenance_warn",
-     "line": 1371,
+     "line": 1367,
      "dynamic": false,
      "to": "broadcast_message",
      "how": "точно"
@@ -12290,7 +12375,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Отмена",
      "data": "back_to_main",
-     "line": 1372,
+     "line": 1368,
      "dynamic": false,
      "to": "return_to_main_menu",
      "how": "точно"
@@ -12300,7 +12385,7 @@ window.FRONTMAP = {
   {
    "id": "шаг: broadcast_custom",
    "file": "bot.py",
-   "line": 1378,
+   "line": 1374,
    "title": "шаг мастера, нарисован прямо в роутере",
    "side": "admin",
    "kind": "step",
@@ -12309,7 +12394,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Отмена",
      "data": "back_to_main",
-     "line": 1383,
+     "line": 1379,
      "dynamic": false,
      "to": "return_to_main_menu",
      "how": "точно"
@@ -12319,7 +12404,7 @@ window.FRONTMAP = {
   {
    "id": "шаг: set_exp_",
    "file": "bot.py",
-   "line": 1423,
+   "line": 1419,
    "title": "шаг мастера, нарисован прямо в роутере",
    "side": "admin",
    "kind": "step",
@@ -12328,7 +12413,7 @@ window.FRONTMAP = {
     {
      "label": "⏩ Пропустить",
      "data": "skip_tg_link",
-     "line": 1432,
+     "line": 1428,
      "dynamic": false,
      "to": "finish_key_creation",
      "how": "точно"
@@ -12336,7 +12421,7 @@ window.FRONTMAP = {
     {
      "label": "🌍 Классический DNS (1.1.1.1)",
      "data": "set_dns_classic",
-     "line": 1426,
+     "line": 1422,
      "dynamic": false,
      "to": "шаг: set_dns_",
      "how": "по приставке «set_dns_»"
@@ -12344,7 +12429,7 @@ window.FRONTMAP = {
     {
      "label": "🛡 AdBlock DNS (Без рекламы)",
      "data": "set_dns_adblock",
-     "line": 1426,
+     "line": 1422,
      "dynamic": false,
      "to": "шаг: set_dns_",
      "how": "по приставке «set_dns_»"
@@ -12352,7 +12437,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Отмена",
      "data": "back_to_main",
-     "line": 1426,
+     "line": 1422,
      "dynamic": false,
      "to": "return_to_main_menu",
      "how": "точно"
@@ -12362,7 +12447,7 @@ window.FRONTMAP = {
   {
    "id": "шаг: set_dns_",
    "file": "bot.py",
-   "line": 1439,
+   "line": 1435,
    "title": "шаг мастера, нарисован прямо в роутере",
    "side": "admin",
    "kind": "step",
@@ -12371,7 +12456,7 @@ window.FRONTMAP = {
     {
      "label": "⏩ Пропустить",
      "data": "skip_tg_link",
-     "line": 1441,
+     "line": 1437,
      "dynamic": false,
      "to": "finish_key_creation",
      "how": "точно"
@@ -12381,7 +12466,7 @@ window.FRONTMAP = {
   {
    "id": "шаг: rename_user_",
    "file": "bot.py",
-   "line": 1450,
+   "line": 1446,
    "title": "шаг мастера, нарисован прямо в роутере",
    "side": "admin",
    "kind": "step",
@@ -12390,7 +12475,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Отмена",
      "data": "user_detail_…",
-     "line": 1452,
+     "line": 1448,
      "dynamic": false,
      "to": "user_detail_menu",
      "how": "по приставке «user_detail_»"
@@ -12400,7 +12485,7 @@ window.FRONTMAP = {
   {
    "id": "шаг: link_tg_",
    "file": "bot.py",
-   "line": 1462,
+   "line": 1458,
    "title": "шаг мастера, нарисован прямо в роутере",
    "side": "admin",
    "kind": "step",
@@ -12409,7 +12494,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Отмена",
      "data": "user_detail_…",
-     "line": 1464,
+     "line": 1460,
      "dynamic": false,
      "to": "user_detail_menu",
      "how": "по приставке «user_detail_»"
@@ -12419,7 +12504,7 @@ window.FRONTMAP = {
   {
    "id": "шаг: unlink_tg_",
    "file": "bot.py",
-   "line": 1470,
+   "line": 1466,
    "title": "шаг мастера, нарисован прямо в роутере",
    "side": "admin",
    "kind": "step",
@@ -12428,7 +12513,7 @@ window.FRONTMAP = {
     {
      "label": "❌ …",
      "data": "do_unlink_…_…",
-     "line": 1473,
+     "line": 1469,
      "dynamic": false,
      "to": "user_detail_menu",
      "how": "по приставке «do_unlink_»"
@@ -12436,7 +12521,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Назад",
      "data": "user_detail_…",
-     "line": 1474,
+     "line": 1470,
      "dynamic": false,
      "to": "user_detail_menu",
      "how": "по приставке «user_detail_»"
@@ -12496,9 +12581,9 @@ window.FRONTMAP = {
   }
  ],
  "counts": {
-  "screens": 258,
-  "buttons": 880,
-  "admin": 213,
+  "screens": 261,
+  "buttons": 885,
+  "admin": 216,
   "client": 45
  },
  "reachable": 183,

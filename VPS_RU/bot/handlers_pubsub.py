@@ -489,10 +489,13 @@ async def zone_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "домена. Отнимут узел — отнимут и возможность переписать записи. Это "
         "настоящее повышение ставок, и уменьшить его стоит двумя вещами:",
         "",
-        "• В панели reg.ru у API есть **белый список адресов** — впишите туда "
-        "адрес узла и только его.",
-        "• Пароль для API там задаётся **отдельно** от пароля к кабинету. "
-        "Задайте отдельный: тогда это доступ к зоне, а не ко всему аккаунту.",
+        "• **Список разрешённых адресов** — впишите адрес узла и только его. "
+        "Это не пожелание: без него API не отвечает вообще.",
+        "• Пароль для API задаётся **отдельно** от пароля к кабинету. Задайте "
+        "отдельный: тогда это доступ к зоне, а не ко всему аккаунту.",
+        "",
+        "Оба — в настройках **аккаунта**, а не на странице домена; там их нет:",
+        "`reg.ru/user/account/#/settings/api/`",
         "",
         "_Пара лежит файлом на сервере, с правами только владельцу, и ни в "
         "одно окружение не попадает — ни в `docker inspect`, ни в отладку, ни "
@@ -524,17 +527,129 @@ async def zone_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def zone_ask(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Спрашиваем логин. Пароль — следующим сообщением, и оно сразу удаляется."""
+    """Спрашиваем логин. Про пароль спросим следующим шагом — там выбор."""
     query = update.callback_query
     context.user_data["state"] = "awaiting_regru_user"
     await show_screen(
         query, context,
         "✏️ **Логин в reg.ru**\n\nОдной строкой — тот, которым входите в "
-        "кабинет.\n\n_Следующим сообщением спрошу пароль для API. Оно будет "
-        "удалено сразу, как только прочитаю._",
+        "кабинет.\n\n_Пароль спрошу следующим шагом. Там же можно будет не "
+        "придумывать его самому._",
         reply_markup=InlineKeyboardMarkup(
             [[InlineKeyboardButton("✖️ Отмена", callback_data="psub_zone")]]),
         parse_mode=ParseMode.MARKDOWN)
+
+
+def make_password(length: int = 16) -> str:
+    """Придумывает пароль для API — так же, как бот придумывает токен панелей.
+
+    Только буквы и цифры, и это осознанно. Пароль проезжает через поле в чужой
+    панели, через JSON регистратора и через оболочку на хосте; знак, который
+    где-то из этой цепочки имеет своё значение, ломает всё в самом неудобном
+    месте — на продлении сертификата через три месяца.
+
+    Шестнадцать знаков, а не сорок. Сорок reg.ru не принимает — отвечает
+    «пароль слишком длинный», а предела своего нигде не пишет. Шестнадцать из
+    шестидесяти двух — это девяносто пять бит, и подбирать их всё равно
+    неоткуда: перед API стоит список разрешённых адресов. Длина здесь не то,
+    что нас защищает.
+
+    Все три вида знаков — обязательно: чужие панели часто требуют именно их.
+    """
+    import secrets
+    import string
+    abc = string.ascii_letters + string.digits
+    while True:
+        out = "".join(secrets.choice(abc) for _ in range(length))
+        if (any(c.isupper() for c in out) and any(c.islower() for c in out)
+                and any(c.isdigit() for c in out)):
+            return out
+
+
+async def zone_password_step(context, chat_id):
+    """Выбор: придумать пароль здесь или вписать уже готовый.
+
+    Придумать здесь — короче на один поход в панель и надёжнее: пароль, который
+    человек сочиняет сам, обычно тот же, что и везде, а этот лежит на сервере.
+    """
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text="🔑 **Теперь пароль для API**\n\nЭто НЕ пароль от кабинета: он "
+             "задаётся отдельно, в настройках **аккаунта** — на странице "
+             "домена такой настройки нет:\n"
+             "`reg.ru/user/account/#/settings/api/`\n\n"
+             "Там же впишите адрес узла в список разрешённых: без этого API не "
+             "ответит вовсе.\n\n"
+             "Пароль можно придумать здесь — тогда останется только вставить "
+             "его в панель.",
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("🎲 Придумать пароль",
+                                  callback_data="psub_zone_gen")],
+            [InlineKeyboardButton("✏️ Вписать свой",
+                                  callback_data="psub_zone_own")],
+            [InlineKeyboardButton("✖️ Отмена", callback_data="psub_zone")],
+        ]))
+
+
+async def zone_own(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Владелец задал пароль в панели сам — ждём его текстом."""
+    query = update.callback_query
+    context.user_data["state"] = "awaiting_regru_password"
+    await query.answer()
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text="✏️ Пришлите пароль для API одной строкой.\n\n"
+             "_Сообщение удалю сразу, как прочитаю._",
+        parse_mode=ParseMode.MARKDOWN)
+
+
+async def zone_generate(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Придумывает пароль, кладёт его на сервер и показывает владельцу.
+
+    Порядок именно такой: сначала записали, потом показали. Показать и не
+    записать значит оставить человека с паролем, который он вставит в панель, а
+    на сервере его не будет — и выпуск сертификата провалится без всякой
+    видимой причины.
+    """
+    from utils import send_copyable
+    query = update.callback_query
+    chat_id = update.effective_chat.id
+    user = context.user_data.get("regru_user", "")
+    if not user:
+        await query.answer("Логин потерялся — начните заново", show_alert=True)
+        return await zone_screen(update, context)
+
+    password = make_password()
+    try:
+        zone_creds_write(user, password)
+    except Exception as e:
+        await query.answer("Не записалось: %s" % e, show_alert=True)
+        return
+    context.user_data["state"] = None
+    await query.answer("Придумал")
+    await db.log_event("Подписки", "Задан доступ к зоне домена (пароль придуман)")
+
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text="🔑 **Вот пароль. Скопируйте и вставьте его в reg.ru.**\n\n"
+             "«Альтернативный пароль» → «Настроить»:\n"
+             "`reg.ru/user/account/#/settings/api/`",
+        parse_mode=ParseMode.MARKDOWN)
+    await send_copyable(context.bot, chat_id, password)
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text="Здесь он уже записан — на сервере, файлом, только для владельца.\n\n"
+             "Как вставите в панель, нажмите «Проверить доступ»: положу в зону "
+             "временную запись и тут же уберу. Так опечатка находится за "
+             "секунды, а не в середине выпуска сертификата.\n\n"
+             "_Это сообщение с паролем можно удалить, как только вставите: "
+             "перечитывать его больше неоткуда и незачем._",
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton("🔍 Проверить доступ",
+                                   callback_data="psub_zone_check")],
+             [InlineKeyboardButton("🔙 Назад", callback_data="psub_zone")]]))
 
 
 async def zone_off(update: Update, context: ContextTypes.DEFAULT_TYPE):

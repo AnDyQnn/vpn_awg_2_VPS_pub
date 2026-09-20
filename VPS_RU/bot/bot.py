@@ -572,17 +572,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Доступ к зоне домена: логин, потом пароль. Пара нужна для сертификата на
     # «звёздочку» — единственного, который покрывает имена внутри туннеля.
     if state == "awaiting_regru_user":
-        context.user_data["state"] = "awaiting_regru_password"
+        context.user_data["state"] = None
         context.user_data["regru_user"] = (update.message.text or "").strip()
         await safe_delete(context, chat_id, user_msg_id)
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text="✏️ **Теперь пароль для API**\n\nЭто НЕ пароль от кабинета: "
-                 "в reg.ru он задаётся отдельно, в разделе доступа к API. Там "
-                 "же впишите адрес узла в белый список — тогда пара будет "
-                 "бесполезна откуда-либо ещё.\n\n"
-                 "_Сообщение с паролем удалю сразу, как прочитаю._",
-            parse_mode=ParseMode.MARKDOWN)
+        import handlers_pubsub as hps
+        await hps.zone_password_step(context, chat_id)
         return
 
     if state == "awaiting_regru_password":
@@ -1066,6 +1060,8 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if data == "psub_zone_set": await hps.zone_ask(update, context); return
         if data == "psub_zone_off": await hps.zone_off(update, context); return
         if data == "psub_zone_check": await hps.zone_check(update, context); return
+        if data == "psub_zone_gen": await hps.zone_generate(update, context); return
+        if data == "psub_zone_own": await hps.zone_own(update, context); return
     # Счета за сервера: напоминания об оплате хостингов.
     if data.startswith("bill_"):
         import billing
