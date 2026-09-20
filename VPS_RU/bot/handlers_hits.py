@@ -97,6 +97,132 @@ async def collect_hits():
     return added
 
 
+# Категории, о которых не пишем. Это не цензура сводки, а разница в природе
+# события: к трекерам браузер стучится сам, десятками за одну открытую
+# страницу, и человек про это даже не знает. Сводка из таких строк — шум, в
+# котором тонет единственное, ради чего её читают.
+#
+# Спрятать их совсем тоже нельзя: тогда числа в сводке не сойдутся с числами на
+# экране. Поэтому они идут одной строкой в конце.
+QUIET_CATEGORIES = {"ads", "tracking"}
+
+# Как часто писать. Не чаще: инциденты приходят пачками, и сводка раз в пять
+# минут превратилась бы в ту же ленту, от которой мы уходим.
+NOTIFY_QUIET_MINUTES = 60
+NOTIFY_CHOICES = (15, 60, 180, 720)
+
+# Сколько строк в одной сводке. Дальше — «и ещё N»: длинное сообщение читают по
+# диагонали, а короткое читают.
+NOTIFY_LINES = 8
+
+LAST_KEY = "hits_notified_id"
+AT_KEY = "hits_notified_at"
+ON_KEY = "hits_notify_on"
+EVERY_KEY = "hits_notify_every"
+
+
+async def notify_enabled():
+    return (await db.get_setting(ON_KEY) or "1") == "1"
+
+
+async def notify_every():
+    try:
+        return int(await db.get_setting(EVERY_KEY) or NOTIFY_QUIET_MINUTES)
+    except (TypeError, ValueError):
+        return NOTIFY_QUIET_MINUTES
+
+
+def _digest_text(rows, quiet_count):
+    """Сводка: кто, куда и сколько раз. Людьми, а не строками журнала."""
+    by_person = {}
+    for r in rows:
+        who = r["name"] or (r["tunnel_ip"] or "неизвестный ключ")
+        by_person.setdefault(who, []).append(r)
+
+    lines = ["🚨 **Новые инциденты**", ""]
+    shown = 0
+    for who, items in sorted(by_person.items(),
+                             key=lambda kv: -len(kv[1])):
+        if shown >= NOTIFY_LINES:
+            break
+        doms = []
+        for it in items:
+            d = it["domain"]
+            if d not in doms:
+                doms.append(d)
+        tail = (", …и ещё %d" % (len(doms) - 3)) if len(doms) > 3 else ""
+        lines.append("**%s** — %d" % (escape_md(who), len(items)))
+        lines.append("     `%s`%s" % (escape_md(", ".join(doms[:3])), tail))
+        shown += 1
+    left = len(by_person) - shown
+    if left > 0:
+        lines.append("")
+        lines.append("_…и ещё людей: %d._" % left)
+    if quiet_count:
+        lines.append("")
+        lines.append("_Плюс %d по рекламе и трекерам — о них не пишу: туда "
+                     "браузер ходит сам._" % quiet_count)
+    return chr(10).join(lines)
+
+
+async def notify_new(app):
+    """Одна сводка, не чаще выбранного промежутка. Возвращает, о скольких сказано."""
+    from utils import ADMIN_ID
+    if not ADMIN_ID or not await notify_enabled():
+        return 0
+
+    try:
+        last_id = int(await db.get_setting(LAST_KEY) or 0)
+    except (TypeError, ValueError):
+        last_id = 0
+
+    # Первый запуск: не вываливаем всю историю разом — она может копиться
+    # неделями, и первое же сообщение было бы стеной текста. Запоминаем точку и
+    # пишем со следующего раза.
+    if not last_id:
+        await db.set_setting(LAST_KEY, await db.hits_max_id())
+        return 0
+
+    rows = await db.hits_since(last_id)
+    if not rows:
+        return 0
+
+    # Тишина между сводками. Считаем ПОСЛЕ того, как убедились, что есть о чём
+    # писать: иначе пустой проход двигал бы отсчёт и сводка приходила бы реже
+    # обещанного.
+    import time as _time
+    try:
+        at = float(await db.get_setting(AT_KEY) or 0)
+    except (TypeError, ValueError):
+        at = 0
+    if _time.time() - at < await notify_every() * 60:
+        return 0
+
+    loud = [r for r in rows if (r.get("category") or "") not in QUIET_CATEGORIES]
+    quiet_count = len(rows) - len(loud)
+
+    # Отметку двигаем в любом случае: и тихие тоже разобраны, просто молча.
+    await db.set_setting(LAST_KEY, rows[-1]["id"])
+    if not loud:
+        return 0
+
+    kb = InlineKeyboardMarkup(
+        [[InlineKeyboardButton("🚨 Открыть инциденты", callback_data="hit_list")],
+         [InlineKeyboardButton("🔕 Реже или выключить",
+                               callback_data="hit_notify")]])
+    try:
+        await app.bot.send_message(chat_id=ADMIN_ID,
+                                   text=_digest_text(loud, quiet_count),
+                                   parse_mode=ParseMode.MARKDOWN,
+                                   reply_markup=kb,
+                                   disable_web_page_preview=True)
+    except Exception as e:
+        print(f"Инциденты: сводка не ушла — {e}")
+        return 0
+    await db.set_setting(AT_KEY, _time.time())
+    return len(loud)
+
+
 async def hits_loop(app):
     """Забираем раз в пять минут. Чаще незачем: разбирают такое не в реальном
     времени, а узел не должен отвечать на опросы вместо работы."""
@@ -104,9 +230,56 @@ async def hits_loop(app):
     while True:
         try:
             await collect_hits()
+            await notify_new(app)
         except Exception as e:
             print(f"Попытки на закрытое: {e}")
         await asyncio.sleep(300)
+
+
+async def notify_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Как часто писать о новых инцидентах."""
+    query = update.callback_query
+    on = await notify_enabled()
+    every = await notify_every()
+
+    lines = ["🔔 **Сводка по инцидентам**", "",
+             ("Сейчас: **раз в %d мин.**" % every) if on
+             else "Сейчас: **выключена**", "",
+             "Приходит одной сводкой, а не строкой на каждый случай: инциденты "
+             "идут пачками, и лента из них перестаёт читаться на второй день.",
+             "",
+             "_Реклама и трекеры в сводку не попадают — туда браузер ходит сам, "
+             "десятками за одну страницу. Их число видно последней строкой, "
+             "чтобы цифры сходились с экраном._"]
+
+    kb = [[InlineKeyboardButton(("✅ " if on and d == every else "") +
+                                ("%d мин." % d if d < 60 else "%d ч." % (d // 60)),
+                                callback_data=f"hit_notify_{d}")
+           for d in NOTIFY_CHOICES]]
+    kb.append([InlineKeyboardButton("🔕 Выключить сводку" if on
+                                    else "🔔 Включить сводку",
+                                    callback_data="hit_notify_off")])
+    kb.append([InlineKeyboardButton("🔙 К инцидентам", callback_data="hit_list")])
+    await show_screen(query, context, chr(10).join(lines),
+                      reply_markup=InlineKeyboardMarkup(kb),
+                      parse_mode=ParseMode.MARKDOWN)
+
+
+async def notify_set(update: Update, context: ContextTypes.DEFAULT_TYPE, minutes):
+    if minutes not in NOTIFY_CHOICES:
+        await update.callback_query.answer("Такого промежутка нет", show_alert=True)
+        return
+    await db.set_setting(EVERY_KEY, int(minutes))
+    await db.set_setting(ON_KEY, "1")
+    await update.callback_query.answer("Готово")
+    await notify_screen(update, context)
+
+
+async def notify_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    on = await notify_enabled()
+    await db.set_setting(ON_KEY, "0" if on else "1")
+    await update.callback_query.answer("Выключено" if on else "Включено")
+    await notify_screen(update, context)
 
 
 def _when(dt):
@@ -114,12 +287,19 @@ def _when(dt):
 
 
 async def hits_screen(update: Update, context: ContextTypes.DEFAULT_TYPE, page=0):
-    """Список заявок. Свежие сверху, неразобранные помечены."""
+    """Список заявок. Свежие сверху, неразобранные помечены.
+
+    Список ОДИН. Раньше он печатался дважды — сначала текстом, потом теми же
+    строками в кнопках, — и читать приходилось одно и то же по два раза. Кнопка
+    и есть строка списка: по ней и жмут.
+    """
     query = update.callback_query
     await collect_hits()
 
     total = await db.count_filter_hits()
     fresh = await db.count_filter_hits(only_new=True)
+    pages = max(1, (total + PER_PAGE - 1) // PER_PAGE)
+    page = max(0, min(page, pages - 1))
     rows = await db.list_filter_hits(limit=PER_PAGE, offset=page * PER_PAGE)
 
     lines = ["🚨 **Инциденты**", ""]
@@ -129,45 +309,69 @@ async def hits_screen(update: Update, context: ContextTypes.DEFAULT_TYPE, page=0
                   "или доступами. Если фильтры никому не включены, здесь будет "
                   "пусто._"]
     else:
-        lines.append(f"Всего: **{total}**, не разобрано: **{fresh}**")
-        lines.append("")
-        for row in rows:
-            mark = "🔴" if not row["seen_at"] else "▫️"
-            who = escape_md(row["name"] or "неизвестный ключ")
-            lines.append(f"{mark} {_when(row['happened_at'])} · **{who}**")
-            lines.append(f"     `{escape_md(row['domain'])}`"
-                         + (f" · `{row['ref']}`" if row.get("ref") else ""))
-        # Срок хранения — здесь, а не в настройках: он объясняет, почему
-        # старого в списке нет, ровно там, где этот вопрос и возникает.
-        seen_days, new_days = await db.hits_keep_days()
-        lines += ["", "_Разобранные хранятся %d дней, неразобранные — %d. "
-                      "Изменить — кнопкой ниже._" % (seen_days, new_days)]
+        lines.append("Всего **%d**, не разобрано **%d**" % (total, fresh))
+        if pages > 1:
+            lines.append("Страница **%d** из **%d**" % (page + 1, pages))
+        lines += ["", "🔴 — не разобрано, ▫️ — разобрано.",
+                  "_Нажмите на строку, чтобы открыть._"]
 
     kb = []
     for row in rows:
         mark = "🔴" if not row["seen_at"] else "▫️"
-        title = f"{mark} {_when(row['happened_at'])} · {(row['name'] or '?')[:14]}"
-        kb.append([InlineKeyboardButton(title, callback_data=f"hit_open_{row['id']}")])
+        # Всё, по чему узнают строку, — в самой кнопке: когда, кто, куда.
+        # Домен обрезаем с конца: начало у него осмысленное, хвост — зона.
+        who = (row["name"] or row["tunnel_ip"] or "?")[:12]
+        dom = row["domain"] or ""
+        if len(dom) > 22:
+            dom = dom[:21] + "…"
+        kb.append([InlineKeyboardButton(
+            "%s %s · %s · %s" % (mark, _when(row["happened_at"]), who, dom),
+            callback_data="hit_open_%s" % row["id"])])
 
-    nav = []
-    if page:
-        nav.append(InlineKeyboardButton("◀️", callback_data=f"hit_pg_{page - 1}"))
-    if (page + 1) * PER_PAGE < total:
-        nav.append(InlineKeyboardButton("▶️", callback_data=f"hit_pg_{page + 1}"))
-    if nav:
+    # Переключатель страниц: со стрелками по краям и номером посередине.
+    # Одни стрелки не говорят ни где ты, ни сколько осталось.
+    if pages > 1:
+        nav = []
+        nav.append(InlineKeyboardButton(
+            "◀️" if page else "·",
+            callback_data=("hit_pg_%d" % (page - 1)) if page else "svc_noop"))
+        nav.append(InlineKeyboardButton("%d / %d" % (page + 1, pages),
+                                        callback_data="svc_noop"))
+        nav.append(InlineKeyboardButton(
+            "▶️" if page + 1 < pages else "·",
+            callback_data=("hit_pg_%d" % (page + 1)) if page + 1 < pages
+            else "svc_noop"))
         kb.append(nav)
+
     if fresh:
         kb.append([InlineKeyboardButton("✅ Отметить все разобранными",
                                         callback_data="hit_seen_all")])
+    if total > fresh:
+        kb.append([InlineKeyboardButton("🗑 Удалить разобранные",
+                                        callback_data="hit_drop_seen")])
     # Поиск по номеру — то, ради чего номер и показан человеку. Ставим рядом со
     # списком: сюда владелец приходит с номером в руках.
     kb.append([InlineKeyboardButton("🔎 Найти по номеру", callback_data="hit_find")])
-    kb.append([InlineKeyboardButton("🗓 Сколько хранить", callback_data="hit_keep")])
+    kb.append([InlineKeyboardButton("🗓 Сколько хранить", callback_data="hit_keep"),
+               InlineKeyboardButton("🔔 Сводка", callback_data="hit_notify")])
     kb.append([InlineKeyboardButton("🔙 Администрирование", callback_data="svc_menu")])
 
-    await show_screen(query, context, "\n".join(lines),
+    await show_screen(query, context, chr(10).join(lines),
                       reply_markup=InlineKeyboardMarkup(kb),
                       parse_mode=ParseMode.MARKDOWN)
+
+
+async def drop_seen(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Удаляет разобранные — сейчас, а не по сроку."""
+    query = update.callback_query
+    try:
+        gone = await db.delete_seen_hits()
+    except Exception as e:
+        await query.answer("Не вышло: %s" % e, show_alert=True)
+        return
+    await query.answer("Удалено разобранных: %d" % gone, show_alert=True)
+    await hits_screen(update, context)
+
 
 
 async def hit_open(update: Update, context: ContextTypes.DEFAULT_TYPE, hit_id):
@@ -309,7 +513,7 @@ async def keep_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton(("✅ " if d == new_days else "") + str(d),
                               callback_data=f"hit_keep_new_{d}")
          for d in db.HITS_KEEP_CHOICES],
-        [InlineKeyboardButton("🧹 Убрать старое сейчас",
+        [InlineKeyboardButton("🧹 Убрать то, что старше срока",
                               callback_data="hit_keep_now")],
         [InlineKeyboardButton("🔙 К инцидентам", callback_data="hit_list")],
     ]

@@ -37,6 +37,10 @@ class Q:
                             for row in (reply_markup.inline_keyboard
                                         if reply_markup else [])
                             for b in row]
+        shown["labels"] = [b.text
+                           for row in (reply_markup.inline_keyboard
+                                       if reply_markup else [])
+                           for b in row]
 
     async def answer(self, *a, **k):
         return None
@@ -117,7 +121,15 @@ async def main():
     check("считается неразобранной", await db.count_filter_hits(only_new=True) >= 1)
     shown.clear()
     await hh.hits_screen(U(), Ctx())
-    check("в списке видно имя", "Димон" in (shown.get("text") or ""))
+    # Имя теперь в подписи кнопки, а не в тексте: раньше список печатался
+    # дважды — текстом и теми же строками в кнопках, — и читать приходилось
+    # одно и то же по два раза.
+    check("в списке видно имя",
+          any("Димон" in s for s in (shown.get("labels") or [])),
+          " / ".join(shown.get("labels") or [])[:70])
+    check("текст списком не дублируется",
+          "Димон" not in (shown.get("text") or ""),
+          "иначе одно и то же читается дважды")
     check("заявку можно открыть",
           any(b.startswith("hit_open_") for b in shown.get("buttons") or []))
 

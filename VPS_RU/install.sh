@@ -166,6 +166,14 @@ chmod 600 "$APP_DIR/.env"
 # PUBLIC_DOMAIN здесь по той же причине: имя узла задаётся из бота, но пока
 # строки нет вовсе, по файлу не понять, что такая настройка существует. А она
 # меняет многое — от срока сертификата до зоны имён внутри туннеля.
+# APP_VERSION — тег образов. Без него compose разворачивает `${APP_VERSION:-dev}`
+# в несуществующий `:dev` и уходит собирать образ с нуля; на одном ядре это часы,
+# и всё это время тот, кто позвал compose, стоит и ждёт. Выкладка перезапишет
+# значение своим, здесь важно, чтобы строка просто была.
+if ! grep -q "^APP_VERSION=" "$APP_DIR/.env" 2>/dev/null; then
+    echo "APP_VERSION=$(tr -d '[:space:]' < "$(dirname "$APP_DIR")/VERSION" 2>/dev/null || echo dev)" >> "$APP_DIR/.env"
+fi
+
 for KEY in API_TOKEN BACKUP_PASSWORD PUBLIC_DOMAIN; do
     if ! grep -q "^${KEY}=" "$APP_DIR/.env" 2>/dev/null; then
         echo "${KEY}=" >> "$APP_DIR/.env"

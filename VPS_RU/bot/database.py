@@ -507,6 +507,14 @@ class Database:
                 );
             """)
             await self.execute("""
+                CREATE TABLE IF NOT EXISTS chat_msgs (
+                    chat_id BIGINT,
+                    message_id BIGINT,
+                    sent_at DOUBLE PRECISION,
+                    PRIMARY KEY (chat_id, message_id)
+                );
+            """)
+            await self.execute("""
                 CREATE TABLE IF NOT EXISTS filter_exempt (
                     user_uuid TEXT REFERENCES users(uuid) ON DELETE CASCADE,
                     category TEXT,
@@ -812,9 +820,67 @@ class Database:
         return await self.fetch_val(
             f"SELECT COUNT(*) FROM filter_hits {where}") or 0
 
+    # --- Сообщения бота владельцу: их номера, чтобы убрать в конце дня ------
+    #
+    # Хранится только номер и время. Ни текста, ни вложений: чистке нужно ровно
+    # то, чем удаляют, а лишнее в базе — это лишнее в бэкапе.
+
+    async def remember_chat_msg(self, chat_id: int, message_id: int):
+        import time
+        await self.execute(
+            "INSERT INTO chat_msgs (chat_id, message_id, sent_at) "
+            "VALUES ($1,$2,$3) ON CONFLICT DO NOTHING",
+            int(chat_id), int(message_id), float(time.time()))
+
+    async def chat_msgs(self, chat_id: int, keep_last: int = 0):
+        """Что можно убирать: всё, кроме нескольких последних.
+
+        Последние не трогаем: на одном из них владелец сейчас и смотрит, и
+        вместе с сообщением исчезли бы кнопки."""
+        rows = await self.fetch_all(
+            "SELECT message_id, sent_at FROM chat_msgs WHERE chat_id=$1 "
+            "ORDER BY message_id DESC OFFSET $2",
+            int(chat_id), int(keep_last))
+        return [dict(r) for r in rows]
+
+    async def forget_chat_msg(self, chat_id: int, message_id: int):
+        await self.execute(
+            "DELETE FROM chat_msgs WHERE chat_id=$1 AND message_id=$2",
+            int(chat_id), int(message_id))
+
+    async def hits_since(self, since_id: int, limit: int = 500):
+        """Что появилось после указанной записи.
+
+        По номеру записи, а не по времени. Время у инцидента — это момент, когда
+        его увидел УЗЕЛ, а приезжают они к нам пачками и с задержкой: по времени
+        сводка либо повторяла бы одно и то же, либо теряла опоздавших.
+        """
+        rows = await self.fetch_all(
+            """SELECT id, happened_at, user_uuid, name, tunnel_ip,
+                      domain, category, ref
+               FROM filter_hits WHERE id > $1
+               ORDER BY id LIMIT $2""", int(since_id), int(limit))
+        return [dict(r) for r in rows]
+
+    async def hits_max_id(self):
+        return int(await self.fetch_val("SELECT MAX(id) FROM filter_hits") or 0)
+
     async def mark_filter_hit_seen(self, hit_id):
         await self.execute(
             "UPDATE filter_hits SET seen_at=NOW() WHERE id=$1", int(hit_id))
+
+    async def delete_seen_hits(self):
+        """Убирает разобранные — все, независимо от срока.
+
+        Отдельно от уборки по сроку, потому что это разные желания. «Хранить
+        неделю» — про то, чтобы старое не копилось само. «Удалить разобранные» —
+        про то, чтобы убрать со стола прямо сейчас то, что уже посмотрел. Раньше
+        была только первая, и нажатие на неё в день, когда всё свежее, не делало
+        ничего — выглядело как сломанная кнопка."""
+        before = await self.fetch_val("SELECT COUNT(*) FROM filter_hits") or 0
+        await self.execute("DELETE FROM filter_hits WHERE seen_at IS NOT NULL")
+        after = await self.fetch_val("SELECT COUNT(*) FROM filter_hits") or 0
+        return before - after
 
     async def mark_all_filter_hits_seen(self):
         await self.execute(

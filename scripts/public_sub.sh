@@ -85,10 +85,11 @@ report() {   # report <состояние> <сообщение>
     # «wild» и «dns_api» бот показывает на экране, но сами логин с паролем к
     # нему не попадают и попасть не могут: в контейнер они не передаются вовсе.
     WILD=false; cert_is_wild && WILD=true
+    NAMED=false; cert_named && NAMED=true
     DAPI=false; dns_api_ready && DAPI=true
-    printf '{"state":"%s","msg":"%s","port":%s,"at":%s,"until":%s,"ip":"%s","domain":"%s","wild":%s,"dns_api":%s}\n' \
+    printf '{"state":"%s","msg":"%s","port":%s,"at":%s,"until":%s,"ip":"%s","domain":"%s","wild":%s,"named":%s,"dns_api":%s}\n' \
         "$1" "$2" "$PUBLIC_PORT" "$(date +%s)" "$(cert_until)" "$(public_ip)" \
-        "$(read_domain)" "$WILD" "$DAPI" > "$STATE"
+        "$(read_domain)" "$WILD" "$NAMED" "$DAPI" > "$STATE"
     say "$2"
 }
 
@@ -192,6 +193,15 @@ cert_is_wild() {
     [ -s "$CERT_DIR/fullchain.pem" ] || return 1
     openssl x509 -in "$CERT_DIR/fullchain.pem" -noout -text 2>/dev/null |
         grep -q 'DNS:\*\.'
+}
+
+# Выписан ли нынешний сертификат на ИМЯ, а не на адрес. Спрашиваем сам
+# сертификат, а не настройки: между «домен вписан» и «сертификат на домен» лежит
+# отдельный шаг, и бот обязан показывать, сделан он или нет.
+cert_named() {
+    [ -s "$CERT_DIR/fullchain.pem" ] || return 1
+    openssl x509 -in "$CERT_DIR/fullchain.pem" -noout -text 2>/dev/null |
+        grep -A1 'Subject Alternative Name' | grep -q 'DNS:'
 }
 
 issue() {

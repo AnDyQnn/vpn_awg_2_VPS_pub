@@ -284,38 +284,16 @@ async def notify_admin(app, text, **kw):
         msg = await app.bot.send_message(ADMIN_ID, text, **kw)
     except Exception:
         return None
-    try:
-        cur = await db.get_setting("admin_alert_msgs") or ""
-        ids = [x for x in cur.split(",") if x.strip()]
-        ids.append(str(msg.message_id))
-        await db.set_setting("admin_alert_msgs", ",".join(ids[-1000:]))  # кэп на всякий
-    except Exception:
-        pass
+    # Номер сообщения здесь больше не записываем: этим занимается chat_cleanup,
+    # и занимается перехватом отправки — то есть знает про ВСЕ сообщения
+    # владельцу, а не только про тревоги. Два списка на один чат означали бы две
+    # правды о том, что уже удалено, и они однажды разойдутся.
     return msg
 
-async def midnight_alert_cleanup_loop(app):
-    """В 00:00 МСК удаляет из чата админа все алерты, накопившиеся за сутки (если он их сам
-    не удалил). Telegram позволяет ботам удалять свои сообщения не старше 48ч — суточные
-    удаляются нормально."""
-    while True:
-        now_msk = get_moscow_now()
-        if now_msk.hour == 0 and now_msk.minute < 5:
-            today = now_msk.strftime("%Y-%m-%d")
-            try:
-                if await db.get_setting("last_alert_cleanup") != today:
-                    await db.set_setting("last_alert_cleanup", today)
-                    cur = await db.get_setting("admin_alert_msgs") or ""
-                    for mid in [x for x in cur.split(",") if x.strip()]:
-                        try:
-                            await app.bot.delete_message(ADMIN_ID, int(mid))
-                        except Exception:
-                            pass
-                    await db.set_setting("admin_alert_msgs", "")
-            except Exception as e:
-                print(f"midnight_alert_cleanup error: {e}")
-            await asyncio.sleep(300)
-        else:
-            await asyncio.sleep(120)
+# Полуночная чистка тревог жила здесь и знала только про них. Её заменил
+# chat_cleanup: он считает не места отправки, а сами отправленные сообщения, и
+# потому не пропускает ни биллинг, ни архивы, ни ответы на нажатия.
+
 
 # ------------------------ DASHBOARD ------------------------
 def _bar(pct, width=10):

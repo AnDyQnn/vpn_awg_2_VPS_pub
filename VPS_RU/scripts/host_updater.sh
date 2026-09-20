@@ -141,9 +141,33 @@ while true; do
             shred -u "$REQ" 2>/dev/null || rm -f "$REQ"
         done
         chmod 600 "$ENV_FILE"
+
         # Переменная доезжает до контейнеров только при пересоздании.
-        cd "$NODE_DIR" && docker compose up -d >/dev/null 2>&1
-        echo "[Updater] .env обновлён, контейнеры пересозданы."
+        #
+        # APP_VERSION обязателен. Теги образов в compose — `${APP_VERSION:-dev}`,
+        # и без него compose ищет `vpn-ru-bot:dev`, не находит и уходит СОБИРАТЬ
+        # образы заново. На одном ядре это часы, и всё это время демон стоит
+        # здесь, не разбирая больше ни одного флага: ни обновления, ни подписки,
+        # ни следующей правки .env. Снаружи выглядит так, будто бот перестал
+        # слушаться кнопок.
+        APP_VERSION="$(cat "$(dirname "$NODE_DIR")/VERSION" 2>/dev/null |
+                       tr -d '[:space:]')"
+        [ -z "$APP_VERSION" ] && APP_VERSION=dev
+        export APP_VERSION
+
+        # --no-build: пересоздать, а не собрать. Если нужного образа почему-то
+        # нет, пусть это будет быстрый и внятный отказ, а не молчаливая сборка.
+        #
+        # timeout: даже правильная команда может встать (докер, сеть, диск), и
+        # демон не имеет права висеть из-за неё вечно — он один на все просьбы.
+        if (cd "$NODE_DIR" && timeout 300 docker compose up -d --no-build \
+                >/dev/null 2>&1); then
+            echo "[Updater] .env обновлён, контейнеры пересозданы ($APP_VERSION)."
+        else
+            echo "[Updater] ⚠️  .env обновлён, но пересоздать контейнеры не вышло."
+            echo "[Updater]     Переменная доедет при следующем обновлении."
+            echo "[Updater]     Проверить: cd $NODE_DIR && APP_VERSION=$APP_VERSION docker compose up -d"
+        fi
     fi
 
     # 4.6 ПОДПИСКА НАРУЖУ

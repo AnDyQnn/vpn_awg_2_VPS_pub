@@ -173,6 +173,18 @@ else
     APP_VERSION="dev"
 fi
 export APP_VERSION
+
+# Кладём версию в .env, а не только в это окружение. Теги образов в compose —
+# `${APP_VERSION:-dev}`, и без переменной любой другой вызов `docker compose`
+# (демон обновлений, сторож, руки) соберёт себе `:dev` с нуля вместо того, чтобы
+# взять готовый образ. Файл гитом не отслеживается — выкладка его не затрёт.
+if [ -f "$NODE_DIR/.env" ]; then
+    if grep -q "^APP_VERSION=" "$NODE_DIR/.env"; then
+        sed -i "s|^APP_VERSION=.*|APP_VERSION=$APP_VERSION|" "$NODE_DIR/.env"
+    else
+        echo "APP_VERSION=$APP_VERSION" >> "$NODE_DIR/.env"
+    fi
+fi
 echo "[Deploy] Версия проекта: $APP_VERSION (тег образов)"
 
 # 3e. Демон хоста крутит СТАРЫЙ файл скрипта: git его заменил, но процесс уже

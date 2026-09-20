@@ -17,7 +17,7 @@ from utils import (
     request_env_change,
     api_session,
     BOT_TOKEN, ADMIN_ID, WG_API_URL, DE_AGENT_URL, escape_md, state_data, stop_bg_tasks, deregister_menu,
-    safe_delete, get_current_version, broadcast_message, extract_tg_id, check_admin, sanitize_name,
+    safe_delete, drop_screen, get_current_version, broadcast_message, extract_tg_id, check_admin, sanitize_name,
     env_change_applied,
     analyze_resource, CONFIGS_DIR
 )
@@ -26,7 +26,7 @@ from backup_manager import fetch_de_backup, test_restore
 from ui import main_menu
 from monitor import (
     alert_loop, cleanup_peers, stats_collector_loop, self_healing_loop,
-    de_self_healing_loop, midnight_alert_cleanup_loop,
+    de_self_healing_loop,
     expiration_loop, inactivity_loop, weekly_report_loop, log_cleanup_loop,
     auto_reboot_loop, scheduled_update_loop, auto_update_check_loop, resource_monitor_loop,
     routing_upgrade_loop, bypass_reresolve_loop, run_bypass_check_handler, bypass_notify_now_handler,
@@ -37,6 +37,7 @@ from monitor import (
     xray_connect_watch_loop
 )
 from billing import reminder_loop as billing_reminder_loop
+import chat_cleanup
 from wireguard_manager import pause_peer, resume_peer
 
 from handlers_client import (
@@ -96,6 +97,8 @@ from handlers_hits import (
     hit_find_request, hit_find_entered,
     keep_screen as hits_keep_screen, keep_set as hits_keep_set,
     keep_now as hits_keep_now,
+    notify_screen as hits_notify_screen, notify_set as hits_notify_set,
+    notify_toggle as hits_notify_toggle, drop_seen as hits_drop_seen,
 )
 from handlers_routes import (
     routes_menu, routes_ask, routes_delete, routes_show, handle_route_input,
@@ -437,6 +440,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     state = context.user_data.get("state")
     chat_id = update.message.chat_id
     user_msg_id = update.message.message_id
+
+    # Экран, который просил что-то вписать, убираем: просьба выполнена. Иначе
+    # он остаётся висеть над ответом, и в чате оказываются два меню — мёртвое и
+    # живое. Через несколько таких шагов понять, какое настоящее, нельзя.
+    #
+    # Только когда ждали ввода: без этого любое случайное сообщение в чат
+    # сносило бы открытое меню.
+    if state:
+        await drop_screen(context)
 
     # Ввод по ролям (название роли, адрес доступа) — только для админа.
     if state in ("awaiting_role_name", "awaiting_role_grant"):
@@ -1236,7 +1248,16 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Попытки на закрытое. Длинные префиксы раньше коротких.
     if data == "hit_list": await hits_screen(update, context); return
     if data == "hit_seen_all": await hits_seen_all(update, context); return
+    if data == "hit_drop_seen": await hits_drop_seen(update, context); return
     if data == "hit_find": await hit_find_request(update, context); return
+    if data == "chat_clean": await chat_cleanup.screen(update, context); return
+    if data == "chat_clean_now": await chat_cleanup.clean_now(update, context); return
+    if data == "chat_clean_toggle": await chat_cleanup.toggle(update, context); return
+    if data == "hit_notify": await hits_notify_screen(update, context); return
+    if data == "hit_notify_off": await hits_notify_toggle(update, context); return
+    if data.startswith("hit_notify_"):
+        await hits_notify_set(update, context,
+                              int(data.rsplit("_", 1)[1])); return
     if data == "hit_keep": await hits_keep_screen(update, context); return
     if data == "hit_keep_now": await hits_keep_now(update, context); return
     if data.startswith("hit_keep_seen_"):
@@ -1716,7 +1737,11 @@ async def post_init(application):
         asyncio.create_task(resource_monitor_loop(application)),
         asyncio.create_task(routing_upgrade_loop(application)),
         asyncio.create_task(bypass_reresolve_loop(application)),
-        asyncio.create_task(midnight_alert_cleanup_loop(application)),
+        # Чистка чата в конце дня. Прежняя знала только про тревоги — а мимо
+        # неё владельцу пишут ещё десяток мест напрямую и десятки ответов на
+        # его же нажатия. Эта знает про всё, потому что считает не места, а
+        # отправленные сообщения.
+        asyncio.create_task(chat_cleanup.loop(application, ADMIN_ID)),
         asyncio.create_task(load_collector_loop(application)),
         asyncio.create_task(retire_watch_loop(application)),
         asyncio.create_task(migration_watch_loop(application)),
@@ -1761,6 +1786,15 @@ if __name__ == "__main__":
             print("Подписи кнопок: задано своими именами — %d" % _n)
     except Exception as _e:
         print("Подписи кнопок: не применены (%s) — работаем как в коде" % _e)
+    # Слежение за тем, что бот шлёт владельцу: без него чистка в конце дня не
+    # узнает про сообщения, посланные мимо помощника тревог, — то есть про
+    # большую их часть.
+    try:
+        import chat_cleanup
+        if chat_cleanup.apply(ADMIN_ID):
+            print("Чистка чата: слежу за сообщениями владельцу")
+    except Exception as _e:
+        print("Чистка чата: слежение не включилось (%s)" % _e)
     loop = asyncio.get_event_loop()
     loop.run_until_complete(db.connect())
     app = ApplicationBuilder().token(BOT_TOKEN).post_init(post_init).build()

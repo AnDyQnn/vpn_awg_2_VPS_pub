@@ -66,6 +66,27 @@ async def main():
               "регистр и дефис не важны")
 
     print()
+    print("=== «удалить разобранные» убирает их СЕЙЧАС, не по сроку ===")
+    # Отдельная кнопка от уборки по сроку, и это не дублирование. Нажатие на
+    # «убрать старое» в день, когда всё свежее, не делает ничего — и выглядит
+    # как сломанная кнопка. Владелец же хотел убрать со стола то, что посмотрел.
+    #
+    # Своя запись, а не общая: удаление разобранных не должно унести то, на чём
+    # стоят проверки ниже.
+    await db.add_filter_hit(now, None, "Разобранный", "10.13.13.91", None,
+                            "ref-drop.example", "порно", "DR0P-0001")
+    row = await db.find_filter_hit("DR0P-0001")
+    await db.mark_filter_hit_seen(row["id"])
+    before_new = await db.count_filter_hits(only_new=True)
+
+    gone_now = await db.delete_seen_hits()
+    check("разобранное удалено сразу", gone_now >= 1, "убрано %d" % gone_now)
+    check("самой записи больше нет",
+          await db.find_filter_hit("DR0P-0001") is None, True)
+    check("неразобранное не тронуто",
+          await db.count_filter_hits(only_new=True), before_new)
+
+    print()
     print("=== сроки хранения ===")
     check("разобранные живут не вечно",
           0 < db.HITS_KEEP_SEEN_DAYS <= 60,

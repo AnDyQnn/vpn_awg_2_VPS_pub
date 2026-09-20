@@ -369,6 +369,15 @@ async def show_screen(query, context, text, reply_markup=None, parse_mode=None,
     msg = getattr(query, "message", None)
     is_media = bool(getattr(msg, "photo", None) or getattr(msg, "document", None))
 
+    # Запоминаем, где сейчас экран. Нужно ровно для одного: когда человек в
+    # ответ на просьбу что-то впишет, прежний экран надо убрать, иначе в чате
+    # останутся два меню — мёртвое и живое.
+    try:
+        if msg is not None:
+            context.user_data["screen_at"] = (msg.chat_id, msg.message_id)
+    except Exception:
+        pass
+
     if not is_media:
         try:
             return await query.edit_message_text(
@@ -387,10 +396,36 @@ async def show_screen(query, context, text, reply_markup=None, parse_mode=None,
             await context.bot.delete_message(chat_id=chat_id, message_id=msg.message_id)
         except Exception:
             pass
-    return await context.bot.send_message(chat_id=chat_id, text=text,
+    sent = await context.bot.send_message(chat_id=chat_id, text=text,
                                           reply_markup=reply_markup,
                                           parse_mode=parse_mode,
                                           disable_web_page_preview=disable_preview)
+    try:
+        context.user_data["screen_at"] = (chat_id, sent.message_id)
+    except Exception:
+        pass
+    return sent
+
+
+async def drop_screen(context):
+    """Убирает экран, который просил что-то вписать.
+
+    Зовётся, когда текст уже пришёл: просьба выполнена, и висеть ей больше
+    незачем. Молчит, если экрана нет или он уже убран, — это уборка, а не
+    действие, и падать из-за неё нельзя.
+    """
+    at = None
+    try:
+        at = context.user_data.pop("screen_at", None)
+    except Exception:
+        pass
+    if not at:
+        return False
+    try:
+        await context.bot.delete_message(chat_id=at[0], message_id=at[1])
+        return True
+    except Exception:
+        return False
 
 
 async def send_copyable(bot, chat_id, text, **kwargs):

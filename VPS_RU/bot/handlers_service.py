@@ -287,6 +287,10 @@ async def service_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "📨 Не подключились" + (f" · {len(stuck)}" if stuck else ""),
             callback_data="deliv_list")],
     ]
+    # Чистка чата — рядом с поддержкой: обе про то, как выглядит переписка, а
+    # не про то, как работает сеть.
+    keyboard.append([InlineKeyboardButton("🧹 Чистка чата",
+                                          callback_data="chat_clean")])
     if not tickets:
         keyboard.append([InlineKeyboardButton("🆘 Поддержка", callback_data="support_admin_menu")])
     keyboard.append([InlineKeyboardButton("🔙 Главное меню", callback_data="back_to_main")])
