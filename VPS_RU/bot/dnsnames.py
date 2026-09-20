@@ -5,6 +5,11 @@
 наружу эти имена не существуют. Поэтому придумывать их можно свободно — ни
 регистрировать, ни оплачивать нечего.
 
+Одна оговорка появляется вместе со своим доменом: имена живут в нём же, и
+заведённое внутри «www» закроет настоящий «www» этого домена — для всех, кто в
+туннеле. Это свойство любого внутреннего DNS, а не наша поломка; лечится тем,
+что вещи называют так, как их называют вслух: «дом», «печать», «нас».
+
 Главное решение: имя привязывается **к человеку**, а не к цифрам. Адрес
 подставляется живым при каждой раскладке, поэтому перевыпуск ключа, переезд на
 новый ключ сервера или смена адреса имя не ломают — на узел просто приедет
@@ -14,35 +19,60 @@
 import re
 
 from database import db
-from utils import WG_API_URL, api_session
+from utils import WG_API_URL, api_session, public_domain
 
-# Зона, в которой живут наши имена. Короткая и не пересекается с настоящими
-# доменами интернета, поэтому запрос на неё никогда не уйдёт наверх.
-ZONE = "vpn"
+# Зона, в которой живут наши имена, когда своего домена у узла ещё нет.
+#
+# Она выдуманная, и это её единственная проблема: выдуманную зону не подтвердит
+# ни один удостоверяющий центр, поэтому всё наше собственное — страница отказа,
+# страница «доступ закрыт», выдача ключей — жило по имени, на которое нельзя
+# получить настоящий сертификат. Браузер ругался на каждую нашу же страницу.
+LOCAL_ZONE = "vpn"
+
+
+def zone() -> str:
+    """Зона, в которой живут имена ПРЯМО СЕЙЧАС.
+
+    Есть у узла своё имя — имена живут в нём: «дом» становится
+    «дом.example.ru». Нет — работаем в местной зоне, как и раньше.
+
+    Зона одна на всю установку. Держать обе сразу было бы хуже всего: одно и то
+    же устройство отзывалось бы на два имени, правила доступа ссылались бы на
+    одно из них наугад, и однажды выяснилось бы, что доступ открыт не туда.
+    """
+    return public_domain() or LOCAL_ZONE
+
+
+# Оглядка на прошлое: под каким именем зона была при прошлой раскладке. Нужна
+# затем, чтобы заметить переезд и увести имена за собой.
+ZONE_KEY = "dns_zone"
 
 # Имя из букв, цифр и дефиса. Русские буквы разрешены: до DNS они доезжают
 # в punycode, и переводим их мы сами — человеку это знать незачем.
 _ALLOWED = re.compile(r"^[a-zа-яё0-9][a-zа-яё0-9-]{0,30}$", re.IGNORECASE)
 
 
-def normalize(raw: str):
+def normalize(raw: str, in_zone: str = None):
     """Приводит введённое человеком к полному имени.
 
     Возвращает (имя, ошибка). Голое слово дополняется зоной: человек пишет
-    «дом», получает «дом.vpn»."""
+    «дом», получает «дом.example.ru».
+
+    Зону отрезаем ПЕРЕД проверкой на точки, а не после: в настоящем домене
+    точки есть, и прежний порядок отвергал бы собственное же имя.
+    """
+    z = in_zone or zone()
     name = (raw or "").strip().lower().rstrip(".")
     if not name:
         return None, "Пустое имя"
-    if name.endswith("." + ZONE):
-        head = name[: -len(ZONE) - 1]
-    elif "." in name:
-        return None, f"Точки в имени не нужны — пишите одно слово, зона «.{ZONE}» добавится сама"
-    else:
-        head = name
+    head = name[: -len(z) - 1] if name.endswith("." + z) else name
+    if "." in head:
+        return None, (f"Точки в имени не нужны — пишите одно слово, "
+                      f"зона «.{z}» добавится сама")
     if not _ALLOWED.match(head):
         return None, ("Имя может состоять из букв, цифр и дефиса, "
                       "до 31 знака, и начинаться с буквы или цифры")
-    return f"{head}.{ZONE}", None
+    return f"{head}.{z}", None
 
 
 def to_punycode(name: str) -> str:
@@ -60,8 +90,13 @@ def to_punycode(name: str) -> str:
 # Служебное имя самого узла: на нём живёт страница отказа, на которую
 # уводятся закрытые сайты и сервисы. Заводится само — иначе страница так и
 # осталась бы адресом с цифрами, который никто не помнит.
-NODE_NAME = f"закрыто.{ZONE}"
+NODE_HEAD = "закрыто"
 NODE_IP = "10.13.13.1"
+
+
+def default_node_name() -> str:
+    """Как называется служебное имя, пока его не переименовали."""
+    return f"{NODE_HEAD}.{zone()}"
 
 # Название служебного имени владелец может сменить, поэтому текущее живёт в
 # настройках, а не в коде. Иначе переименование выглядело бы как создание
@@ -72,7 +107,7 @@ NODE_NAME_DONE = "dns_node_name_created"
 
 async def node_name():
     """Как сейчас называется служебное имя."""
-    return (await db.get_setting(NODE_NAME_KEY)) or NODE_NAME
+    return (await db.get_setting(NODE_NAME_KEY)) or default_node_name()
 
 
 async def remember_node_name(name):
@@ -88,11 +123,73 @@ async def ensure_node_name():
     система не должна."""
     if await db.get_setting(NODE_NAME_DONE):
         return False
-    await db.set_dns_name(NODE_NAME, target_ip=NODE_IP,
+    name = default_node_name()
+    await db.set_dns_name(name, target_ip=NODE_IP,
                           comment="страница отказа на узле")
-    await db.set_setting(NODE_NAME_KEY, NODE_NAME)
+    await db.set_setting(NODE_NAME_KEY, name)
     await db.set_setting(NODE_NAME_DONE, "1")
     return True
+
+
+def _zone_of(name: str) -> str:
+    """Зона имени — всё, что после первого слова. Голова точек не содержит."""
+    return name.split(".", 1)[1] if "." in name else ""
+
+
+async def migrate_zone():
+    """Уводит уже заведённые имена в новую зону.
+
+    Зона меняется редко — обычно один раз в жизни установки, когда у узла
+    появляется настоящее имя. Но к этому моменту имена уже заведены, на них уже
+    ссылаются правила доступа, и оставить их в прежней зоне значит оставить
+    половину системы говорящей на языке, которого больше нет: человек открывает
+    «дом.example.ru», а правило доступа знает только «дом.vpn».
+
+    Поэтому имена переезжают сами, вместе с правилами. Возвращает
+    (сколько переехало, что не влезло).
+    """
+    new = zone()
+    rows = await db.list_dns_names()
+    old = await db.get_setting(ZONE_KEY)
+    if old is None:
+        # Первый запуск после обновления: прежней отметки нет. Зону узнаём по
+        # самим именам — предполагать «наверняка было .vpn» нельзя, домен могли
+        # задать и раньше, чем мы научились переезжать.
+        zones = {_zone_of(r["name"]) for r in rows} - {""}
+        old = zones.pop() if len(zones) == 1 else new
+    if old == new:
+        await db.set_setting(ZONE_KEY, new)
+        return 0, []
+
+    moved, clashed = [], []
+    for row in rows:
+        if _zone_of(row["name"]) != old:
+            continue
+        head = row["name"][: -len(old) - 1]
+        target = f"{head}.{new}"
+        if await db.get_dns_name(target):
+            # Такое имя в новой зоне уже есть. Молча затереть его значит увести
+            # чей-то доступ на чужое устройство — лучше оставить оба и сказать.
+            clashed.append(row["name"])
+            continue
+        await db.rename_dns_name(row["name"], target)
+        moved.append(target)
+
+    # Служебное имя помним отдельно: иначе оно завелось бы заново в новой зоне
+    # рядом с переехавшим, и на узле их стало бы два.
+    svc = await db.get_setting(NODE_NAME_KEY)
+    if svc and _zone_of(svc) == old:
+        await db.set_setting(NODE_NAME_KEY, svc[: -len(old) - 1] + "." + new)
+
+    await db.set_setting(ZONE_KEY, new)
+    try:
+        await db.log_event("Имена", f"Зона «{old}» → «{new}»: переехало "
+                                    f"{len(moved)}" +
+                           (f", осталось из-за совпадения: "
+                            f"{', '.join(clashed)}" if clashed else ""))
+    except Exception:
+        pass
+    return len(moved), clashed
 
 
 async def resolve_all():
@@ -147,6 +244,9 @@ async def apply_names(reason: str = ""):
     """Отдаёт таблицу узлу. Узел заворачивает DNS туннеля на себя, только пока
     имена есть; когда последнее удалено — заворот снимается сам."""
     try:
+        # Переезд зоны — раньше всего остального: раскладывать на узел надо уже
+        # переехавшие имена, иначе до следующей раскладки в сети живёт старое.
+        moved, clashed = await migrate_zone()
         await ensure_node_name()
         table, skipped = await resolve_all()
     except Exception as e:
@@ -164,6 +264,10 @@ async def apply_names(reason: str = ""):
         return False, f"узел недоступен: {e}"
 
     msg = f"Имена применены: {len(await db.list_dns_names())}"
+    if moved:
+        msg += f", переехало в зону «{zone()}»: {moved}"
+    if clashed:
+        msg += f" (не переехали, имя занято: {', '.join(clashed)})"
     if skipped:
         msg += f" (без адреса пока: {', '.join(skipped)})"
     if reason:

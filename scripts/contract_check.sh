@@ -72,7 +72,25 @@ fi
 # Проверяем ровно то, что делает клиент: рукопожатие с SNI.
 if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx vpn_wireguard; then
     DESTS=$(docker exec vpn_wireguard sh -c         'grep -o "\"dest\": \"[^\"]*\"" /etc/amnezia/amneziawg/xray.json' 2>/dev/null         | sed 's/.*: *"//; s/"$//; s/:443$//' | sort -u)
+    # Имя узла: им же проверяется своя заглушка.
+    SELF_DOMAIN=$(grep -E "^PUBLIC_DOMAIN=" "$NODE_DIR/.env" 2>/dev/null |
+                  tail -1 | cut -d= -f2- | tr -d "\"' \r")
     for D in $DESTS; do
+        # Своя заглушка живёт на петле внутри контейнера — постучаться к ней
+        # снаружи нечем. Зато можно проверить весь путь ровно так, как его
+        # проходит клиент: рукопожатие с именем узла на его же 443, где стоит
+        # Xray и уводит к заглушке. Это даже честнее прямой проверки: она
+        # подтвердила бы, что заглушка жива, но не что до неё доходит.
+        case "$D" in
+            127.0.0.1:*|localhost:*)
+                if [ -z "$SELF_DOMAIN" ]; then
+                    LINES="$LINES
+error|Маска REALITY · свой сайт|выбрана своя заглушка, а имени узла в .env нет"
+                    continue
+                fi
+                D="$SELF_DOMAIN"
+                ;;
+        esac
         OUT=$(docker exec vpn_wireguard sh -c "/usr/local/bin/xray tls ping $D 2>&1" 2>/dev/null)
         SNI=$(printf '%s' "$OUT" | sed -n '/Pinging with SNI/,$p')
         if printf '%s' "$SNI" | grep -q "Handshake failure"; then

@@ -5,9 +5,287 @@ window.FRONTMAP = {
  "generated": true,
  "screens": [
   {
+   "id": "menu",
+   "file": "billing.py",
+   "line": 104,
+   "title": "Список сервисов и ближайшие платежи.",
+   "side": "admin",
+   "kind": "screen",
+   "calls": [
+    "sum",
+    "show_screen",
+    "InlineKeyboardButton",
+    "InlineKeyboardButton",
+    "float",
+    "money",
+    "due_text",
+    "InlineKeyboardButton",
+    "InlineKeyboardMarkup",
+    "escape_md",
+    "money",
+    "period_name",
+    "money",
+    "amount",
+    "money",
+    "amount"
+   ],
+   "buttons": [
+    {
+     "label": "➕ Добавить сервис",
+     "data": "bill_add",
+     "line": 130,
+     "dynamic": false,
+     "to": "add_request",
+     "how": "точно"
+    },
+    {
+     "label": "🔙 Администрирование",
+     "data": "svc_menu",
+     "line": 135,
+     "dynamic": false,
+     "to": "service_menu",
+     "how": "точно"
+    },
+    {
+     "label": "«меняется»",
+     "data": "«меняется»",
+     "line": 132,
+     "dynamic": true,
+     "to": null,
+     "how": null
+    }
+   ]
+  },
+  {
+   "id": "open_service",
+   "file": "billing.py",
+   "line": 141,
+   "title": "Один сервис: всё про него и что с ним можно сделать.",
+   "side": "admin",
+   "kind": "menu",
+   "calls": [
+    "show_screen",
+    "menu",
+    "escape_md",
+    "money",
+    "InlineKeyboardButton",
+    "InlineKeyboardButton",
+    "InlineKeyboardButton",
+    "InlineKeyboardButton",
+    "InlineKeyboardButton",
+    "InlineKeyboardButton",
+    "InlineKeyboardButton",
+    "InlineKeyboardButton",
+    "period_name",
+    "money",
+    "InlineKeyboardMarkup",
+    "amount"
+   ],
+   "buttons": [
+    {
+     "label": "✅ Оплатил — сдвинуть срок",
+     "data": "«меняется»",
+     "line": 168,
+     "dynamic": true,
+     "to": null,
+     "how": null
+    },
+    {
+     "label": "✏️ Цена",
+     "data": "«меняется»",
+     "line": 170,
+     "dynamic": true,
+     "to": null,
+     "how": null
+    },
+    {
+     "label": "✏️ Срок",
+     "data": "«меняется»",
+     "line": 171,
+     "dynamic": true,
+     "to": null,
+     "how": null
+    },
+    {
+     "label": "✏️ Период",
+     "data": "«меняется»",
+     "line": 172,
+     "dynamic": true,
+     "to": null,
+     "how": null
+    },
+    {
+     "label": "✏️ Ссылка",
+     "data": "«меняется»",
+     "line": 173,
+     "dynamic": true,
+     "to": null,
+     "how": null
+    },
+    {
+     "label": "⏸ Отключить / ▶️ Включить",
+     "data": "«меняется»",
+     "line": 174,
+     "dynamic": true,
+     "to": null,
+     "how": null
+    },
+    {
+     "label": "🗑 Удалить",
+     "data": "«меняется»",
+     "line": 176,
+     "dynamic": true,
+     "to": null,
+     "how": null
+    },
+    {
+     "label": "🔙 Счета",
+     "data": "bill_menu",
+     "line": 177,
+     "dynamic": false,
+     "to": "menu",
+     "how": "точно"
+    }
+   ]
+  },
+  {
+   "id": "add_request",
+   "file": "billing.py",
+   "line": 184,
+   "title": "Заводим сервис одной строкой: так быстрее, чем пять вопросов подряд.",
+   "side": "admin",
+   "kind": "screen",
+   "calls": [
+    "show_screen",
+    "InlineKeyboardMarkup",
+    "InlineKeyboardButton"
+   ],
+   "buttons": [
+    {
+     "label": "✖️ Отмена",
+     "data": "bill_menu",
+     "line": 195,
+     "dynamic": false,
+     "to": "menu",
+     "how": "точно"
+    }
+   ]
+  },
+  {
+   "id": "mark_paid",
+   "file": "billing.py",
+   "line": 245,
+   "title": "Сдвигает срок на период вперёд.",
+   "side": "admin",
+   "kind": "screen",
+   "calls": [
+    "next_due",
+    "open_service",
+    "menu"
+   ],
+   "buttons": [
+    {
+     "label": "✅ Оплатил — сдвинуть срок",
+     "data": "«меняется»",
+     "line": 168,
+     "dynamic": true,
+     "to": null,
+     "how": null,
+     "inherited": "open_service"
+    },
+    {
+     "label": "✏️ Цена",
+     "data": "«меняется»",
+     "line": 170,
+     "dynamic": true,
+     "to": null,
+     "how": null,
+     "inherited": "open_service"
+    },
+    {
+     "label": "✏️ Срок",
+     "data": "«меняется»",
+     "line": 171,
+     "dynamic": true,
+     "to": null,
+     "how": null,
+     "inherited": "open_service"
+    },
+    {
+     "label": "✏️ Период",
+     "data": "«меняется»",
+     "line": 172,
+     "dynamic": true,
+     "to": null,
+     "how": null,
+     "inherited": "open_service"
+    },
+    {
+     "label": "✏️ Ссылка",
+     "data": "«меняется»",
+     "line": 173,
+     "dynamic": true,
+     "to": null,
+     "how": null,
+     "inherited": "open_service"
+    },
+    {
+     "label": "⏸ Отключить / ▶️ Включить",
+     "data": "«меняется»",
+     "line": 174,
+     "dynamic": true,
+     "to": null,
+     "how": null,
+     "inherited": "open_service"
+    },
+    {
+     "label": "🗑 Удалить",
+     "data": "«меняется»",
+     "line": 176,
+     "dynamic": true,
+     "to": null,
+     "how": null,
+     "inherited": "open_service"
+    },
+    {
+     "label": "🔙 Счета",
+     "data": "bill_menu",
+     "line": 177,
+     "dynamic": false,
+     "to": "menu",
+     "how": "точно",
+     "inherited": "open_service"
+    }
+   ]
+  },
+  {
+   "id": "check_and_notify",
+   "file": "billing.py",
+   "line": 275,
+   "title": "Один проход. Возвращает, о скольких сервисах напомнили.",
+   "side": "admin",
+   "kind": "screen",
+   "calls": [
+    "InlineKeyboardMarkup",
+    "len",
+    "due_text",
+    "InlineKeyboardButton"
+   ],
+   "buttons": [
+    {
+     "label": "💳 Счета",
+     "data": "bill_menu",
+     "line": 293,
+     "dynamic": false,
+     "to": "menu",
+     "how": "точно"
+    }
+   ]
+  },
+  {
    "id": "notify_users_whats_new",
    "file": "bot.py",
-   "line": 224,
+   "line": 226,
    "title": "Рассылает каждому только накопившееся лично для него.",
    "side": "client",
    "kind": "screen",
@@ -25,7 +303,7 @@ window.FRONTMAP = {
     {
      "label": "❤️ Поддержать проект",
      "data": "client_donate",
-     "line": 258,
+     "line": 260,
      "dynamic": false,
      "to": "client_donate",
      "how": "точно"
@@ -35,12 +313,14 @@ window.FRONTMAP = {
   {
    "id": "handle_message",
    "file": "bot.py",
-   "line": 433,
+   "line": 435,
    "title": "",
    "side": "client",
    "kind": "router",
    "calls": [
     "request_env_change",
+    "request_env_change",
+    "isinstance",
     "check_admin",
     "safe_delete",
     "sanitize_name",
@@ -60,6 +340,10 @@ window.FRONTMAP = {
     "safe_delete",
     "len",
     "env_change_applied",
+    "safe_delete",
+    "env_change_applied",
+    "safe_delete",
+    "safe_delete",
     "client_menu",
     "InlineKeyboardMarkup",
     "client_menu",
@@ -78,6 +362,9 @@ window.FRONTMAP = {
     "default_proto",
     "new_key_screen",
     "extract_tg_id",
+    "InlineKeyboardMarkup",
+    "int",
+    "InlineKeyboardMarkup",
     "InlineKeyboardButton",
     "InlineKeyboardButton",
     "escape_md",
@@ -96,12 +383,15 @@ window.FRONTMAP = {
     "InlineKeyboardButton",
     "render_user_detail",
     "send_client_menu",
+    "float",
     "escape_md",
     "len",
     "escape_md",
     "InlineKeyboardMarkup",
     "InlineKeyboardMarkup",
     "InlineKeyboardMarkup",
+    "InlineKeyboardButton",
+    "InlineKeyboardButton",
     "escape_md",
     "escape_md",
     "escape_md",
@@ -112,13 +402,14 @@ window.FRONTMAP = {
     "InlineKeyboardMarkup",
     "InlineKeyboardButton",
     "escape_md",
+    "str",
     "escape_md"
    ],
    "buttons": [
     {
      "label": "🌐 К списку исключений",
      "data": "bypass_list",
-     "line": 675,
+     "line": 777,
      "dynamic": false,
      "to": "bypass_list_handler",
      "how": "точно"
@@ -126,7 +417,7 @@ window.FRONTMAP = {
     {
      "label": "🌐 К списку исключений",
      "data": "bypass_list",
-     "line": 657,
+     "line": 759,
      "dynamic": false,
      "to": "bypass_list_handler",
      "how": "точно"
@@ -134,7 +425,7 @@ window.FRONTMAP = {
     {
      "label": "🌐 К списку исключений",
      "data": "bypass_list",
-     "line": 665,
+     "line": 767,
      "dynamic": false,
      "to": "bypass_list_handler",
      "how": "точно"
@@ -142,7 +433,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Главное меню",
      "data": "back_to_main",
-     "line": 694,
+     "line": 796,
      "dynamic": false,
      "to": "return_to_main_menu",
      "how": "точно"
@@ -150,7 +441,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 К списку обращений",
      "data": "support_admin_menu",
-     "line": 729,
+     "line": 831,
      "dynamic": false,
      "to": "support_admin_menu",
      "how": "точно"
@@ -158,7 +449,7 @@ window.FRONTMAP = {
     {
      "label": "⏩ Пропустить/Отмена",
      "data": "skip_tg_link",
-     "line": 772,
+     "line": 874,
      "dynamic": false,
      "to": "finish_key_creation",
      "how": "точно"
@@ -166,7 +457,7 @@ window.FRONTMAP = {
     {
      "label": "✅ Добавить в исключения",
      "data": "bypass_addreq_…",
-     "line": 604,
+     "line": 706,
      "dynamic": false,
      "to": "bypass_add_request_handler",
      "how": "по приставке «bypass_addreq_»"
@@ -174,7 +465,7 @@ window.FRONTMAP = {
     {
      "label": "❌ Отклонить",
      "data": "bypass_rejreq_…",
-     "line": 605,
+     "line": 707,
      "dynamic": false,
      "to": "bypass_add_request_handler",
      "how": "по приставке «bypass_rejreq_»"
@@ -182,15 +473,31 @@ window.FRONTMAP = {
     {
      "label": "🔙 Отмена",
      "data": "back_to_main",
-     "line": 706,
+     "line": 808,
      "dynamic": false,
      "to": "return_to_main_menu",
      "how": "точно"
     },
     {
+     "label": "💳 Счета",
+     "data": "bill_menu",
+     "line": 588,
+     "dynamic": false,
+     "to": "menu",
+     "how": "точно"
+    },
+    {
+     "label": "💳 К сервису",
+     "data": "«меняется»",
+     "line": 624,
+     "dynamic": true,
+     "to": null,
+     "how": null
+    },
+    {
      "label": "🔙 В меню",
      "data": "back_to_main",
-     "line": 541,
+     "line": 643,
      "dynamic": false,
      "to": "return_to_main_menu",
      "how": "точно"
@@ -200,7 +507,7 @@ window.FRONTMAP = {
   {
    "id": "button_router",
    "file": "bot.py",
-   "line": 809,
+   "line": 911,
    "title": "",
    "side": "admin",
    "kind": "router",
@@ -274,6 +581,7 @@ window.FRONTMAP = {
     "protocols_menu",
     "awg_screen",
     "xray_screen",
+    "switch_do",
     "switch_do",
     "switch_do",
     "switch_do",
@@ -407,6 +715,7 @@ window.FRONTMAP = {
     "action_resend_config",
     "return_to_main_menu",
     "users_list_menu",
+    "show_screen",
     "int",
     "int",
     "int",
@@ -455,8 +764,11 @@ window.FRONTMAP = {
     "InlineKeyboardMarkup",
     "InlineKeyboardMarkup",
     "InlineKeyboardMarkup",
+    "InlineKeyboardMarkup",
     "len",
     "InlineKeyboardMarkup",
+    "len",
+    "InlineKeyboardButton",
     "InlineKeyboardButton",
     "InlineKeyboardButton"
    ],
@@ -464,7 +776,7 @@ window.FRONTMAP = {
     {
      "label": "✍️ Своя рассылка (свой текст)",
      "data": "broadcast_custom",
-     "line": 1156,
+     "line": 1301,
      "dynamic": false,
      "to": "шаг: broadcast_custom",
      "how": "точно"
@@ -472,7 +784,7 @@ window.FRONTMAP = {
     {
      "label": "⚠️ Стандартное: тех. работы",
      "data": "do_maintenance_warn",
-     "line": 1157,
+     "line": 1302,
      "dynamic": false,
      "to": "broadcast_message",
      "how": "точно"
@@ -480,7 +792,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Отмена",
      "data": "back_to_main",
-     "line": 1158,
+     "line": 1303,
      "dynamic": false,
      "to": "return_to_main_menu",
      "how": "точно"
@@ -488,7 +800,7 @@ window.FRONTMAP = {
     {
      "label": "⏩ Пропустить",
      "data": "skip_tg_link",
-     "line": 1218,
+     "line": 1363,
      "dynamic": false,
      "to": "finish_key_creation",
      "how": "точно"
@@ -496,7 +808,7 @@ window.FRONTMAP = {
     {
      "label": "⏩ Пропустить",
      "data": "skip_tg_link",
-     "line": 1227,
+     "line": 1372,
      "dynamic": false,
      "to": "finish_key_creation",
      "how": "точно"
@@ -504,7 +816,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Отмена",
      "data": "user_detail_…",
-     "line": 1238,
+     "line": 1383,
      "dynamic": false,
      "to": "user_detail_menu",
      "how": "по приставке «user_detail_»"
@@ -512,7 +824,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Отмена",
      "data": "user_detail_…",
-     "line": 1250,
+     "line": 1395,
      "dynamic": false,
      "to": "user_detail_menu",
      "how": "по приставке «user_detail_»"
@@ -520,7 +832,7 @@ window.FRONTMAP = {
     {
      "label": "❌ …",
      "data": "do_unlink_…_…",
-     "line": 1259,
+     "line": 1404,
      "dynamic": false,
      "to": "user_detail_menu",
      "how": "по приставке «do_unlink_»"
@@ -528,7 +840,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Назад",
      "data": "user_detail_…",
-     "line": 1260,
+     "line": 1405,
      "dynamic": false,
      "to": "user_detail_menu",
      "how": "по приставке «user_detail_»"
@@ -536,7 +848,7 @@ window.FRONTMAP = {
     {
      "label": "🌍 Классический DNS (1.1.1.1)",
      "data": "set_dns_classic",
-     "line": 1212,
+     "line": 1357,
      "dynamic": false,
      "to": "шаг: set_dns_",
      "how": "по приставке «set_dns_»"
@@ -544,7 +856,7 @@ window.FRONTMAP = {
     {
      "label": "🛡 AdBlock DNS (Без рекламы)",
      "data": "set_dns_adblock",
-     "line": 1212,
+     "line": 1357,
      "dynamic": false,
      "to": "шаг: set_dns_",
      "how": "по приставке «set_dns_»"
@@ -552,7 +864,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Отмена",
      "data": "back_to_main",
-     "line": 1212,
+     "line": 1357,
      "dynamic": false,
      "to": "return_to_main_menu",
      "how": "точно"
@@ -560,7 +872,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Отмена",
      "data": "back_to_main",
-     "line": 1169,
+     "line": 1314,
      "dynamic": false,
      "to": "return_to_main_menu",
      "how": "точно"
@@ -568,10 +880,18 @@ window.FRONTMAP = {
     {
      "label": "🔙 В меню",
      "data": "back_to_main",
-     "line": 1175,
+     "line": 1320,
      "dynamic": false,
      "to": "return_to_main_menu",
      "how": "точно"
+    },
+    {
+     "label": "✖️ Отмена",
+     "data": "«меняется»",
+     "line": 1032,
+     "dynamic": true,
+     "to": null,
+     "how": null
     }
    ]
   },
@@ -2389,7 +2709,7 @@ window.FRONTMAP = {
     {
      "label": "🛡 Панель управления",
      "data": "back_to_main",
-     "line": 435,
+     "line": 466,
      "dynamic": false,
      "to": "return_to_main_menu",
      "how": "точно",
@@ -2398,7 +2718,7 @@ window.FRONTMAP = {
     {
      "label": "🏠 Личный кабинет",
      "data": "client_menu",
-     "line": 437,
+     "line": 468,
      "dynamic": false,
      "to": "client_menu",
      "how": "точно",
@@ -2425,7 +2745,7 @@ window.FRONTMAP = {
     {
      "label": "🛡 Панель управления",
      "data": "back_to_main",
-     "line": 435,
+     "line": 466,
      "dynamic": false,
      "to": "return_to_main_menu",
      "how": "точно",
@@ -2434,7 +2754,7 @@ window.FRONTMAP = {
     {
      "label": "🏠 Личный кабинет",
      "data": "client_menu",
-     "line": 437,
+     "line": 468,
      "dynamic": false,
      "to": "client_menu",
      "how": "точно",
@@ -3410,7 +3730,7 @@ window.FRONTMAP = {
     {
      "label": "«меняется»",
      "data": "«меняется»",
-     "line": 412,
+     "line": 443,
      "dynamic": true,
      "to": null,
      "how": null,
@@ -3419,7 +3739,7 @@ window.FRONTMAP = {
     {
      "label": "🏠 Личный кабинет",
      "data": "client_menu",
-     "line": 415,
+     "line": 446,
      "dynamic": false,
      "to": "client_menu",
      "how": "точно",
@@ -3428,7 +3748,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Главное меню",
      "data": "back_to_main",
-     "line": 418,
+     "line": 449,
      "dynamic": false,
      "to": "return_to_main_menu",
      "how": "точно",
@@ -3899,7 +4219,7 @@ window.FRONTMAP = {
     {
      "label": "«меняется»",
      "data": "client_plat_…_…",
-     "line": 503,
+     "line": 579,
      "dynamic": true,
      "to": "client_platform_handler",
      "how": "по приставке «client_plat_»",
@@ -3908,7 +4228,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Назад",
      "data": "«меняется»",
-     "line": 510,
+     "line": 586,
      "dynamic": true,
      "to": null,
      "how": null,
@@ -6495,13 +6815,22 @@ window.FRONTMAP = {
     "InlineKeyboardButton",
     "InlineKeyboardButton",
     "InlineKeyboardButton",
+    "InlineKeyboardButton",
     "InlineKeyboardMarkup"
    ],
    "buttons": [
     {
+     "label": "🌐 Задать своё имя",
+     "data": "psub_domain",
+     "line": 154,
+     "dynamic": false,
+     "to": "domain_screen",
+     "how": "точно"
+    },
+    {
      "label": "🔙 Администрирование",
      "data": "svc_menu",
-     "line": 153,
+     "line": 157,
      "dynamic": false,
      "to": "service_menu",
      "how": "точно"
@@ -6535,7 +6864,7 @@ window.FRONTMAP = {
   {
    "id": "turn_on",
    "file": "handlers_pubsub.py",
-   "line": 161,
+   "line": 165,
    "title": "Открыть обратно. Это возврат к обычному состоянию, поэтому без",
    "side": "admin",
    "kind": "screen",
@@ -6547,7 +6876,7 @@ window.FRONTMAP = {
     {
      "label": "🔄 Обновить",
      "data": "psub_menu",
-     "line": 220,
+     "line": 224,
      "dynamic": false,
      "to": "screen",
      "how": "точно",
@@ -6558,7 +6887,7 @@ window.FRONTMAP = {
   {
    "id": "turn_off",
    "file": "handlers_pubsub.py",
-   "line": 172,
+   "line": 176,
    "title": "Закрыть. Здесь спросить и надо: это выключает автообновление у всех.",
    "side": "admin",
    "kind": "screen",
@@ -6574,7 +6903,7 @@ window.FRONTMAP = {
     {
      "label": "🔒 Да, закрыть",
      "data": "psub_off",
-     "line": 188,
+     "line": 192,
      "dynamic": false,
      "to": "turn_off",
      "how": "точно"
@@ -6582,7 +6911,7 @@ window.FRONTMAP = {
     {
      "label": "✖️ Отмена",
      "data": "psub_menu",
-     "line": 189,
+     "line": 193,
      "dynamic": false,
      "to": "screen",
      "how": "точно"
@@ -6592,7 +6921,7 @@ window.FRONTMAP = {
   {
    "id": "renew_now",
    "file": "handlers_pubsub.py",
-   "line": 200,
+   "line": 204,
    "title": "Продлить руками. Тот же путь, которым ходит таймер.",
    "side": "admin",
    "kind": "screen",
@@ -6604,7 +6933,7 @@ window.FRONTMAP = {
     {
      "label": "🔄 Обновить",
      "data": "psub_menu",
-     "line": 220,
+     "line": 224,
      "dynamic": false,
      "to": "screen",
      "how": "точно",
@@ -6615,7 +6944,7 @@ window.FRONTMAP = {
   {
    "id": "_wait_screen",
    "file": "handlers_pubsub.py",
-   "line": 210,
+   "line": 214,
    "title": "Ждём хост и показываем, чем кончилось.",
    "side": "admin",
    "kind": "menu",
@@ -6630,7 +6959,97 @@ window.FRONTMAP = {
     {
      "label": "🔄 Обновить",
      "data": "psub_menu",
-     "line": 220,
+     "line": 224,
+     "dynamic": false,
+     "to": "screen",
+     "how": "точно"
+    }
+   ]
+  },
+  {
+   "id": "domain_screen",
+   "file": "handlers_pubsub.py",
+   "line": 275,
+   "title": "Что даёт своё имя и как его задать.",
+   "side": "admin",
+   "kind": "screen",
+   "calls": [
+    "current_domain",
+    "show_screen",
+    "InlineKeyboardButton",
+    "InlineKeyboardButton",
+    "InlineKeyboardButton",
+    "InlineKeyboardMarkup"
+   ],
+   "buttons": [
+    {
+     "label": "✏️ Задать имя",
+     "data": "psub_domain_set",
+     "line": 306,
+     "dynamic": false,
+     "to": "domain_ask",
+     "how": "точно"
+    },
+    {
+     "label": "🔙 Подписка наружу",
+     "data": "psub_menu",
+     "line": 310,
+     "dynamic": false,
+     "to": "screen",
+     "how": "точно"
+    },
+    {
+     "label": "🗑 Убрать имя",
+     "data": "psub_domain_off",
+     "line": 308,
+     "dynamic": false,
+     "to": "domain_off",
+     "how": "точно"
+    }
+   ]
+  },
+  {
+   "id": "domain_ask",
+   "file": "handlers_pubsub.py",
+   "line": 317,
+   "title": "Просит вписать имя.",
+   "side": "admin",
+   "kind": "screen",
+   "calls": [
+    "show_screen",
+    "InlineKeyboardMarkup",
+    "InlineKeyboardButton"
+   ],
+   "buttons": [
+    {
+     "label": "✖️ Отмена",
+     "data": "psub_domain",
+     "line": 326,
+     "dynamic": false,
+     "to": "domain_screen",
+     "how": "точно"
+    }
+   ]
+  },
+  {
+   "id": "domain_off",
+   "file": "handlers_pubsub.py",
+   "line": 330,
+   "title": "Убирает имя: возвращаемся на адрес.",
+   "side": "admin",
+   "kind": "screen",
+   "calls": [
+    "request_env_change",
+    "env_change_applied",
+    "show_screen",
+    "InlineKeyboardMarkup",
+    "InlineKeyboardButton"
+   ],
+   "buttons": [
+    {
+     "label": "🔙 Подписка наружу",
+     "data": "psub_menu",
+     "line": 346,
      "dynamic": false,
      "to": "screen",
      "how": "точно"
@@ -7716,6 +8135,7 @@ window.FRONTMAP = {
     "InlineKeyboardButton",
     "InlineKeyboardButton",
     "InlineKeyboardButton",
+    "InlineKeyboardButton",
     "InlineKeyboardMarkup",
     "sum",
     "len",
@@ -7810,9 +8230,17 @@ window.FRONTMAP = {
      "how": "точно"
     },
     {
+     "label": "🧾 Счета за сервера",
+     "data": "bill_menu",
+     "line": 281,
+     "dynamic": false,
+     "to": "menu",
+     "how": "точно"
+    },
+    {
      "label": "📋 Ждут решения · … / ",
      "data": "kd_list",
-     "line": 279,
+     "line": 283,
      "dynamic": false,
      "to": "pending_screen",
      "how": "точно"
@@ -7820,7 +8248,7 @@ window.FRONTMAP = {
     {
      "label": "📨 Не подключились · … / ",
      "data": "deliv_list",
-     "line": 282,
+     "line": 286,
      "dynamic": false,
      "to": "delivery_screen",
      "how": "точно"
@@ -7828,7 +8256,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Главное меню",
      "data": "back_to_main",
-     "line": 288,
+     "line": 292,
      "dynamic": false,
      "to": "return_to_main_menu",
      "how": "точно"
@@ -7844,7 +8272,7 @@ window.FRONTMAP = {
     {
      "label": "🆘 Поддержка",
      "data": "support_admin_menu",
-     "line": 287,
+     "line": 291,
      "dynamic": false,
      "to": "support_admin_menu",
      "how": "точно"
@@ -7854,7 +8282,7 @@ window.FRONTMAP = {
   {
    "id": "toggle_mode",
    "file": "handlers_service.py",
-   "line": 295,
+   "line": 299,
    "title": "Переключение наблюдение ↔ ограничение. Отдельным экраном с подтверждением:",
    "side": "admin",
    "kind": "screen",
@@ -7874,7 +8302,7 @@ window.FRONTMAP = {
     {
      "label": "✅ Включить",
      "data": "svc_mode_on",
-     "line": 320,
+     "line": 324,
      "dynamic": false,
      "to": "set_mode",
      "how": "точно"
@@ -7882,7 +8310,7 @@ window.FRONTMAP = {
     {
      "label": "✖️ Отмена",
      "data": "svc_menu",
-     "line": 321,
+     "line": 325,
      "dynamic": false,
      "to": "service_menu",
      "how": "точно"
@@ -7890,7 +8318,7 @@ window.FRONTMAP = {
     {
      "label": "✅ Вернуть наблюдение",
      "data": "svc_mode_off",
-     "line": 326,
+     "line": 330,
      "dynamic": false,
      "to": "set_mode",
      "how": "точно"
@@ -7898,7 +8326,7 @@ window.FRONTMAP = {
     {
      "label": "✖️ Отмена",
      "data": "svc_menu",
-     "line": 327,
+     "line": 331,
      "dynamic": false,
      "to": "service_menu",
      "how": "точно"
@@ -7908,7 +8336,7 @@ window.FRONTMAP = {
   {
    "id": "set_mode",
    "file": "handlers_service.py",
-   "line": 333,
+   "line": 337,
    "title": "",
    "side": "admin",
    "kind": "screen",
@@ -8007,9 +8435,18 @@ window.FRONTMAP = {
      "inherited": "service_menu"
     },
     {
+     "label": "🧾 Счета за сервера",
+     "data": "bill_menu",
+     "line": 281,
+     "dynamic": false,
+     "to": "menu",
+     "how": "точно",
+     "inherited": "service_menu"
+    },
+    {
      "label": "📋 Ждут решения · … / ",
      "data": "kd_list",
-     "line": 279,
+     "line": 283,
      "dynamic": false,
      "to": "pending_screen",
      "how": "точно",
@@ -8018,7 +8455,7 @@ window.FRONTMAP = {
     {
      "label": "📨 Не подключились · … / ",
      "data": "deliv_list",
-     "line": 282,
+     "line": 286,
      "dynamic": false,
      "to": "delivery_screen",
      "how": "точно",
@@ -8027,7 +8464,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Главное меню",
      "data": "back_to_main",
-     "line": 288,
+     "line": 292,
      "dynamic": false,
      "to": "return_to_main_menu",
      "how": "точно",
@@ -8045,7 +8482,7 @@ window.FRONTMAP = {
     {
      "label": "🆘 Поддержка",
      "data": "support_admin_menu",
-     "line": 287,
+     "line": 291,
      "dynamic": false,
      "to": "support_admin_menu",
      "how": "точно",
@@ -8056,7 +8493,7 @@ window.FRONTMAP = {
   {
    "id": "load_screen",
    "file": "handlers_service.py",
-   "line": 342,
+   "line": 346,
    "title": "Кто нагружал сервер за сутки. Не «пробития порога», а понятные цифры.",
    "side": "admin",
    "kind": "menu",
@@ -8081,7 +8518,7 @@ window.FRONTMAP = {
     {
      "label": "📈 График нагрузки",
      "data": "svc_chart",
-     "line": 392,
+     "line": 396,
      "dynamic": false,
      "to": "load_chart",
      "how": "точно"
@@ -8089,7 +8526,7 @@ window.FRONTMAP = {
     {
      "label": "⚖️ Лимиты",
      "data": "svc_limits",
-     "line": 393,
+     "line": 397,
      "dynamic": false,
      "to": "limits_screen",
      "how": "точно"
@@ -8097,7 +8534,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Назад",
      "data": "svc_menu",
-     "line": 394,
+     "line": 398,
      "dynamic": false,
      "to": "service_menu",
      "how": "точно"
@@ -8105,7 +8542,7 @@ window.FRONTMAP = {
     {
      "label": "🗑 Снять: … · …",
      "data": "svc_ev_del_…",
-     "line": 390,
+     "line": 394,
      "dynamic": false,
      "to": "event_delete",
      "how": "по приставке «svc_ev_del_»"
@@ -8115,7 +8552,7 @@ window.FRONTMAP = {
   {
    "id": "event_delete",
    "file": "handlers_service.py",
-   "line": 399,
+   "line": 403,
    "title": "",
    "side": "admin",
    "kind": "screen",
@@ -8126,7 +8563,7 @@ window.FRONTMAP = {
     {
      "label": "📈 График нагрузки",
      "data": "svc_chart",
-     "line": 392,
+     "line": 396,
      "dynamic": false,
      "to": "load_chart",
      "how": "точно",
@@ -8135,7 +8572,7 @@ window.FRONTMAP = {
     {
      "label": "⚖️ Лимиты",
      "data": "svc_limits",
-     "line": 393,
+     "line": 397,
      "dynamic": false,
      "to": "limits_screen",
      "how": "точно",
@@ -8144,7 +8581,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Назад",
      "data": "svc_menu",
-     "line": 394,
+     "line": 398,
      "dynamic": false,
      "to": "service_menu",
      "how": "точно",
@@ -8153,7 +8590,7 @@ window.FRONTMAP = {
     {
      "label": "🗑 Снять: … · …",
      "data": "svc_ev_del_…",
-     "line": 390,
+     "line": 394,
      "dynamic": false,
      "to": "event_delete",
      "how": "по приставке «svc_ev_del_»",
@@ -8164,7 +8601,7 @@ window.FRONTMAP = {
   {
    "id": "limits_screen",
    "file": "handlers_service.py",
-   "line": 407,
+   "line": 411,
    "title": "Общий порог и персональные правила. В списке только те, у кого правило",
    "side": "admin",
    "kind": "menu",
@@ -8189,7 +8626,7 @@ window.FRONTMAP = {
     {
      "label": "➖ …",
      "data": "svc_limit_down",
-     "line": 443,
+     "line": 447,
      "dynamic": false,
      "to": "change_limit",
      "how": "точно"
@@ -8197,7 +8634,7 @@ window.FRONTMAP = {
     {
      "label": "… пак/с",
      "data": "svc_noop",
-     "line": 445,
+     "line": 449,
      "dynamic": false,
      "to": "(без перехода)",
      "how": "точно"
@@ -8205,7 +8642,7 @@ window.FRONTMAP = {
     {
      "label": "➕ …",
      "data": "svc_limit_up",
-     "line": 446,
+     "line": 450,
      "dynamic": false,
      "to": "change_limit",
      "how": "точно"
@@ -8213,7 +8650,7 @@ window.FRONTMAP = {
     {
      "label": "3000",
      "data": "svc_limit_3000",
-     "line": 447,
+     "line": 451,
      "dynamic": false,
      "to": "change_limit",
      "how": "по приставке «svc_limit_»"
@@ -8221,7 +8658,7 @@ window.FRONTMAP = {
     {
      "label": "5000",
      "data": "svc_limit_5000",
-     "line": 448,
+     "line": 452,
      "dynamic": false,
      "to": "change_limit",
      "how": "по приставке «svc_limit_»"
@@ -8229,7 +8666,7 @@ window.FRONTMAP = {
     {
      "label": "6000",
      "data": "svc_limit_6000",
-     "line": 449,
+     "line": 453,
      "dynamic": false,
      "to": "change_limit",
      "how": "по приставке «svc_limit_»"
@@ -8237,7 +8674,7 @@ window.FRONTMAP = {
     {
      "label": "👥 Правила по людям",
      "data": "users_page_0",
-     "line": 450,
+     "line": 454,
      "dynamic": false,
      "to": "users_list_menu",
      "how": "по приставке «users_page_»"
@@ -8245,7 +8682,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Назад",
      "data": "svc_menu",
-     "line": 451,
+     "line": 455,
      "dynamic": false,
      "to": "service_menu",
      "how": "точно"
@@ -8255,7 +8692,7 @@ window.FRONTMAP = {
   {
    "id": "change_limit",
    "file": "handlers_service.py",
-   "line": 458,
+   "line": 462,
    "title": "Порог меняется шагом или готовым значением. Ниже тысячи и выше потолка узла",
    "side": "admin",
    "kind": "screen",
@@ -8272,7 +8709,7 @@ window.FRONTMAP = {
     {
      "label": "➖ …",
      "data": "svc_limit_down",
-     "line": 443,
+     "line": 447,
      "dynamic": false,
      "to": "change_limit",
      "how": "точно",
@@ -8281,7 +8718,7 @@ window.FRONTMAP = {
     {
      "label": "… пак/с",
      "data": "svc_noop",
-     "line": 445,
+     "line": 449,
      "dynamic": false,
      "to": "(без перехода)",
      "how": "точно",
@@ -8290,7 +8727,7 @@ window.FRONTMAP = {
     {
      "label": "➕ …",
      "data": "svc_limit_up",
-     "line": 446,
+     "line": 450,
      "dynamic": false,
      "to": "change_limit",
      "how": "точно",
@@ -8299,7 +8736,7 @@ window.FRONTMAP = {
     {
      "label": "3000",
      "data": "svc_limit_3000",
-     "line": 447,
+     "line": 451,
      "dynamic": false,
      "to": "change_limit",
      "how": "по приставке «svc_limit_»",
@@ -8308,7 +8745,7 @@ window.FRONTMAP = {
     {
      "label": "5000",
      "data": "svc_limit_5000",
-     "line": 448,
+     "line": 452,
      "dynamic": false,
      "to": "change_limit",
      "how": "по приставке «svc_limit_»",
@@ -8317,7 +8754,7 @@ window.FRONTMAP = {
     {
      "label": "6000",
      "data": "svc_limit_6000",
-     "line": 449,
+     "line": 453,
      "dynamic": false,
      "to": "change_limit",
      "how": "по приставке «svc_limit_»",
@@ -8326,7 +8763,7 @@ window.FRONTMAP = {
     {
      "label": "👥 Правила по людям",
      "data": "users_page_0",
-     "line": 450,
+     "line": 454,
      "dynamic": false,
      "to": "users_list_menu",
      "how": "по приставке «users_page_»",
@@ -8335,7 +8772,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Назад",
      "data": "svc_menu",
-     "line": 451,
+     "line": 455,
      "dynamic": false,
      "to": "service_menu",
      "how": "точно",
@@ -8346,7 +8783,7 @@ window.FRONTMAP = {
   {
    "id": "set_peer_rule",
    "file": "handlers_service.py",
-   "line": 477,
+   "line": 481,
    "title": "Правило для конкретного человека: общий порог, свой или без ограничений.",
    "side": "admin",
    "kind": "screen",
@@ -8361,7 +8798,7 @@ window.FRONTMAP = {
     {
      "label": "📐 Общий предел · … пак/с",
      "data": "svc_rule_default_…",
-     "line": 557,
+     "line": 561,
      "dynamic": false,
      "to": "set_peer_rule",
      "how": "по приставке «svc_rule_»",
@@ -8370,7 +8807,7 @@ window.FRONTMAP = {
     {
      "label": "✂️ Свой предел · … пак/с",
      "data": "svc_rule_custom_…",
-     "line": 559,
+     "line": 563,
      "dynamic": false,
      "to": "set_peer_rule",
      "how": "по приставке «svc_rule_»",
@@ -8379,7 +8816,7 @@ window.FRONTMAP = {
     {
      "label": "♾ Снять ограничение",
      "data": "svc_rule_unlimited_…",
-     "line": 561,
+     "line": 565,
      "dynamic": false,
      "to": "set_peer_rule",
      "how": "по приставке «svc_rule_»",
@@ -8388,7 +8825,7 @@ window.FRONTMAP = {
     {
      "label": "⏱ Придушить на сутки · … пак/с",
      "data": "svc_rule_day_…",
-     "line": 563,
+     "line": 567,
      "dynamic": false,
      "to": "set_peer_rule",
      "how": "по приставке «svc_rule_»",
@@ -8397,7 +8834,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 К пользователю",
      "data": "user_detail_…",
-     "line": 565,
+     "line": 569,
      "dynamic": false,
      "to": "user_detail_menu",
      "how": "по приставке «user_detail_»",
@@ -8408,7 +8845,7 @@ window.FRONTMAP = {
   {
    "id": "peer_limit_screen",
    "file": "handlers_service.py",
-   "line": 505,
+   "line": 509,
    "title": "Что человеку разрешено по пакетам и что можно поменять.",
    "side": "admin",
    "kind": "menu",
@@ -8430,7 +8867,7 @@ window.FRONTMAP = {
     {
      "label": "📐 Общий предел · … пак/с",
      "data": "svc_rule_default_…",
-     "line": 557,
+     "line": 561,
      "dynamic": false,
      "to": "set_peer_rule",
      "how": "по приставке «svc_rule_»"
@@ -8438,7 +8875,7 @@ window.FRONTMAP = {
     {
      "label": "✂️ Свой предел · … пак/с",
      "data": "svc_rule_custom_…",
-     "line": 559,
+     "line": 563,
      "dynamic": false,
      "to": "set_peer_rule",
      "how": "по приставке «svc_rule_»"
@@ -8446,7 +8883,7 @@ window.FRONTMAP = {
     {
      "label": "♾ Снять ограничение",
      "data": "svc_rule_unlimited_…",
-     "line": 561,
+     "line": 565,
      "dynamic": false,
      "to": "set_peer_rule",
      "how": "по приставке «svc_rule_»"
@@ -8454,7 +8891,7 @@ window.FRONTMAP = {
     {
      "label": "⏱ Придушить на сутки · … пак/с",
      "data": "svc_rule_day_…",
-     "line": 563,
+     "line": 567,
      "dynamic": false,
      "to": "set_peer_rule",
      "how": "по приставке «svc_rule_»"
@@ -8462,7 +8899,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 К пользователю",
      "data": "user_detail_…",
-     "line": 565,
+     "line": 569,
      "dynamic": false,
      "to": "user_detail_menu",
      "how": "по приставке «user_detail_»"
@@ -8472,7 +8909,7 @@ window.FRONTMAP = {
   {
    "id": "load_chart",
    "file": "handlers_service.py",
-   "line": 571,
+   "line": 575,
    "title": "Картинка с двумя панелями: скорость и пакеты.",
    "side": "admin",
    "kind": "screen",
@@ -8499,7 +8936,7 @@ window.FRONTMAP = {
     {
      "label": "👤 Выбрать человека",
      "data": "svc_pick_0",
-     "line": 627,
+     "line": 631,
      "dynamic": false,
      "to": "pick_peer_screen",
      "how": "по приставке «svc_pick_»"
@@ -8507,7 +8944,7 @@ window.FRONTMAP = {
     {
      "label": "📊 Графики",
      "data": "vpn_graph",
-     "line": 628,
+     "line": 632,
      "dynamic": false,
      "to": "graphs_menu",
      "how": "точно"
@@ -8515,7 +8952,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 К человеку",
      "data": "user_detail_…",
-     "line": 625,
+     "line": 629,
      "dynamic": false,
      "to": "user_detail_menu",
      "how": "по приставке «user_detail_»"
@@ -8523,7 +8960,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Графики",
      "data": "vpn_graph",
-     "line": 608,
+     "line": 612,
      "dynamic": false,
      "to": "graphs_menu",
      "how": "точно"
@@ -8533,7 +8970,7 @@ window.FRONTMAP = {
   {
    "id": "charts_screen",
    "file": "handlers_service.py",
-   "line": 638,
+   "line": 642,
    "title": "Кого стоит посмотреть на графике.",
    "side": "admin",
    "kind": "screen",
@@ -8557,7 +8994,7 @@ window.FRONTMAP = {
     {
      "label": "👤 Выбрать человека",
      "data": "svc_pick_0",
-     "line": 691,
+     "line": 695,
      "dynamic": false,
      "to": "pick_peer_screen",
      "how": "по приставке «svc_pick_»"
@@ -8565,7 +9002,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Графики",
      "data": "vpn_graph",
-     "line": 692,
+     "line": 696,
      "dynamic": false,
      "to": "graphs_menu",
      "how": "точно"
@@ -8573,7 +9010,7 @@ window.FRONTMAP = {
     {
      "label": "📉 …",
      "data": "svc_pchart_…",
-     "line": 686,
+     "line": 690,
      "dynamic": false,
      "to": "load_chart",
      "how": "по приставке «svc_pchart_»"
@@ -8583,7 +9020,7 @@ window.FRONTMAP = {
   {
    "id": "pick_peer_screen",
    "file": "handlers_service.py",
-   "line": 699,
+   "line": 703,
    "title": "Полный список — на случай, когда подбор не угадал.",
    "side": "admin",
    "kind": "screen",
@@ -8604,7 +9041,7 @@ window.FRONTMAP = {
     {
      "label": "«меняется»",
      "data": "svc_pchart_…",
-     "line": 708,
+     "line": 712,
      "dynamic": true,
      "to": "load_chart",
      "how": "по приставке «svc_pchart_»"
@@ -8612,7 +9049,7 @@ window.FRONTMAP = {
     {
      "label": "…/…",
      "data": "svc_noop",
-     "line": 714,
+     "line": 718,
      "dynamic": false,
      "to": "(без перехода)",
      "how": "точно"
@@ -8620,7 +9057,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Графики",
      "data": "vpn_graph",
-     "line": 718,
+     "line": 722,
      "dynamic": false,
      "to": "graphs_menu",
      "how": "точно"
@@ -8628,7 +9065,7 @@ window.FRONTMAP = {
     {
      "label": "⬅️",
      "data": "svc_pick_…",
-     "line": 713,
+     "line": 717,
      "dynamic": false,
      "to": "pick_peer_screen",
      "how": "по приставке «svc_pick_»"
@@ -8636,7 +9073,7 @@ window.FRONTMAP = {
     {
      "label": "➡️",
      "data": "svc_pick_…",
-     "line": 716,
+     "line": 720,
      "dynamic": false,
      "to": "pick_peer_screen",
      "how": "по приставке «svc_pick_»"
@@ -8646,7 +9083,7 @@ window.FRONTMAP = {
   {
    "id": "graphs_menu",
    "file": "handlers_service.py",
-   "line": 725,
+   "line": 729,
    "title": "Единый вход во все графики.",
    "side": "admin",
    "kind": "screen",
@@ -8668,7 +9105,7 @@ window.FRONTMAP = {
     {
      "label": "📊 Трафик по людям",
      "data": "graph_traffic",
-     "line": 754,
+     "line": 758,
      "dynamic": false,
      "to": "send_vpn_graph",
      "how": "точно"
@@ -8676,7 +9113,7 @@ window.FRONTMAP = {
     {
      "label": "🚦 Нагрузка · скорость и пакеты",
      "data": "svc_chart",
-     "line": 755,
+     "line": 759,
      "dynamic": false,
      "to": "load_chart",
      "how": "точно"
@@ -8684,7 +9121,7 @@ window.FRONTMAP = {
     {
      "label": "📉 Подбор · … / ",
      "data": "svc_charts",
-     "line": 756,
+     "line": 760,
      "dynamic": false,
      "to": "charts_screen",
      "how": "точно"
@@ -8692,7 +9129,7 @@ window.FRONTMAP = {
     {
      "label": "👤 Выбрать человека",
      "data": "svc_pick_0",
-     "line": 759,
+     "line": 763,
      "dynamic": false,
      "to": "pick_peer_screen",
      "how": "по приставке «svc_pick_»"
@@ -8700,7 +9137,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Главное меню",
      "data": "back_to_main",
-     "line": 760,
+     "line": 764,
      "dynamic": false,
      "to": "return_to_main_menu",
      "how": "точно"
@@ -8710,7 +9147,7 @@ window.FRONTMAP = {
   {
    "id": "whats_new",
    "file": "handlers_service.py",
-   "line": 766,
+   "line": 770,
    "title": "Три последних версии. Кнопка нужна и админу: догадаться, что список изменений",
    "side": "admin",
    "kind": "screen",
@@ -8726,7 +9163,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Главное меню",
      "data": "back_to_main",
-     "line": 776,
+     "line": 780,
      "dynamic": false,
      "to": "return_to_main_menu",
      "how": "точно"
@@ -8736,7 +9173,7 @@ window.FRONTMAP = {
   {
    "id": "ensure_api_token",
    "file": "handlers_service.py",
-   "line": 828,
+   "line": 832,
    "title": "Доводит токен панелей до одинакового состояния на обеих нодах.",
    "side": "admin",
    "kind": "screen",
@@ -8756,7 +9193,7 @@ window.FRONTMAP = {
     {
      "label": "🔑 Панель токенов",
      "data": "svc_token",
-     "line": 856,
+     "line": 860,
      "dynamic": false,
      "to": "token_screen",
      "how": "точно"
@@ -8766,7 +9203,7 @@ window.FRONTMAP = {
   {
    "id": "rotate_loop",
    "file": "handlers_service.py",
-   "line": 981,
+   "line": 985,
    "title": "Раз в сутки смотрит, не пора ли. Время — воскресное утро, то же окно,",
    "side": "admin",
    "kind": "screen",
@@ -8784,7 +9221,7 @@ window.FRONTMAP = {
     {
      "label": "🔑 Панель токенов",
      "data": "svc_token",
-     "line": 1012,
+     "line": 1016,
      "dynamic": false,
      "to": "token_screen",
      "how": "точно"
@@ -8794,7 +9231,7 @@ window.FRONTMAP = {
   {
    "id": "token_screen",
    "file": "handlers_service.py",
-   "line": 1022,
+   "line": 1026,
    "title": "Смена токена панелей: состояние и переключатель.",
    "side": "admin",
    "kind": "menu",
@@ -8810,7 +9247,7 @@ window.FRONTMAP = {
     {
      "label": "🔁 Сменить сейчас",
      "data": "svc_tok_now",
-     "line": 1045,
+     "line": 1049,
      "dynamic": false,
      "to": "token_now",
      "how": "точно"
@@ -8818,7 +9255,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Мастер-сервер",
      "data": "menu_ru_server",
-     "line": 1050,
+     "line": 1054,
      "dynamic": false,
      "to": "sub_menu_router",
      "how": "точно"
@@ -8826,7 +9263,7 @@ window.FRONTMAP = {
     {
      "label": "↩️ Вернуть прошлый ключ",
      "data": "svc_tok_back",
-     "line": 1047,
+     "line": 1051,
      "dynamic": false,
      "to": "token_rollback",
      "how": "точно"
@@ -8836,7 +9273,7 @@ window.FRONTMAP = {
   {
    "id": "token_toggle",
    "file": "handlers_service.py",
-   "line": 1056,
+   "line": 1060,
    "title": "Выключателя больше нет — смена идёт всегда.",
    "side": "admin",
    "kind": "screen",
@@ -8847,7 +9284,7 @@ window.FRONTMAP = {
     {
      "label": "🔁 Сменить сейчас",
      "data": "svc_tok_now",
-     "line": 1045,
+     "line": 1049,
      "dynamic": false,
      "to": "token_now",
      "how": "точно",
@@ -8856,7 +9293,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Мастер-сервер",
      "data": "menu_ru_server",
-     "line": 1050,
+     "line": 1054,
      "dynamic": false,
      "to": "sub_menu_router",
      "how": "точно",
@@ -8865,7 +9302,7 @@ window.FRONTMAP = {
     {
      "label": "↩️ Вернуть прошлый ключ",
      "data": "svc_tok_back",
-     "line": 1047,
+     "line": 1051,
      "dynamic": false,
      "to": "token_rollback",
      "how": "точно",
@@ -8876,7 +9313,7 @@ window.FRONTMAP = {
   {
    "id": "token_rollback",
    "file": "handlers_service.py",
-   "line": 1066,
+   "line": 1070,
    "title": "Возврат к прошлому ключу.",
    "side": "admin",
    "kind": "screen",
@@ -8893,7 +9330,7 @@ window.FRONTMAP = {
     {
      "label": "🔑 К панели токенов",
      "data": "svc_token",
-     "line": 1091,
+     "line": 1095,
      "dynamic": false,
      "to": "token_screen",
      "how": "точно"
@@ -8903,7 +9340,7 @@ window.FRONTMAP = {
   {
    "id": "token_now",
    "file": "handlers_service.py",
-   "line": 1095,
+   "line": 1099,
    "title": "Смена по кнопке. Спрашивать подтверждение незачем: кнопка и есть",
    "side": "admin",
    "kind": "screen",
@@ -8917,7 +9354,7 @@ window.FRONTMAP = {
     {
      "label": "🔑 К панели токенов",
      "data": "svc_token",
-     "line": 1104,
+     "line": 1108,
      "dynamic": false,
      "to": "token_screen",
      "how": "точно"
@@ -8927,7 +9364,7 @@ window.FRONTMAP = {
   {
    "id": "tell",
    "file": "handlers_service.py",
-   "line": 849,
+   "line": 853,
    "title": "",
    "side": "admin",
    "kind": "screen",
@@ -8939,7 +9376,7 @@ window.FRONTMAP = {
     {
      "label": "🔑 Панель токенов",
      "data": "svc_token",
-     "line": 856,
+     "line": 860,
      "dynamic": false,
      "to": "token_screen",
      "how": "точно"
@@ -10189,7 +10626,7 @@ window.FRONTMAP = {
    "line": 239,
    "title": "",
    "side": "admin",
-   "kind": "menu",
+   "kind": "screen",
    "calls": [
     "show_screen",
     "InlineKeyboardButton",
@@ -10243,6 +10680,7 @@ window.FRONTMAP = {
    "side": "admin",
    "kind": "menu",
    "calls": [
+    "any",
     "show_screen",
     "InlineKeyboardButton",
     "InlineKeyboardButton",
@@ -10252,13 +10690,14 @@ window.FRONTMAP = {
     "InlineKeyboardButton",
     "InlineKeyboardButton",
     "InlineKeyboardMarkup",
-    "escape_md"
+    "escape_md",
+    "InlineKeyboardButton"
    ],
    "buttons": [
     {
      "label": "🔄 Применить конфиг заново",
      "data": "xr_apply",
-     "line": 292,
+     "line": 302,
      "dynamic": false,
      "to": "apply_now",
      "how": "точно"
@@ -10266,7 +10705,7 @@ window.FRONTMAP = {
     {
      "label": "🎭 Маска входа",
      "data": "xr_mask",
-     "line": 293,
+     "line": 303,
      "dynamic": false,
      "to": "mask_screen",
      "how": "точно"
@@ -10274,7 +10713,7 @@ window.FRONTMAP = {
     {
      "label": "📱 Приложения",
      "data": "xr_apps",
-     "line": 294,
+     "line": 304,
      "dynamic": false,
      "to": "apps_screen",
      "how": "точно"
@@ -10282,7 +10721,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Протоколы",
      "data": "proto_menu",
-     "line": 299,
+     "line": 312,
      "dynamic": false,
      "to": "protocols_menu",
      "how": "точно"
@@ -10290,7 +10729,7 @@ window.FRONTMAP = {
     {
      "label": "⏹ Выключить протокол",
      "data": "proto_off_xray",
-     "line": 296,
+     "line": 309,
      "dynamic": false,
      "to": "switch_confirm",
      "how": "по приставке «proto_off_»"
@@ -10298,17 +10737,25 @@ window.FRONTMAP = {
     {
      "label": "▶️ Включить протокол",
      "data": "proto_on_xray",
-     "line": 298,
+     "line": 311,
      "dynamic": false,
      "to": "switch_do",
      "how": "точно"
+    },
+    {
+     "label": "➡️ …",
+     "data": "«меняется»",
+     "line": 307,
+     "dynamic": true,
+     "to": null,
+     "how": null
     }
    ]
   },
   {
    "id": "mask_screen",
    "file": "handlers_xray.py",
-   "line": 318,
+   "line": 336,
    "title": "Выбор домена, которым прикидывается вход.",
    "side": "admin",
    "kind": "menu",
@@ -10318,23 +10765,34 @@ window.FRONTMAP = {
     "InlineKeyboardButton",
     "escape_md",
     "InlineKeyboardButton",
+    "InlineKeyboardButton",
     "InlineKeyboardMarkup",
     "escape_md",
-    "chr"
+    "escape_md",
+    "chr",
+    "public_domain"
    ],
    "buttons": [
     {
      "label": "🔙 Xray",
      "data": "proto_xray",
-     "line": 355,
+     "line": 396,
      "dynamic": false,
      "to": "xray_screen",
      "how": "точно"
     },
     {
+     "label": "…свой сайт · 0 мс",
+     "data": "xr_mask_…",
+     "line": 373,
+     "dynamic": false,
+     "to": "mask_set",
+     "how": "по приставке «xr_mask_»"
+    },
+    {
      "label": "…… · …",
      "data": "xr_mask_…",
-     "line": 351,
+     "line": 387,
      "dynamic": false,
      "to": "mask_set",
      "how": "по приставке «xr_mask_»"
@@ -10344,7 +10802,7 @@ window.FRONTMAP = {
   {
    "id": "mask_set",
    "file": "handlers_xray.py",
-   "line": 362,
+   "line": 403,
    "title": "Ставит выбранную маску и сразу применяет конфиг.",
    "side": "admin",
    "kind": "screen",
@@ -10356,16 +10814,25 @@ window.FRONTMAP = {
     {
      "label": "🔙 Xray",
      "data": "proto_xray",
-     "line": 355,
+     "line": 396,
      "dynamic": false,
      "to": "xray_screen",
      "how": "точно",
      "inherited": "mask_screen"
     },
     {
+     "label": "…свой сайт · 0 мс",
+     "data": "xr_mask_…",
+     "line": 373,
+     "dynamic": false,
+     "to": "mask_set",
+     "how": "по приставке «xr_mask_»",
+     "inherited": "mask_screen"
+    },
+    {
      "label": "…… · …",
      "data": "xr_mask_…",
-     "line": 351,
+     "line": 387,
      "dynamic": false,
      "to": "mask_set",
      "how": "по приставке «xr_mask_»",
@@ -10376,7 +10843,7 @@ window.FRONTMAP = {
   {
    "id": "apply_now",
    "file": "handlers_xray.py",
-   "line": 383,
+   "line": 433,
    "title": "",
    "side": "admin",
    "kind": "screen",
@@ -10387,7 +10854,7 @@ window.FRONTMAP = {
     {
      "label": "🔄 Применить конфиг заново",
      "data": "xr_apply",
-     "line": 292,
+     "line": 302,
      "dynamic": false,
      "to": "apply_now",
      "how": "точно",
@@ -10396,7 +10863,7 @@ window.FRONTMAP = {
     {
      "label": "🎭 Маска входа",
      "data": "xr_mask",
-     "line": 293,
+     "line": 303,
      "dynamic": false,
      "to": "mask_screen",
      "how": "точно",
@@ -10405,7 +10872,7 @@ window.FRONTMAP = {
     {
      "label": "📱 Приложения",
      "data": "xr_apps",
-     "line": 294,
+     "line": 304,
      "dynamic": false,
      "to": "apps_screen",
      "how": "точно",
@@ -10414,7 +10881,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Протоколы",
      "data": "proto_menu",
-     "line": 299,
+     "line": 312,
      "dynamic": false,
      "to": "protocols_menu",
      "how": "точно",
@@ -10423,7 +10890,7 @@ window.FRONTMAP = {
     {
      "label": "⏹ Выключить протокол",
      "data": "proto_off_xray",
-     "line": 296,
+     "line": 309,
      "dynamic": false,
      "to": "switch_confirm",
      "how": "по приставке «proto_off_»",
@@ -10432,10 +10899,19 @@ window.FRONTMAP = {
     {
      "label": "▶️ Включить протокол",
      "data": "proto_on_xray",
-     "line": 298,
+     "line": 311,
      "dynamic": false,
      "to": "switch_do",
      "how": "точно",
+     "inherited": "xray_screen"
+    },
+    {
+     "label": "➡️ …",
+     "data": "«меняется»",
+     "line": 307,
+     "dynamic": true,
+     "to": null,
+     "how": null,
      "inherited": "xray_screen"
     }
    ]
@@ -10443,7 +10919,7 @@ window.FRONTMAP = {
   {
    "id": "apps_screen",
    "file": "handlers_xray.py",
-   "line": 391,
+   "line": 441,
    "title": "То же, что видит человек. Показывается владельцу, чтобы он мог глазами",
    "side": "admin",
    "kind": "screen",
@@ -10456,7 +10932,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Xray",
      "data": "proto_xray",
-     "line": 401,
+     "line": 451,
      "dynamic": false,
      "to": "xray_screen",
      "how": "точно"
@@ -10466,7 +10942,7 @@ window.FRONTMAP = {
   {
    "id": "switch_confirm",
    "file": "handlers_xray.py",
-   "line": 409,
+   "line": 459,
    "title": "Спрашивает подтверждение, показав, у скольких людей оборвётся связь.",
    "side": "admin",
    "kind": "screen",
@@ -10482,7 +10958,7 @@ window.FRONTMAP = {
     {
      "label": "⏹ Да, выключить",
      "data": "proto_offok_…",
-     "line": 426,
+     "line": 476,
      "dynamic": false,
      "to": "switch_do",
      "how": "по приставке «proto_offok_»"
@@ -10490,7 +10966,7 @@ window.FRONTMAP = {
     {
      "label": "Отмена",
      "data": "proto_…",
-     "line": 427,
+     "line": 477,
      "dynamic": false,
      "to": null,
      "how": "подставляется на лету"
@@ -10500,57 +10976,51 @@ window.FRONTMAP = {
   {
    "id": "switch_do",
    "file": "handlers_xray.py",
-   "line": 433,
+   "line": 483,
    "title": "",
    "side": "admin",
    "kind": "screen",
    "calls": [
     "awg_screen",
-    "xray_screen"
+    "xray_screen",
+    "show_screen",
+    "InlineKeyboardButton",
+    "InlineKeyboardButton",
+    "InlineKeyboardButton",
+    "InlineKeyboardMarkup",
+    "chr"
    ],
    "buttons": [
     {
-     "label": "🔑 Переезд на новый ключ",
-     "data": "mig_menu",
-     "line": 260,
-     "dynamic": false,
-     "to": "migration_menu",
-     "how": "точно",
-     "inherited": "awg_screen"
-    },
-    {
-     "label": "🔙 Протоколы",
-     "data": "proto_menu",
-     "line": 265,
-     "dynamic": false,
-     "to": "protocols_menu",
-     "how": "точно",
-     "inherited": "awg_screen"
-    },
-    {
-     "label": "⏹ Выключить протокол",
-     "data": "proto_off_awg",
-     "line": 262,
-     "dynamic": false,
-     "to": "switch_confirm",
-     "how": "по приставке «proto_off_»",
-     "inherited": "awg_screen"
-    },
-    {
-     "label": "▶️ Включить протокол",
-     "data": "proto_on_awg",
-     "line": 264,
+     "label": "▶️ Включить всё равно",
+     "data": "proto_onok_xray",
+     "line": 503,
      "dynamic": false,
      "to": "switch_do",
-     "how": "точно",
-     "inherited": "awg_screen"
+     "how": "точно"
+    },
+    {
+     "label": "Отмена",
+     "data": "proto_xray",
+     "line": 505,
+     "dynamic": false,
+     "to": "xray_screen",
+     "how": "точно"
+    },
+    {
+     "label": "➡️ …",
+     "data": "«меняется»",
+     "line": 502,
+     "dynamic": true,
+     "to": null,
+     "how": null
     }
    ]
   },
   {
    "id": "move_screen",
    "file": "handlers_xray.py",
-   "line": 445,
+   "line": 521,
    "title": "Перевод по одному, по образцу переезда на новый ключ: выдали → ждём",
    "side": "admin",
    "kind": "screen",
@@ -10571,7 +11041,7 @@ window.FRONTMAP = {
     {
      "label": "👥 К списку людей",
      "data": "users_page_0",
-     "line": 478,
+     "line": 554,
      "dynamic": false,
      "to": "users_list_menu",
      "how": "по приставке «users_page_»"
@@ -10579,7 +11049,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Протоколы",
      "data": "proto_menu",
-     "line": 479,
+     "line": 555,
      "dynamic": false,
      "to": "protocols_menu",
      "how": "точно"
@@ -10589,7 +11059,7 @@ window.FRONTMAP = {
   {
    "id": "platform_keyboard",
    "file": "handlers_xray.py",
-   "line": 497,
+   "line": 573,
    "title": "Кнопки выбора системы. По две в ряд — так они остаются читаемыми",
    "side": "client",
    "kind": "menu",
@@ -10604,7 +11074,7 @@ window.FRONTMAP = {
     {
      "label": "«меняется»",
      "data": "client_plat_…_…",
-     "line": 503,
+     "line": 579,
      "dynamic": true,
      "to": "client_platform_handler",
      "how": "по приставке «client_plat_»"
@@ -10612,7 +11082,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Назад",
      "data": "«меняется»",
-     "line": 510,
+     "line": 586,
      "dynamic": true,
      "to": null,
      "how": null
@@ -10622,7 +11092,7 @@ window.FRONTMAP = {
   {
    "id": "handout",
    "file": "handlers_xray.py",
-   "line": 551,
+   "line": 627,
    "title": "Выдаёт человеку подключение по Xray и рассылает ссылку.",
    "side": "admin",
    "kind": "screen",
@@ -10651,7 +11121,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 В главное меню",
      "data": "back_to_main",
-     "line": 648,
+     "line": 724,
      "dynamic": false,
      "to": "return_to_main_menu",
      "how": "точно"
@@ -11491,7 +11961,7 @@ window.FRONTMAP = {
   {
    "id": "copy_button",
    "file": "utils.py",
-   "line": 384,
+   "line": 415,
    "title": "Кнопка, которая кладёт текст в буфер по нажатию.",
    "side": "admin",
    "kind": "screen",
@@ -11502,7 +11972,7 @@ window.FRONTMAP = {
     {
      "label": "«меняется»",
      "data": "«меняется»",
-     "line": 399,
+     "line": 430,
      "dynamic": true,
      "to": null,
      "how": null
@@ -11512,7 +11982,7 @@ window.FRONTMAP = {
   {
    "id": "exit_kb",
    "file": "utils.py",
-   "line": 403,
+   "line": 434,
    "title": "Клавиатура для сообщения, которым разговор закончился.",
    "side": "client",
    "kind": "menu",
@@ -11526,7 +11996,7 @@ window.FRONTMAP = {
     {
      "label": "«меняется»",
      "data": "«меняется»",
-     "line": 412,
+     "line": 443,
      "dynamic": true,
      "to": null,
      "how": null
@@ -11534,7 +12004,7 @@ window.FRONTMAP = {
     {
      "label": "🏠 Личный кабинет",
      "data": "client_menu",
-     "line": 415,
+     "line": 446,
      "dynamic": false,
      "to": "client_menu",
      "how": "точно"
@@ -11542,7 +12012,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Главное меню",
      "data": "back_to_main",
-     "line": 418,
+     "line": 449,
      "dynamic": false,
      "to": "return_to_main_menu",
      "how": "точно"
@@ -11552,7 +12022,7 @@ window.FRONTMAP = {
   {
    "id": "broadcast_message",
    "file": "utils.py",
-   "line": 427,
+   "line": 458,
    "title": "",
    "side": "client",
    "kind": "menu",
@@ -11569,7 +12039,7 @@ window.FRONTMAP = {
     {
      "label": "🛡 Панель управления",
      "data": "back_to_main",
-     "line": 435,
+     "line": 466,
      "dynamic": false,
      "to": "return_to_main_menu",
      "how": "точно"
@@ -11577,7 +12047,7 @@ window.FRONTMAP = {
     {
      "label": "🏠 Личный кабинет",
      "data": "client_menu",
-     "line": 437,
+     "line": 468,
      "dynamic": false,
      "to": "client_menu",
      "how": "точно"
@@ -11615,7 +12085,7 @@ window.FRONTMAP = {
   {
    "id": "шаг: maintenance_warn",
    "file": "bot.py",
-   "line": 1154,
+   "line": 1299,
    "title": "шаг мастера, нарисован прямо в роутере",
    "side": "admin",
    "kind": "step",
@@ -11624,7 +12094,7 @@ window.FRONTMAP = {
     {
      "label": "✍️ Своя рассылка (свой текст)",
      "data": "broadcast_custom",
-     "line": 1156,
+     "line": 1301,
      "dynamic": false,
      "to": "шаг: broadcast_custom",
      "how": "точно"
@@ -11632,7 +12102,7 @@ window.FRONTMAP = {
     {
      "label": "⚠️ Стандартное: тех. работы",
      "data": "do_maintenance_warn",
-     "line": 1157,
+     "line": 1302,
      "dynamic": false,
      "to": "broadcast_message",
      "how": "точно"
@@ -11640,7 +12110,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Отмена",
      "data": "back_to_main",
-     "line": 1158,
+     "line": 1303,
      "dynamic": false,
      "to": "return_to_main_menu",
      "how": "точно"
@@ -11650,7 +12120,7 @@ window.FRONTMAP = {
   {
    "id": "шаг: broadcast_custom",
    "file": "bot.py",
-   "line": 1164,
+   "line": 1309,
    "title": "шаг мастера, нарисован прямо в роутере",
    "side": "admin",
    "kind": "step",
@@ -11659,7 +12129,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Отмена",
      "data": "back_to_main",
-     "line": 1169,
+     "line": 1314,
      "dynamic": false,
      "to": "return_to_main_menu",
      "how": "точно"
@@ -11669,7 +12139,7 @@ window.FRONTMAP = {
   {
    "id": "шаг: set_exp_",
    "file": "bot.py",
-   "line": 1209,
+   "line": 1354,
    "title": "шаг мастера, нарисован прямо в роутере",
    "side": "admin",
    "kind": "step",
@@ -11678,7 +12148,7 @@ window.FRONTMAP = {
     {
      "label": "⏩ Пропустить",
      "data": "skip_tg_link",
-     "line": 1218,
+     "line": 1363,
      "dynamic": false,
      "to": "finish_key_creation",
      "how": "точно"
@@ -11686,7 +12156,7 @@ window.FRONTMAP = {
     {
      "label": "🌍 Классический DNS (1.1.1.1)",
      "data": "set_dns_classic",
-     "line": 1212,
+     "line": 1357,
      "dynamic": false,
      "to": "шаг: set_dns_",
      "how": "по приставке «set_dns_»"
@@ -11694,7 +12164,7 @@ window.FRONTMAP = {
     {
      "label": "🛡 AdBlock DNS (Без рекламы)",
      "data": "set_dns_adblock",
-     "line": 1212,
+     "line": 1357,
      "dynamic": false,
      "to": "шаг: set_dns_",
      "how": "по приставке «set_dns_»"
@@ -11702,7 +12172,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Отмена",
      "data": "back_to_main",
-     "line": 1212,
+     "line": 1357,
      "dynamic": false,
      "to": "return_to_main_menu",
      "how": "точно"
@@ -11712,7 +12182,7 @@ window.FRONTMAP = {
   {
    "id": "шаг: set_dns_",
    "file": "bot.py",
-   "line": 1225,
+   "line": 1370,
    "title": "шаг мастера, нарисован прямо в роутере",
    "side": "admin",
    "kind": "step",
@@ -11721,7 +12191,7 @@ window.FRONTMAP = {
     {
      "label": "⏩ Пропустить",
      "data": "skip_tg_link",
-     "line": 1227,
+     "line": 1372,
      "dynamic": false,
      "to": "finish_key_creation",
      "how": "точно"
@@ -11731,7 +12201,7 @@ window.FRONTMAP = {
   {
    "id": "шаг: rename_user_",
    "file": "bot.py",
-   "line": 1236,
+   "line": 1381,
    "title": "шаг мастера, нарисован прямо в роутере",
    "side": "admin",
    "kind": "step",
@@ -11740,7 +12210,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Отмена",
      "data": "user_detail_…",
-     "line": 1238,
+     "line": 1383,
      "dynamic": false,
      "to": "user_detail_menu",
      "how": "по приставке «user_detail_»"
@@ -11750,7 +12220,7 @@ window.FRONTMAP = {
   {
    "id": "шаг: link_tg_",
    "file": "bot.py",
-   "line": 1248,
+   "line": 1393,
    "title": "шаг мастера, нарисован прямо в роутере",
    "side": "admin",
    "kind": "step",
@@ -11759,7 +12229,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Отмена",
      "data": "user_detail_…",
-     "line": 1250,
+     "line": 1395,
      "dynamic": false,
      "to": "user_detail_menu",
      "how": "по приставке «user_detail_»"
@@ -11769,7 +12239,7 @@ window.FRONTMAP = {
   {
    "id": "шаг: unlink_tg_",
    "file": "bot.py",
-   "line": 1256,
+   "line": 1401,
    "title": "шаг мастера, нарисован прямо в роутере",
    "side": "admin",
    "kind": "step",
@@ -11778,7 +12248,7 @@ window.FRONTMAP = {
     {
      "label": "❌ …",
      "data": "do_unlink_…_…",
-     "line": 1259,
+     "line": 1404,
      "dynamic": false,
      "to": "user_detail_menu",
      "how": "по приставке «do_unlink_»"
@@ -11786,7 +12256,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Назад",
      "data": "user_detail_…",
-     "line": 1260,
+     "line": 1405,
      "dynamic": false,
      "to": "user_detail_menu",
      "how": "по приставке «user_detail_»"
@@ -11846,11 +12316,11 @@ window.FRONTMAP = {
   }
  ],
  "counts": {
-  "screens": 246,
-  "buttons": 833,
-  "admin": 201,
+  "screens": 254,
+  "buttons": 868,
+  "admin": 209,
   "client": 45
  },
- "reachable": 175,
+ "reachable": 179,
  "unrouted": 1
 };

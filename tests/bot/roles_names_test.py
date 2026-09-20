@@ -190,13 +190,16 @@ async def main():
 
     print("\n=== служебное имя удаляется насовсем ===")
     await db.execute("DELETE FROM settings WHERE key LIKE 'dns_node_name%'")
-    await db.delete_dns_name(dn.NODE_NAME)
+    # Имя служебной страницы теперь зависит от зоны, а зона — от того, есть
+    # ли у узла своё имя. Спрашиваем его, а не помним константой.
+    svc = dn.default_node_name()
+    await db.delete_dns_name(svc)
     assert await dn.ensure_node_name(), "не завелось при первом запуске"
-    assert await db.get_dns_name(dn.NODE_NAME)
-    await db.delete_dns_name(dn.NODE_NAME)
+    assert await db.get_dns_name(svc)
+    await db.delete_dns_name(svc)
     await dn.apply_names("после удаления")
-    assert await db.get_dns_name(dn.NODE_NAME) is None, \
-        "имя вернулось само — владелец удалял его не для этого"
+    assert await db.get_dns_name(svc) is None, (
+        "имя вернулось само — владелец удалял его не для этого")
     print("удалили — не вернулось: ок")
 
     # Payload кладём на диск: узловой тест применит именно его.

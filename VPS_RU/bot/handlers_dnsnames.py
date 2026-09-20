@@ -18,7 +18,7 @@ PER_PAGE = 8
 
 
 def _target_line(row, service_name=None):
-    if row["name"] == (service_name or dn.NODE_NAME):
+    if row["name"] == (service_name or dn.default_node_name()):
         return "→ страница отказа на узле (служебное)"
     if row["target_uuid"]:
         who = escape_md(row["person"] or "человек удалён")
@@ -35,9 +35,9 @@ async def names_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not rows:
         lines += [
             "Имён пока нет. Их можно придумывать свободно: внутри VPN "
-            f"имена раздаём мы сами, в интернете их не существует.",
+            "имена раздаём мы сами, в интернете их не существует.",
             "",
-            f"Заведёте «дом» — получится `дом.{dn.ZONE}`, и по нему будут "
+            f"Заведёте «дом» — получится `дом.{dn.zone()}`, и по нему будут "
             "открываться ваши сервисы вместо адреса с цифрами.",
         ]
     else:
@@ -65,7 +65,7 @@ async def add_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["state"] = "awaiting_dns_name"
     await show_screen(query, context,
                       "🏷 **Новое имя**\n\nНапишите одно слово — например, `дом` "
-                      f"или `kino`. Зона `.{dn.ZONE}` добавится сама.\n\n"
+                      f"или `kino`. Зона `.{dn.zone()}` добавится сама.\n\n"
                       "_Русские буквы можно: до сети они доедут как надо._",
                       reply_markup=InlineKeyboardMarkup(
                           [[InlineKeyboardButton("🔙 Отмена", callback_data="dnm_menu")]]),

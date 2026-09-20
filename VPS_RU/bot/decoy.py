@@ -115,12 +115,23 @@ def _ssl_context():
     return ctx
 
 
+# Поднята ли она сейчас. Вопрос не праздный: пока заглушка не слушает, выбирать
+# её маской нельзя — Reality уводит к ней КАЖДОЕ рукопожатие, и вход с
+# неподнятой заглушкой не работает вообще ни у кого.
+_up = False
+
+
+def is_up() -> bool:
+    return _up
+
+
 async def start(app=None):
     """Поднимает заглушку, если есть сертификат. Иначе молчит и ждёт.
 
     Ждать приходится: сертификат выпускается скриптом на хосте и может
     появиться через минуты после старта бота.
     """
+    global _up
     runner = None
     while True:
         ctx = _ssl_context()
@@ -131,9 +142,22 @@ async def start(app=None):
                 await runner.setup()
                 site = web.TCPSite(runner, DECOY_HOST, DECOY_PORT, ssl_context=ctx)
                 await site.start()
+                _up = True
                 print("Заглушка: поднята на %s:%d" % (DECOY_HOST, DECOY_PORT),
                       flush=True)
             except Exception as e:
                 print("Заглушка: не поднялась — %s" % e, flush=True)
                 runner = None
+                _up = False
+        elif ctx is None and runner is not None:
+            # Сертификат пропал — значит владелец закрыл подписку наружу.
+            # Снимаем и заглушку: отдавать её с истёкшим сертификатом хуже, чем
+            # не отдавать вовсе, а маска на неё после этого перестанет
+            # предлагаться сама.
+            try:
+                await runner.cleanup()
+            except Exception:
+                pass
+            runner, _up = None, False
+            print("Заглушка: сертификата больше нет — снята", flush=True)
         await asyncio.sleep(600)

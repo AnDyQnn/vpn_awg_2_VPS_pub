@@ -57,14 +57,17 @@ async def main():
     acl.peer_ip_map = ips
 
     print("=== служебное имя заводится один раз ===")
+    # Имя зависит от зоны, а зона — от того, есть ли у узла своё имя.
+    # Спрашиваем, а не помним константой.
+    svc = dn.default_node_name()
     created = await dn.ensure_node_name()
     assert created, "не завелось"
-    assert await db.get_dns_name(dn.NODE_NAME)
+    assert await db.get_dns_name(svc)
     assert not await dn.ensure_node_name(), "завелось второй раз"
-    print(" ", dn.NODE_NAME, "— заведено: ок")
+    print(" ", svc, "— заведено: ок")
 
     print("\n=== переименование заменяет, а не создаёт второе ===")
-    await db.rename_dns_name(dn.NODE_NAME, "стоп.vpn")
+    await db.rename_dns_name(svc, "стоп.vpn")
     await dn.remember_node_name("стоп.vpn")
     await dn.apply_names("после переименования")
     names = {r["name"] for r in await db.list_dns_names()}

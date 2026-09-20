@@ -547,7 +547,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text = ("🌐 Имя `%s` записано — бот сейчас перезапустится.\n\n"
                     "Дальше нажмите «Обновить сертификат» в разделе подписки: "
                     "он выпустится уже на имя, на девяносто дней вместо "
-                    "ста шестидесяти часов." % name)
+                    "ста шестидесяти часов.\n\n"
+                    "_Имена внутри туннеля переедут в эту же зону сами: "
+                    "«дом.vpn» станет «дом.%s». Правила доступа переедут "
+                    "вместе с ними._" % (name, name))
         else:
             text = ("⚠️ **Имя не применилось.**\n\n"
                     "Записывает его служба обновлений на сервере, и она не "
@@ -1085,6 +1088,10 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "proto_xray": await xray_screen(update, context); return
     if data == "proto_on_awg": await switch_do(update, context, "awg", True); return
     if data == "proto_on_xray": await switch_do(update, context, "xray", True); return
+    if data == "proto_onok_xray":
+        # «Включить всё равно» — владелец прочитал список недостающего.
+        context.user_data["xr_force_on"] = True
+        await switch_do(update, context, "xray", True); return
     # offok проверяется раньше off_: короткий префикс перехватил бы длинный
     if data.startswith("proto_offok_"):
         await switch_do(update, context, data.split("_")[-1], False); return
@@ -1594,7 +1601,14 @@ async def post_init(application):
     # Имена: адреса людей могли смениться, пока бот лежал, — раскладку стоит
     # пересобрать при старте, как это делается с ролями и фильтрами.
     try:
-        from dnsnames import apply_names, ensure_node_name
+        from dnsnames import apply_names, ensure_node_name, migrate_zone, zone
+        # Зона могла смениться, пока бот лежал: владелец вписал имя узла, и
+        # контейнер пересоздался уже с ним. Переезд идёт первым — всё, что
+        # ниже, обязано видеть имена в сегодняшней зоне, а не во вчерашней.
+        moved, clashed = await migrate_zone()
+        if moved or clashed:
+            print(f"Имена: зона теперь «{zone()}», переехало {moved}" +
+                  (f", занято: {', '.join(clashed)}" if clashed else ""))
         # Служебное имя заводим при старте: с ним у владельца сразу есть
         # рабочий пример, а страница отказа перестаёт быть адресом с цифрами.
         await ensure_node_name()

@@ -289,9 +289,22 @@ async def xray_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
                  else "Подписки: _адрес не задан, автообновление выключено_")
     lines.append("Приложение: Happ, ссылки на все системы")
 
+    # Готовность — прямо здесь, а не в отдельном углу. Недостающее у Xray
+    # отказывает молча, и заметить это по одной строке «включён» невозможно.
+    ready = await xray.readiness()
+    if any(not ok for ok, _must, _n, _w, _cb in ready):
+        lines += ["", "**Чего не хватает:**"]
+        for ok, must, nm, why, _cb in ready:
+            if ok:
+                continue
+            lines.append(f"{'❌' if must else '⚠️'} {nm} — {why}")
+
     kb = [[InlineKeyboardButton("🔄 Применить конфиг заново", callback_data="xr_apply")],
           [InlineKeyboardButton("🎭 Маска входа", callback_data="xr_mask"),
            InlineKeyboardButton("📱 Приложения", callback_data="xr_apps")]]
+    for ok, _must, nm, _why, cb in ready:
+        if not ok and cb not in ("xr_apply", "xr_mask"):
+            kb.append([InlineKeyboardButton(f"➡️ {nm}", callback_data=cb)])
     if xr.get("enabled"):
         kb.append([InlineKeyboardButton("⏹ Выключить протокол", callback_data="proto_off_xray")])
     else:
@@ -350,6 +363,24 @@ async def mask_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines.append("")
 
     kb = []
+
+    # Своя заглушка — первой строкой, потому что она отличается от остальных не
+    # доменом, а устройством: чужие маски мы одалживаем, эту держим сами.
+    ready, why = xray.self_mask_ready()
+    if ready or cur == xray.SELF_DEST:
+        from utils import public_domain
+        mark = "✅ " if cur == xray.SELF_DEST else ""
+        kb.append([InlineKeyboardButton(f"{mark}свой сайт · 0 мс",
+                                        callback_data=f"xr_mask_{xray.SELF_DEST}")])
+        lines.append(f"• `свой сайт` — страница-заглушка на самом узле, имя "
+                     f"`{escape_md(public_domain() or '—')}`, сертификат наш. "
+                     f"Ни от кого не зависит — и отвечает мгновенно.")
+        if not ready:
+            lines.append(f"  ⚠️ Сейчас недоступна: {why}.")
+    else:
+        lines.append(f"• `свой сайт` — недоступен: {why}. Это маска на самом "
+                     f"узле, она не зависит от чужих сайтов.")
+
     for host, ping, note in MASKS:
         mark = "✅ " if host == cur else ""
         pool = len(xray.mask_names(host))
@@ -357,6 +388,11 @@ async def mask_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                         callback_data=f"xr_mask_{host}")])
         tail = f" · имён в пуле: {pool}" if pool > 1 else ""
         lines.append(f"• `{escape_md(host)}` — {note}{tail}")
+
+    lines.append("")
+    lines.append("_Запасные входы маску с основным не делят намеренно: упадёт "
+                 "одна — приложение перейдёт на живой вход само._")
+
     kb.append([InlineKeyboardButton("🔙 Xray", callback_data="proto_xray")])
 
     await show_screen(query, context, chr(10).join(lines),
@@ -368,7 +404,16 @@ async def mask_set(update: Update, context: ContextTypes.DEFAULT_TYPE, host):
     """Ставит выбранную маску и сразу применяет конфиг."""
     query = update.callback_query
     known = [h for h, _p, _n in MASKS]
-    if host not in known:
+    if host == xray.SELF_DEST:
+        # Проверяем ПЕРЕД тем, как ставить, а не после: Reality уводит к маске
+        # каждое рукопожатие, и вход с неподнятой заглушкой не работает ни у
+        # кого. Узнать об этом от людей было бы поздно.
+        ready, why = xray.self_mask_ready()
+        if not ready:
+            await query.answer(f"Свой сайт пока не годится: {why}",
+                               show_alert=True)
+            return
+    elif host not in known:
         await query.answer("Неизвестная маска", show_alert=True)
         return
     cur = await xray.settings()
@@ -437,6 +482,32 @@ async def switch_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE, nam
 
 async def switch_do(update: Update, context: ContextTypes.DEFAULT_TYPE, name, enabled):
     query = update.callback_query
+
+    # Перед включением Xray — список недостающего. Не запрет: обязательное он
+    # доделает сам (ключи создаются при применении конфига), а желательное —
+    # это решение владельца, и принимать его за него нельзя. Но принять его он
+    # должен сейчас, а не через неделю по жалобам.
+    if name == "xray" and enabled and not context.user_data.pop("xr_force_on", False):
+        miss = [r for r in await xray.readiness() if not r[0]]
+        if miss:
+            text = ["🔶 **Перед включением Xray**", "",
+                    "Не хватает вот этого:", ""]
+            for _ok, must, nm, why, _cb in miss:
+                text.append(f"{'❌' if must else '⚠️'} **{nm}** — {why}")
+            text += ["", "_Отмеченное крестом придётся сделать: без него вход "
+                         "не поднимется. Отмеченное знаком — на ваше "
+                         "усмотрение, Xray заработает и так._"]
+            kb = []
+            for _ok, _must, nm, _why, cb in miss:
+                kb.append([InlineKeyboardButton(f"➡️ {nm}", callback_data=cb)])
+            kb.append([InlineKeyboardButton("▶️ Включить всё равно",
+                                            callback_data="proto_onok_xray")])
+            kb.append([InlineKeyboardButton("Отмена", callback_data="proto_xray")])
+            await show_screen(query, context, chr(10).join(text),
+                              reply_markup=InlineKeyboardMarkup(kb),
+                              parse_mode=ParseMode.MARKDOWN)
+            return
+
     await query.answer("Минуту…")
     ok, msg = await xray.switch(name, enabled)
     await query.answer(msg, show_alert=not ok)

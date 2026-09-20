@@ -897,8 +897,15 @@ class Database:
             name, target_uuid, target_ip, comment)
 
     async def rename_dns_name(self, old_name, new_name):
-        """Меняет само имя, сохраняя цель."""
+        """Меняет само имя, сохраняя цель — и всё, что на него ссылается.
+
+        Правила доступа хранят имя строкой. Переименовать имя и не тронуть их
+        значит оставить правило, указывающее в пустоту: выглядит настроенным, а
+        доступа не даёт, и понять это можно только сверкой вручную.
+        """
         await self.execute("UPDATE dns_names SET name=$2 WHERE name=$1",
+                           old_name, new_name)
+        await self.execute("UPDATE role_grants SET name=$2 WHERE name=$1",
                            old_name, new_name)
 
     async def delete_dns_name(self, name):

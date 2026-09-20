@@ -101,7 +101,21 @@ async def main():
     profile = json.loads(resp.body.decode())
     check("личная сеть ключа внутри", "10.77.0.0/16" in profile["DirectIp"],
           "скрипту нужен профиль именно этого ключа")
-    check("общий список тоже", "10.0.0.0/8" in profile["DirectIp"])
+    # Целиком 10.0.0.0/8 в списке больше нет, и это сделано нарочно: внутри
+    # него лежит сеть самого туннеля, а прямые правила приложение применяет
+    # РАНЬШЕ туннельных. Пока сеть узла оставалась внутри «домашнего»
+    # диапазона, запросы к нашему резолверу уходили мимо туннеля. Поэтому
+    # диапазон приезжает кусками, с вырезанной серединой.
+    import ipaddress
+    direct = [ipaddress.ip_network(x) for x in profile["DirectIp"]
+              if ":" not in x]
+    home = ipaddress.ip_address("10.200.0.1")
+    node = ipaddress.ip_address("10.13.13.1")
+    check("домашний диапазон на месте", any(home in n for n in direct),
+          str(profile["DirectIp"])[:120])
+    check("а сеть туннеля из него вырезана",
+          not any(node in n for n in direct),
+          "иначе запросы к нашему резолверу уйдут мимо туннеля")
 
     class Bad:
         match_info = {"token": "нет-такого"}

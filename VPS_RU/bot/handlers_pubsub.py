@@ -253,34 +253,23 @@ def status_line():
 # в `volumes/flags`, демон на хосте пишет её в файл и пересоздаёт контейнеры.
 # Своими руками в `.env` не лезет никто.
 
-DOMAIN_RE = None
-
-
 def domain_ok(name):
     """Похоже ли это на имя, которое выдержит выпуск сертификата.
 
     Проверяем до отправки, а не после: certbot отказывает на минуте ожидания, и
     человек к тому времени уже не помнит, что именно вписал.
+
+    Разбор общий с остальными — в utils. Раньше он был свой, и это значило, что
+    имя, принятое здесь, могло не совпасть с тем, что увидит подписка или зона
+    имён внутри туннеля.
     """
-    global DOMAIN_RE
-    if DOMAIN_RE is None:
-        import re
-        DOMAIN_RE = re.compile(
-            r"^(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))+$")
-    name = (name or "").strip().lower()
-    if not name or len(name) > 253:
-        return None
-    # Частая ошибка: вставляют ссылку целиком. Чиним молча, это не опечатка,
-    # а разумное поведение человека.
-    for junk in ("https://", "http://"):
-        if name.startswith(junk):
-            name = name[len(junk):]
-    name = name.split("/")[0].split(":")[0].strip(".")
-    return name if DOMAIN_RE.match(name) else None
+    from utils import public_domain
+    return public_domain(name) or None
 
 
 def current_domain():
-    return (os.getenv("PUBLIC_DOMAIN") or "").strip()
+    from utils import public_domain
+    return public_domain()
 
 
 async def domain_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -300,6 +289,11 @@ async def domain_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "умерла разом у всех.",
         "• **Подписку можно увести на 443.** Нестандартные порты режут "
         "мобильные операторы, и тогда профиль не доезжает до телефона вовсе.",
+        "• **Имена внутри туннеля переезжают в это же имя.** «дом.vpn» "
+        "становится «дом.<имя>», и зона остаётся одна. Правила доступа "
+        "переезжают вместе с именами.",
+        "• **Маской входа может стать свой сайт.** Тогда вход перестаёт "
+        "зависеть от чужого: сертификат наш, отклик нулевой.",
         "",
         "Маску подключения имя не заменяет: она остаётся на крупном стороннем "
         "сайте, безликое имя в ней только мешает.",
