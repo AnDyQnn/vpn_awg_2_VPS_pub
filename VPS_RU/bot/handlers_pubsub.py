@@ -150,6 +150,10 @@ async def screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         kb.append([InlineKeyboardButton("🌐 Открыть наружу",
                                         callback_data="psub_on")])
+    have = (os.getenv("PUBLIC_DOMAIN") or "").strip()
+    kb.append([InlineKeyboardButton(
+        ("🌐 Имя · " + have) if have else "🌐 Задать своё имя",
+        callback_data="psub_domain")])
     kb.append([InlineKeyboardButton("🔙 Администрирование",
                                     callback_data="svc_menu")])
 
@@ -239,3 +243,112 @@ def status_line():
     if left is not None and left < 1:
         tail += " ⚠️"
     return "🌐 *Подписка наружу:* открыта" + tail
+
+
+# --- Своё имя узла -----------------------------------------------------------
+#
+# Домен нигде в коде не зашит: у каждой установки он свой, а копия проекта не
+# должна требовать правки исходников. Живёт он в `.env` ноды, а вписывается
+# отсюда — тем же путём, что пароль архива и токен панелей: бот кладёт просьбу
+# в `volumes/flags`, демон на хосте пишет её в файл и пересоздаёт контейнеры.
+# Своими руками в `.env` не лезет никто.
+
+DOMAIN_RE = None
+
+
+def domain_ok(name):
+    """Похоже ли это на имя, которое выдержит выпуск сертификата.
+
+    Проверяем до отправки, а не после: certbot отказывает на минуте ожидания, и
+    человек к тому времени уже не помнит, что именно вписал.
+    """
+    global DOMAIN_RE
+    if DOMAIN_RE is None:
+        import re
+        DOMAIN_RE = re.compile(
+            r"^(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))+$")
+    name = (name or "").strip().lower()
+    if not name or len(name) > 253:
+        return None
+    # Частая ошибка: вставляют ссылку целиком. Чиним молча, это не опечатка,
+    # а разумное поведение человека.
+    for junk in ("https://", "http://"):
+        if name.startswith(junk):
+            name = name[len(junk):]
+    name = name.split("/")[0].split(":")[0].strip(".")
+    return name if DOMAIN_RE.match(name) else None
+
+
+def current_domain():
+    return (os.getenv("PUBLIC_DOMAIN") or "").strip()
+
+
+async def domain_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Что даёт своё имя и как его задать."""
+    query = update.callback_query
+    have = current_domain()
+    lines = ["🌐 **Своё имя узла**", ""]
+    if have:
+        lines += [f"Сейчас: `{have}`", ""]
+    else:
+        lines += ["Сейчас имени нет — работаем по адресу.", ""]
+    lines += [
+        "Что меняется, когда имя есть:",
+        "",
+        "• **Сертификат живёт 90 дней вместо 160 часов.** На голый адрес "
+        "Let's Encrypt выдаёт только короткий; пропустили продление — подписка "
+        "умерла разом у всех.",
+        "• **Подписку можно увести на 443.** Нестандартные порты режут "
+        "мобильные операторы, и тогда профиль не доезжает до телефона вовсе.",
+        "",
+        "Маску подключения имя не заменяет: она остаётся на крупном стороннем "
+        "сайте, безликое имя в ней только мешает.",
+        "",
+        "_Перед тем как вписывать, заведите A-запись домена на адрес узла и "
+        "дождитесь, пока она разойдётся. Если имя ещё не отвечает, выпуск "
+        "сертификата на него не пройдёт — подписка останется на адресе, и я "
+        "скажу об этом._",
+    ]
+    kb = [[InlineKeyboardButton("✏️ Задать имя", callback_data="psub_domain_set")]]
+    if have:
+        kb.append([InlineKeyboardButton("🗑 Убрать имя",
+                                        callback_data="psub_domain_off")])
+    kb.append([InlineKeyboardButton("🔙 Подписка наружу",
+                                    callback_data="psub_menu")])
+    await show_screen(query, context, "\n".join(lines),
+                      reply_markup=InlineKeyboardMarkup(kb),
+                      parse_mode=ParseMode.MARKDOWN)
+
+
+async def domain_ask(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Просит вписать имя."""
+    query = update.callback_query
+    context.user_data["state"] = "awaiting_public_domain"
+    await show_screen(
+        query, context,
+        "✏️ **Пришлите имя узла**\n\nОдной строкой, без `https://` и без "
+        "косой черты в конце. Например: `example.ru`",
+        reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton("✖️ Отмена", callback_data="psub_domain")]]),
+        parse_mode=ParseMode.MARKDOWN)
+
+
+async def domain_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Убирает имя: возвращаемся на адрес."""
+    from utils import request_env_change, env_change_applied
+    query = update.callback_query
+    await query.answer("Убираю…")
+    flag = request_env_change("PUBLIC_DOMAIN", "")
+    ok = await env_change_applied(flag)
+    await db.log_event("Подписки", "Своё имя узла убрано" if ok
+                       else "Просьба убрать имя положена, демон не ответил")
+    await show_screen(
+        query, context,
+        ("🌐 Имя убрано — подписка вернётся на адрес при следующем выпуске "
+         "сертификата." if ok else
+         "⚠️ Просьба положена, но демон на хосте не ответил.\n"
+         "`systemctl status vpn-updater`"),
+        reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton("🔙 Подписка наружу",
+                                   callback_data="psub_menu")]]),
+        parse_mode=ParseMode.MARKDOWN)

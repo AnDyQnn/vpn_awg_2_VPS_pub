@@ -148,13 +148,24 @@ port80_free() {
     return 0
 }
 
+# Домен берётся из .env ноды, а не из кода: он у каждой установки свой, и
+# зашивать его в проект значит требовать правку кода от каждого, кто поднимет
+# копию. Пусто — работаем по адресу, как и раньше.
+read_domain() {
+    [ -f "$NODE_DIR/.env" ] || return 0
+    grep -E "^PUBLIC_DOMAIN=" "$NODE_DIR/.env" 2>/dev/null |
+        tail -1 | cut -d= -f2- | tr -d "\"' \r"
+}
+
 issue() {
+    DOMAIN="$(read_domain)"
     IP="$(public_ip)"
     if [ -z "$IP" ]; then
         report "error" "не удалось определить свой публичный адрес"
         return 1
     fi
     say "адрес: $IP"
+    [ -n "$DOMAIN" ] && say "домен: $DOMAIN"
 
     CB="$(ensure_certbot)"
     if [ -z "$CB" ]; then
@@ -169,18 +180,46 @@ issue() {
         return 1
     fi
 
-    # --ip-address, а не -d: для адреса это отдельный флаг. Профиль shortlived
-    # обязателен — остальные профили IP не принимают вовсе. Проверка только
-    # http-01 или tls-alpn-01: DNS-01 для адреса невозможен по определению.
-    "$CB" certonly --standalone --non-interactive --agree-tos \
-        --register-unsafely-without-email \
-        --preferred-profile shortlived \
-        --cert-name "$CERT_NAME" \
-        --ip-address "$IP" >/tmp/certbot.log 2>&1
-    if [ $? -ne 0 ]; then
-        report "error" "сертификат не выдан, подробности в /tmp/certbot.log"
-        tail -8 /tmp/certbot.log | sed 's/^/[подписка]   /'
-        return 1
+    # Два разных случая, и путать их нельзя.
+    #
+    # ДОМЕН — обычная выдача через `-d`, срок девяносто дней, профиль по
+    # умолчанию. Так живёт весь интернет.
+    #
+    # АДРЕС — отдельный флаг `--ip-address` и обязательный профиль
+    # `shortlived`: остальные профили IP не принимают вовсе, а срок у такого
+    # сертификата сто шестьдесят часов, меньше недели. Проверка только http-01
+    # или tls-alpn-01 — DNS-01 для адреса невозможен по определению.
+    #
+    # Домен поэтому не просто «красивее»: он снимает недельный срок и вместе с
+    # ним целый класс отказов, когда продление не прошло и вход умер у всех.
+    if [ -n "$DOMAIN" ]; then
+        say "выпускаю на домен (срок 90 дней)"
+        "$CB" certonly --standalone --non-interactive --agree-tos \
+            --register-unsafely-without-email \
+            --cert-name "$CERT_NAME" \
+            -d "$DOMAIN" >/tmp/certbot.log 2>&1
+        RC=$?
+        if [ $RC -ne 0 ]; then
+            # Домен мог не разойтись по миру: свежая запись расходится до
+            # суток. Не бросаем человека без подписки — откатываемся на адрес,
+            # который работал до сих пор, и говорим об этом вслух.
+            report "warning" "на домен не вышло — беру адрес; подробности в /tmp/certbot.log"
+            tail -5 /tmp/certbot.log | sed 's/^/[подписка]   /'
+            DOMAIN=""
+        fi
+    fi
+    if [ -z "$DOMAIN" ]; then
+        say "выпускаю на адрес (срок 160 часов)"
+        "$CB" certonly --standalone --non-interactive --agree-tos \
+            --register-unsafely-without-email \
+            --preferred-profile shortlived \
+            --cert-name "$CERT_NAME" \
+            --ip-address "$IP" >/tmp/certbot.log 2>&1
+        if [ $? -ne 0 ]; then
+            report "error" "сертификат не выдан, подробности в /tmp/certbot.log"
+            tail -8 /tmp/certbot.log | sed 's/^/[подписка]   /'
+            return 1
+        fi
     fi
     copy_cert
 }

@@ -276,6 +276,10 @@ async def service_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
          # Не «Поддержка»: ниже есть «🆘 Поддержка» про обращения, и две кнопки
          # с одним словом читаются как одна и та же.
          InlineKeyboardButton("💳 Донаты", callback_data="don_menu")],
+        # Счета за сервера — тоже про деньги, и искать их владелец будет
+        # там же, где донаты.
+        [InlineKeyboardButton("🧾 Счета за сервера",
+                              callback_data="bill_menu")],
         [InlineKeyboardButton(
             "📋 Ждут решения" + (f" · {len(decisions)}" if decisions else ""),
             callback_data="kd_list"),

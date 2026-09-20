@@ -385,6 +385,28 @@ class Database:
             # value лежит file_id телеграма — по нему бот пересылает её без
             # файла на диске.
             await self.execute("""
+                CREATE TABLE IF NOT EXISTS billing_services (
+                    id SERIAL PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    url TEXT,
+                    -- Цена ЗА МЕСЯЦ, в рублях. Хранится помесячно, а не за
+                    -- платёж, потому что человек помнит тариф («двести в
+                    -- месяц»), а не сумму списания за квартал. Сумму к оплате
+                    -- считаем сами: цена × число месяцев в периоде.
+                    monthly NUMERIC(10, 2) NOT NULL DEFAULT 0,
+                    -- Раз во сколько месяцев платим: 1 — ежемесячно, 3 —
+                    -- поквартально, 12 — раз в год.
+                    period_months INTEGER NOT NULL DEFAULT 1,
+                    -- Ближайшая дата, до которой надо заплатить.
+                    due_date DATE,
+                    -- За сколько дней предупредить.
+                    notify_days INTEGER NOT NULL DEFAULT 5,
+                    is_active BOOLEAN DEFAULT TRUE,
+                    note TEXT,
+                    created_at TIMESTAMP DEFAULT NOW()
+                );
+            """)
+            await self.execute("""
                 CREATE TABLE IF NOT EXISTS donate_methods (
                     id SERIAL PRIMARY KEY,
                     kind TEXT NOT NULL,
@@ -1621,6 +1643,69 @@ class Database:
             % int(self.HITS_KEEP_NEW_DAYS))
         after = await self.fetch_val("SELECT COUNT(*) FROM filter_hits") or 0
         return before - after
+
+
+    # ---------------------------------------------------------------- счета --
+    #
+    # Зачем это в боте. Сервера оплачиваются раз в квартал, и забыть про
+    # платёж — значит однажды обнаружить выключенный узел и тридцать человек
+    # без связи. Напоминание в том же месте, где всё остальное управление, —
+    # дешёвая страховка от дорогой ошибки.
+
+    async def billing_list(self, only_active=True):
+        where = "WHERE is_active" if only_active else ""
+        rows = await self.fetch_all(
+            f"SELECT id, name, url, monthly, period_months, due_date, "
+            f"notify_days, is_active, note FROM billing_services {where} "
+            f"ORDER BY due_date NULLS LAST, name")
+        return [dict(r) for r in rows]
+
+    async def billing_get(self, sid):
+        rows = await self.fetch_all(
+            "SELECT * FROM billing_services WHERE id=$1", int(sid))
+        return dict(rows[0]) if rows else None
+
+    async def billing_add(self, name, url, monthly, period_months,
+                          due_date, notify_days):
+        await self.execute(
+            "INSERT INTO billing_services "
+            "(name, url, monthly, period_months, due_date, notify_days) "
+            "VALUES ($1,$2,$3,$4,$5,$6)",
+            name, url, monthly, int(period_months), due_date, int(notify_days))
+
+    async def billing_set(self, sid, **fields):
+        """Правит только переданные поля: экран меняет по одному за раз."""
+        allowed = ("name", "url", "monthly", "period_months", "due_date",
+                   "notify_days", "is_active", "note")
+        sets, args = [], []
+        for k, v in fields.items():
+            if k not in allowed:
+                continue
+            args.append(v)
+            sets.append("%s=$%d" % (k, len(args)))
+        if not sets:
+            return
+        args.append(int(sid))
+        await self.execute(
+            "UPDATE billing_services SET %s WHERE id=$%d" % (
+                ", ".join(sets), len(args)), *args)
+
+    async def billing_delete(self, sid):
+        await self.execute("DELETE FROM billing_services WHERE id=$1", int(sid))
+
+    async def billing_due(self, within_days=0):
+        """Сервисы, по которым пора напоминать.
+
+        «Пора» считается по самому сервису: у каждого свой запас дней. Один
+        хостер присылает счёт за неделю, другой отключает в день окончания.
+        """
+        rows = await self.fetch_all(
+            "SELECT id, name, url, monthly, period_months, due_date, "
+            "notify_days FROM billing_services "
+            "WHERE is_active AND due_date IS NOT NULL "
+            "AND due_date <= CURRENT_DATE + (notify_days + $1) * INTERVAL '1 day' "
+            "ORDER BY due_date, name", int(within_days))
+        return [dict(r) for r in rows]
 
     async def cleanup_old_logs(self, days=7):
         await self.execute(f"DELETE FROM events_log WHERE timestamp < NOW() - INTERVAL '{days} DAYS'")

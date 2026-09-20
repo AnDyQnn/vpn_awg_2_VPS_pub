@@ -36,6 +36,7 @@ from monitor import (
     reconcile_routing_versions, repair_traffic_directions, geo_files_loop,
     xray_connect_watch_loop
 )
+from billing import reminder_loop as billing_reminder_loop
 from wireguard_manager import pause_peer, resume_peer
 
 from handlers_client import (
@@ -523,6 +524,103 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                        parse_mode=ParseMode.MARKDOWN)
         return
 
+    # Своё имя узла. Проверяем ДО отправки: certbot откажет на минуте ожидания,
+    # и человек к тому времени уже не помнит, что вписал.
+    if state == "awaiting_public_domain":
+        context.user_data["state"] = None
+        import handlers_pubsub as hps
+        raw = (update.message.text or "").strip()
+        await safe_delete(context, chat_id, user_msg_id)
+        name = hps.domain_ok(raw)
+        if not name:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="⚠️ Это не похоже на имя узла. Нужно вроде "
+                     "`example.ru` — без `https://` и без косой черты.",
+                parse_mode=ParseMode.MARKDOWN)
+            return
+        flag = request_env_change("PUBLIC_DOMAIN", name)
+        await context.bot.send_message(
+            chat_id=chat_id, text="🌐 Имя передано на сервер. Жду, пока применится…")
+        if await env_change_applied(flag):
+            text = ("🌐 Имя `%s` записано — бот сейчас перезапустится.\n\n"
+                    "Дальше нажмите «Обновить сертификат» в разделе подписки: "
+                    "он выпустится уже на имя, на девяносто дней вместо "
+                    "ста шестидесяти часов." % name)
+        else:
+            text = ("⚠️ **Имя не применилось.**\n\n"
+                    "Записывает его служба обновлений на сервере, и она не "
+                    "ответила:\n`systemctl status vpn-updater`\n\n"
+                    "Просьба не потеряна и применится, когда служба поднимется.")
+        await context.bot.send_message(chat_id=chat_id, text=text,
+                                       parse_mode=ParseMode.MARKDOWN)
+        return
+
+    # Новый сервис в счетах: одной строкой через точку с запятой.
+    if state == "awaiting_billing_add":
+        context.user_data["state"] = None
+        import billing
+        raw = (update.message.text or "").strip()
+        await safe_delete(context, chat_id, user_msg_id)
+        parsed = billing.parse_add(raw)
+        if isinstance(parsed, str):
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="\u26a0\ufe0f Не разобрал: %s.\n\n"
+                     "Нужно так: `имя; цена; период; дата; ссылка`" % parsed,
+                parse_mode=ParseMode.MARKDOWN)
+            return
+        await db.billing_add(parsed["name"], parsed["url"], parsed["monthly"],
+                             parsed["period_months"], parsed["due_date"], 5)
+        await db.log_event("Счета", "Добавлен сервис %s" % parsed["name"])
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="\U0001f4b3 **%s** добавлен: %s за раз, %s, до %s." % (
+                parsed["name"], billing.money(
+                    parsed["monthly"] * parsed["period_months"]),
+                billing.period_name(parsed["period_months"]),
+                parsed["due_date"].strftime("%d.%m.%Y")),
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(
+                "\U0001f4b3 Счета", callback_data="bill_menu")]]))
+        return
+
+    # Правка одного поля сервиса.
+    if state == "awaiting_billing_edit":
+        context.user_data["state"] = None
+        import billing
+        field = context.user_data.pop("bill_field", "")
+        sid = context.user_data.pop("bill_id", "")
+        raw = (update.message.text or "").strip()
+        await safe_delete(context, chat_id, user_msg_id)
+        bad = None
+        try:
+            if field == "monthly":
+                await db.billing_set(sid, monthly=float(
+                    raw.replace(",", ".").replace(" ", "")))
+            elif field == "period":
+                n = int(raw)
+                if n < 1 or n > 60:
+                    raise ValueError
+                await db.billing_set(sid, period_months=n)
+            elif field == "due":
+                when = billing.parse_date(raw)
+                if not when:
+                    raise ValueError
+                await db.billing_set(sid, due_date=when)
+            elif field == "url":
+                await db.billing_set(sid, url=raw[:200])
+            else:
+                bad = "непонятно, что правим"
+        except ValueError:
+            bad = "не разобрал значение"
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=("\u26a0\ufe0f " + bad) if bad else "\u2705 Записано.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(
+                "\U0001f4b3 К сервису", callback_data="bill_open_" + str(sid))]]))
+        return
+
     # Кастомная рассылка: админ прислал свой текст → шлём его ВСЕМ пользователям.
     if state == "awaiting_broadcast_text":
         context.user_data["state"] = None
@@ -892,6 +990,45 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if data == "psub_on": await hps.turn_on(update, context); return
         if data == "psub_off": await hps.turn_off(update, context); return
         if data == "psub_renew": await hps.renew_now(update, context); return
+        if data == "psub_domain": await hps.domain_screen(update, context); return
+        if data == "psub_domain_set": await hps.domain_ask(update, context); return
+        if data == "psub_domain_off": await hps.domain_off(update, context); return
+    # Счета за сервера: напоминания об оплате хостингов.
+    if data.startswith("bill_"):
+        import billing
+        if data == "bill_menu": await billing.menu(update, context); return
+        if data == "bill_add": await billing.add_request(update, context); return
+        if data.startswith("bill_open_"):
+            await billing.open_service(update, context, data.split("_")[-1]); return
+        if data.startswith("bill_paid_"):
+            await billing.mark_paid(update, context, data.split("_")[-1]); return
+        if data.startswith("bill_toggle_"):
+            sid = data.split("_")[-1]
+            s = await db.billing_get(sid)
+            if s:
+                await db.billing_set(sid, is_active=not s["is_active"])
+            await billing.open_service(update, context, sid); return
+        if data.startswith("bill_del_"):
+            sid = data.split("_")[-1]
+            await db.billing_delete(sid)
+            await billing.menu(update, context); return
+        if data.startswith("bill_ed_"):
+            # Правка одного поля: что именно правим, помним до ответа текстом.
+            field, sid = data[len("bill_ed_"):].rsplit("_", 1)
+            context.user_data["state"] = "awaiting_billing_edit"
+            context.user_data["bill_field"] = field
+            context.user_data["bill_id"] = sid
+            hint = {"monthly": "цену в месяц, числом",
+                    "due": "дату платежа, вроде 15.10.2026",
+                    "period": "период в месяцах: 1, 3, 6 или 12",
+                    "url": "ссылку на личный кабинет"}.get(field, "значение")
+            await show_screen(
+                update.callback_query, context,
+                "✏️ Пришлите " + hint,
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(
+                    "✖️ Отмена", callback_data="bill_open_" + sid)]]))
+            return
+
     if data == "svc_load": await load_screen(update, context); return
     if data.startswith("svc_ev_del_"):
         await event_delete(update, context, data.split("svc_ev_del_")[1]); return
@@ -1502,6 +1639,9 @@ async def post_init(application):
         asyncio.create_task(hits_loop(application)),
         # Гео-файлы для приложения: без них профиль маршрутизации не применяется.
         asyncio.create_task(geo_files_loop(application)),
+        # Счета за сервера: напомнить об оплате заранее. Забытый платёж —
+        # это выключенный узел и тридцать человек без связи.
+        asyncio.create_task(billing_reminder_loop(application)),
         # Кто вышел на связь по Xray. У AmneziaWG это ловит рукопожатие, у
         # Xray его нет — и о включении ключа не сообщал никто.
         asyncio.create_task(xray_connect_watch_loop(application)),
