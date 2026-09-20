@@ -185,6 +185,37 @@ def build_a_response(query, qend, qtype, ip, ttl=BLOCK_TTL):
     return tid + flags + counts + question
 
 
+# IPv6 мы не отдаём. Совсем.
+#
+# Выход у нас только по IPv4: у узла нет ни маршрута по умолчанию для IPv6, ни
+# связи по нему вовсе — проверено на живом. Германия, через которую всё уходит,
+# тоже доступна только по четвёрке.
+#
+# А наверх мы ходили как обычный резолвер и честно пересказывали людям чужие
+# AAAA-записи. Для `youtube.com` их четыре. Современный телефон, увидев
+# IPv6-адрес, предпочитает его — и упирается в тупик с обеих сторон: через
+# туннель узел такой адрес не вывезет, мимо туннеля это российская сеть, где
+# ютуб и закрыт. Снаружи выглядит как «подключился, и ничего не грузится».
+#
+# Отвечаем «имя есть, записей такого типа нет» — это ровно то, что видит
+# клиент, когда у сайта действительно нет IPv6, и он спокойно берёт IPv4.
+# Именно пустой успех, а не отказ: отказ клиент примет за «имени не
+# существует» и не станет спрашивать четвёрку вовсе.
+#
+# Когда у узла появится настоящий IPv6 — эту заглушку надо снять, иначе мы
+# будем прятать связь, которая уже есть.
+AAAA = 28
+
+
+def build_no_records(query, qend):
+    """Пустой успех: имя есть, записей запрошенного типа нет."""
+    tid = query[0:2]
+    question = query[12:qend]
+    flags = struct.pack("!H", 0x8180)
+    counts = struct.pack("!HHHH", 1, 0, 0, 0)
+    return tid + flags + counts + question
+
+
 def build_block_response(query, qend, qtype):
     """Ответ «заблокировано»: на запрос адреса отдаём адрес страницы отказа,
     на всё остальное — NXDOMAIN. Так человек видит объяснение, а не пустоту."""
@@ -518,6 +549,10 @@ class DnsProtocol(asyncio.DatagramProtocol):
                 record_hit(addr[0], name, cat)
                 self.transport.sendto(build_block_response(data, qend, qtype), addr)
                 return
+            if qtype == AAAA:
+                # Наверх за шестёркой не ходим: отдавать её всё равно нельзя.
+                self.transport.sendto(build_no_records(data, qend), addr)
+                return
         try:
             answer = await forward(data, upstream=NAMES.upstream_for(addr[0]))
         except Exception:
@@ -570,6 +605,8 @@ async def handle_tcp(reader, writer):
                 answer = build_a_response(data, qend, qtype, own)
             elif _tcp_blocked(ip, name):
                 answer = build_block_response(data, qend, qtype)
+            elif qtype == AAAA:
+                answer = build_no_records(data, qend)
         if answer is None:
             try:
                 answer = await forward(data, upstream=NAMES.upstream_for(ip))
