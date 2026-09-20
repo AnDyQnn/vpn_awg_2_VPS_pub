@@ -295,44 +295,84 @@ async def filters_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def allow_screen(update: Update, context: ContextTypes.DEFAULT_TYPE,
                        uuid_val=None):
-    """Список исключений: общих или одного ключа."""
+    """Исключения из запретов: общие или для одного человека.
+
+    Исключение — это «можно вопреки запрету». Видов три: сайт всем, сайт одному
+    и целая категория одному. Третий раньше жил на другом экране, и человек,
+    пришедший сюда со словами «открой мне весь этот блок», его не находил.
+    """
     query = update.callback_query
     rows = await db.list_filter_allow(uuid_val=uuid_val, common=uuid_val is None)
 
     if uuid_val:
         user = await db.get_user_by_uuid(uuid_val)
         who = escape_md((user or {}).get("name") or uuid_val[:8])
-        head = f"🟢 **Исключения из запретов · {who}**"
+        head = f"🟢 **Исключения · {who}**"
+        # Назад — к человеку, откуда сюда и приходят.
         back = f"flt_user_{uuid_val}"
         add = f"flt_alw_add_{uuid_val}"
-        scope = ("Эти сайты открыты **только этому ключу**, даже если категория "
-                 "закрыта ему или всем.")
+        scope = ("Открыто **только этому ключу**, даже если категория закрыта "
+                 "ему или всем.")
     else:
-        head = "🟢 **Общие исключения из запретов**"
-        back = "flt_common"
+        head = "🟢 **Общие исключения**"
+        # Назад — в меню фильтров: именно оттуда сюда и жмут. Раньше вело в
+        # «Общие правила» — экран, с которого сюда не приходят вовсе.
+        back = "flt_menu"
         add = "flt_alw_add_all"
-        scope = ("Эти сайты открыты **всем**, даже если закрыта категория, "
-                 "в которую они входят.")
+        scope = ("Открыто **всем**, даже если закрыта категория, в которую эти "
+                 "сайты входят.")
 
-    lines = [head, "", scope, ""]
+    lines = [head, "", scope, "", "**Сайты:**"]
     if not rows:
-        lines.append("_Пока пусто._")
+        lines.append("_пока пусто_")
     else:
         for row in rows:
             lines.append(f"  🟢 `{escape_md(row['domain'])}`")
-    lines += ["", "_Разрешение сильнее запрета, а личное сильнее общего: "
-                  "правило про конкретного человека заведомо осознаннее._"]
 
     kb = [[InlineKeyboardButton("➕ Разрешить сайт", callback_data=add)]]
+    if not uuid_val:
+        # Отсюда начинается «открыть кому-то конкретному»: человек приходит на
+        # общий экран и ищет, как сделать исключение для себя.
+        kb.append([InlineKeyboardButton("👤 Исключения для человека",
+                                        callback_data="flt_pick_0")])
     for row in rows:
         kb.append([InlineKeyboardButton(f"🗑 {row['domain'][:28]}",
                                         callback_data=f"flt_alw_del_{row['id']}"
                                                       f"_{uuid_val or 'all'}")])
+
+    # --- Третий вид: категория целиком, и только для человека ---------------
+    #
+    # Для «всех» его не бывает по смыслу: снять общий запрет со всех — это и
+    # есть выключить общий запрет, для чего есть свой экран.
+    if uuid_val:
+        common = set(await db.get_common_filters())
+        exempt = set(await db.get_user_exempt(uuid_val))
+        titles = dict(await all_categories())
+
+        lines += ["", "**Категории целиком:**"]
+        if not common:
+            lines.append("_для всех ничего не закрыто — выводить не из чего_")
+        else:
+            opened = [titles.get(k, k) for k in sorted(common) if k in exempt]
+            lines.append("открыто: " + (", ".join(opened) if opened else "ничего"))
+            lines.append("")
+            lines.append("_Нажмите категорию, чтобы открыть её этому человеку "
+                         "вопреки общему запрету._")
+            for key in sorted(common):
+                mark = "🟢 " if key in exempt else "🌍 "
+                kb.append([InlineKeyboardButton(
+                    mark + titles.get(key, key),
+                    callback_data=f"flt_xa_{key}_{uuid_val}")])
+
+    lines += ["", "_Разрешение сильнее запрета, а личное сильнее общего: "
+                  "правило про конкретного человека заведомо осознаннее._"]
+
     kb.append([InlineKeyboardButton("🔙 Назад", callback_data=back)])
 
-    await show_screen(query, context, "\n".join(lines),
+    await show_screen(query, context, chr(10).join(lines),
                       reply_markup=InlineKeyboardMarkup(kb),
                       parse_mode=ParseMode.MARKDOWN)
+
 
 
 async def allow_add_request(update: Update, context: ContextTypes.DEFAULT_TYPE,
@@ -751,7 +791,7 @@ async def user_filters_screen(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def toggle_exempt(update: Update, context: ContextTypes.DEFAULT_TYPE,
-                        uuid_val: str, category: str):
+                        uuid_val: str, category: str, back: str = "user"):
     """Снимает с человека общую категорию или возвращает её."""
     query = update.callback_query
     now = set(await db.get_user_exempt(uuid_val))
@@ -765,7 +805,13 @@ async def toggle_exempt(update: Update, context: ContextTypes.DEFAULT_TYPE,
                            else ("«%s» снова закрыта по общему правилу" % name))
     else:
         await query.answer(msg, show_alert=True)
-    await user_filters_screen(update, context, uuid_val)
+    # Возвращаемся туда, откуда нажали. Один и тот же переключатель живёт на
+    # двух экранах, и уводить человека с того, где он работает, — верный способ
+    # заставить его искать дорогу обратно.
+    if back == "allow":
+        await allow_screen(update, context, uuid_val)
+    else:
+        await user_filters_screen(update, context, uuid_val)
 
 
 

@@ -1309,6 +1309,10 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await filters_pick_user(update, context, int(data.split("_")[-1])); return
     if data.startswith("flt_user_"):
         await user_filters_screen(update, context, data.split("_", 2)[2]); return
+    if data.startswith("flt_xa_"):
+        parts = data.split("_", 3)          # flt | xa | категория | uuid
+        await toggle_exempt(update, context, parts[3], parts[2],
+                            back="allow"); return
     if data.startswith("flt_exc_"):
         parts = data.split("_", 3)          # flt | exc | категория | uuid
         await toggle_exempt(update, context, parts[3], parts[2]); return

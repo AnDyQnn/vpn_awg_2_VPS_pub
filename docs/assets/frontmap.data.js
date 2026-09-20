@@ -689,6 +689,7 @@ window.FRONTMAP = {
     "filters_pick_user",
     "user_filters_screen",
     "toggle_exempt",
+    "toggle_exempt",
     "toggle_filter",
     "decision_screen",
     "extend_menu",
@@ -821,7 +822,7 @@ window.FRONTMAP = {
     {
      "label": "✍️ Своя рассылка (свой текст)",
      "data": "broadcast_custom",
-     "line": 1401,
+     "line": 1405,
      "dynamic": false,
      "to": "шаг: broadcast_custom",
      "how": "точно"
@@ -829,7 +830,7 @@ window.FRONTMAP = {
     {
      "label": "⚠️ Стандартное: тех. работы",
      "data": "do_maintenance_warn",
-     "line": 1402,
+     "line": 1406,
      "dynamic": false,
      "to": "broadcast_message",
      "how": "точно"
@@ -837,7 +838,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Отмена",
      "data": "back_to_main",
-     "line": 1403,
+     "line": 1407,
      "dynamic": false,
      "to": "return_to_main_menu",
      "how": "точно"
@@ -845,7 +846,7 @@ window.FRONTMAP = {
     {
      "label": "⏩ Пропустить",
      "data": "skip_tg_link",
-     "line": 1463,
+     "line": 1467,
      "dynamic": false,
      "to": "finish_key_creation",
      "how": "точно"
@@ -853,7 +854,7 @@ window.FRONTMAP = {
     {
      "label": "⏩ Пропустить",
      "data": "skip_tg_link",
-     "line": 1472,
+     "line": 1476,
      "dynamic": false,
      "to": "finish_key_creation",
      "how": "точно"
@@ -861,7 +862,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Отмена",
      "data": "user_detail_…",
-     "line": 1483,
+     "line": 1487,
      "dynamic": false,
      "to": "user_detail_menu",
      "how": "по приставке «user_detail_»"
@@ -869,7 +870,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Отмена",
      "data": "user_detail_…",
-     "line": 1495,
+     "line": 1499,
      "dynamic": false,
      "to": "user_detail_menu",
      "how": "по приставке «user_detail_»"
@@ -877,7 +878,7 @@ window.FRONTMAP = {
     {
      "label": "❌ …",
      "data": "do_unlink_…_…",
-     "line": 1504,
+     "line": 1508,
      "dynamic": false,
      "to": "user_detail_menu",
      "how": "по приставке «do_unlink_»"
@@ -885,7 +886,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Назад",
      "data": "user_detail_…",
-     "line": 1505,
+     "line": 1509,
      "dynamic": false,
      "to": "user_detail_menu",
      "how": "по приставке «user_detail_»"
@@ -893,7 +894,7 @@ window.FRONTMAP = {
     {
      "label": "🌍 Классический DNS (1.1.1.1)",
      "data": "set_dns_classic",
-     "line": 1457,
+     "line": 1461,
      "dynamic": false,
      "to": "шаг: set_dns_",
      "how": "по приставке «set_dns_»"
@@ -901,7 +902,7 @@ window.FRONTMAP = {
     {
      "label": "🛡 AdBlock DNS (Без рекламы)",
      "data": "set_dns_adblock",
-     "line": 1457,
+     "line": 1461,
      "dynamic": false,
      "to": "шаг: set_dns_",
      "how": "по приставке «set_dns_»"
@@ -909,7 +910,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Отмена",
      "data": "back_to_main",
-     "line": 1457,
+     "line": 1461,
      "dynamic": false,
      "to": "return_to_main_menu",
      "how": "точно"
@@ -917,7 +918,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Отмена",
      "data": "back_to_main",
-     "line": 1414,
+     "line": 1418,
      "dynamic": false,
      "to": "return_to_main_menu",
      "how": "точно"
@@ -925,7 +926,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 В меню",
      "data": "back_to_main",
-     "line": 1420,
+     "line": 1424,
      "dynamic": false,
      "to": "return_to_main_menu",
      "how": "точно"
@@ -1279,23 +1280,32 @@ window.FRONTMAP = {
    "id": "allow_screen",
    "file": "filters.py",
    "line": 296,
-   "title": "Список исключений: общих или одного ключа.",
+   "title": "Исключения из запретов: общие или для одного человека.",
    "side": "admin",
    "kind": "menu",
    "calls": [
     "escape_md",
+    "set",
+    "set",
+    "dict",
     "show_screen",
     "InlineKeyboardButton",
+    "sorted",
     "InlineKeyboardButton",
     "InlineKeyboardButton",
+    "InlineKeyboardButton",
+    "all_categories",
     "InlineKeyboardMarkup",
-    "escape_md"
+    "sorted",
+    "chr",
+    "escape_md",
+    "InlineKeyboardButton"
    ],
    "buttons": [
     {
      "label": "➕ Разрешить сайт",
      "data": "«меняется»",
-     "line": 326,
+     "line": 332,
      "dynamic": true,
      "to": null,
      "how": null
@@ -1303,25 +1313,41 @@ window.FRONTMAP = {
     {
      "label": "🔙 Назад",
      "data": "«меняется»",
-     "line": 331,
+     "line": 370,
      "dynamic": true,
      "to": null,
      "how": null
     },
     {
+     "label": "👤 Исключения для человека",
+     "data": "flt_pick_0",
+     "line": 336,
+     "dynamic": false,
+     "to": "pick_user",
+     "how": "по приставке «flt_pick_»"
+    },
+    {
      "label": "🗑 …",
      "data": "flt_alw_del_…_…",
-     "line": 328,
+     "line": 339,
      "dynamic": false,
      "to": "allow_remove",
      "how": "по приставке «flt_alw_del_»"
+    },
+    {
+     "label": "«меняется»",
+     "data": "flt_xa_…_…",
+     "line": 363,
+     "dynamic": true,
+     "to": "toggle_exempt",
+     "how": "по приставке «flt_xa_»"
     }
    ]
   },
   {
    "id": "allow_add_request",
    "file": "filters.py",
-   "line": 338,
+   "line": 378,
    "title": "",
    "side": "admin",
    "kind": "screen",
@@ -1334,7 +1360,7 @@ window.FRONTMAP = {
     {
      "label": "✖️ Отмена",
      "data": "flt_alw_… / flt_alw_all",
-     "line": 352,
+     "line": 392,
      "dynamic": false,
      "to": "allow_screen",
      "how": "по приставке «flt_alw_»"
@@ -1344,7 +1370,7 @@ window.FRONTMAP = {
   {
    "id": "allow_add_entered",
    "file": "filters.py",
-   "line": 358,
+   "line": 398,
    "title": "Разбирает присланное. Возвращает True, если сообщение было для нас.",
    "side": "admin",
    "kind": "screen",
@@ -1357,7 +1383,7 @@ window.FRONTMAP = {
     {
      "label": "🟢 К исключениям",
      "data": "«меняется»",
-     "line": 380,
+     "line": 420,
      "dynamic": true,
      "to": null,
      "how": null
@@ -1367,7 +1393,7 @@ window.FRONTMAP = {
   {
    "id": "allow_remove",
    "file": "filters.py",
-   "line": 398,
+   "line": 438,
    "title": "",
    "side": "admin",
    "kind": "screen",
@@ -1379,7 +1405,7 @@ window.FRONTMAP = {
     {
      "label": "➕ Разрешить сайт",
      "data": "«меняется»",
-     "line": 326,
+     "line": 332,
      "dynamic": true,
      "to": null,
      "how": null,
@@ -1388,19 +1414,37 @@ window.FRONTMAP = {
     {
      "label": "🔙 Назад",
      "data": "«меняется»",
-     "line": 331,
+     "line": 370,
      "dynamic": true,
      "to": null,
      "how": null,
      "inherited": "allow_screen"
     },
     {
+     "label": "👤 Исключения для человека",
+     "data": "flt_pick_0",
+     "line": 336,
+     "dynamic": false,
+     "to": "pick_user",
+     "how": "по приставке «flt_pick_»",
+     "inherited": "allow_screen"
+    },
+    {
      "label": "🗑 …",
      "data": "flt_alw_del_…_…",
-     "line": 328,
+     "line": 339,
      "dynamic": false,
      "to": "allow_remove",
      "how": "по приставке «flt_alw_del_»",
+     "inherited": "allow_screen"
+    },
+    {
+     "label": "«меняется»",
+     "data": "flt_xa_…_…",
+     "line": 363,
+     "dynamic": true,
+     "to": "toggle_exempt",
+     "how": "по приставке «flt_xa_»",
      "inherited": "allow_screen"
     }
    ]
@@ -1408,7 +1452,7 @@ window.FRONTMAP = {
   {
    "id": "pool_list",
    "file": "filters.py",
-   "line": 421,
+   "line": 461,
    "title": "",
    "side": "admin",
    "kind": "menu",
@@ -1425,7 +1469,7 @@ window.FRONTMAP = {
     {
      "label": "➕ Добавить группу",
      "data": "flt_pool_new",
-     "line": 441,
+     "line": 481,
      "dynamic": false,
      "to": "pool_name_request",
      "how": "точно"
@@ -1433,7 +1477,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 К фильтрам",
      "data": "flt_menu",
-     "line": 445,
+     "line": 485,
      "dynamic": false,
      "to": "filters_menu",
      "how": "точно"
@@ -1441,7 +1485,7 @@ window.FRONTMAP = {
     {
      "label": "📦 …",
      "data": "flt_pool_o_…",
-     "line": 443,
+     "line": 483,
      "dynamic": false,
      "to": "pool_open",
      "how": "по приставке «flt_pool_o_»"
@@ -1451,7 +1495,7 @@ window.FRONTMAP = {
   {
    "id": "pool_open",
    "file": "filters.py",
-   "line": 452,
+   "line": 492,
    "title": "",
    "side": "admin",
    "kind": "screen",
@@ -1474,7 +1518,7 @@ window.FRONTMAP = {
     {
      "label": "➕ Добавить адреса",
      "data": "flt_pool_a_…",
-     "line": 467,
+     "line": 507,
      "dynamic": false,
      "to": "pool_add_request",
      "how": "по приставке «flt_pool_a_»"
@@ -1482,7 +1526,7 @@ window.FRONTMAP = {
     {
      "label": "🗑 Удалить группу",
      "data": "flt_pool_d_…",
-     "line": 469,
+     "line": 509,
      "dynamic": false,
      "to": "pool_delete",
      "how": "по приставке «flt_pool_d_»"
@@ -1490,7 +1534,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 К группам",
      "data": "flt_pool_list",
-     "line": 470,
+     "line": 510,
      "dynamic": false,
      "to": "pool_list",
      "how": "точно"
@@ -1500,7 +1544,7 @@ window.FRONTMAP = {
   {
    "id": "pool_add_request",
    "file": "filters.py",
-   "line": 490,
+   "line": 530,
    "title": "Спрашивает адреса. Для новой группы это второй шаг: имя уже дали.",
    "side": "admin",
    "kind": "screen",
@@ -1514,7 +1558,7 @@ window.FRONTMAP = {
     {
      "label": "✖️ Отмена",
      "data": "«меняется»",
-     "line": 508,
+     "line": 548,
      "dynamic": true,
      "to": null,
      "how": null
@@ -1524,7 +1568,7 @@ window.FRONTMAP = {
   {
    "id": "pool_name_request",
    "file": "filters.py",
-   "line": 512,
+   "line": 552,
    "title": "Первый шаг новой группы — название.",
    "side": "admin",
    "kind": "screen",
@@ -1537,7 +1581,7 @@ window.FRONTMAP = {
     {
      "label": "✖️ Отмена",
      "data": "flt_pool_list",
-     "line": 529,
+     "line": 569,
      "dynamic": false,
      "to": "pool_list",
      "how": "точно"
@@ -1547,7 +1591,7 @@ window.FRONTMAP = {
   {
    "id": "pool_domains_entered",
    "file": "filters.py",
-   "line": 573,
+   "line": 613,
    "title": "Принял список адресов в уже созданную группу.",
    "side": "admin",
    "kind": "screen",
@@ -1572,7 +1616,7 @@ window.FRONTMAP = {
     {
      "label": "📦 К группам",
      "data": "flt_pool_list",
-     "line": 614,
+     "line": 654,
      "dynamic": false,
      "to": "pool_list",
      "how": "точно"
@@ -1580,7 +1624,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 К группам",
      "data": "flt_pool_list",
-     "line": 584,
+     "line": 624,
      "dynamic": false,
      "to": "pool_list",
      "how": "точно"
@@ -1588,7 +1632,7 @@ window.FRONTMAP = {
     {
      "label": "📦 К группе",
      "data": "flt_pool_o_…",
-     "line": 603,
+     "line": 643,
      "dynamic": false,
      "to": "pool_open",
      "how": "по приставке «flt_pool_o_»"
@@ -1598,7 +1642,7 @@ window.FRONTMAP = {
   {
    "id": "pool_title_entered",
    "file": "filters.py",
-   "line": 618,
+   "line": 658,
    "title": "Имя получено — группа заведена, осталось наполнить.",
    "side": "admin",
    "kind": "screen",
@@ -1616,7 +1660,7 @@ window.FRONTMAP = {
     {
      "label": "✖️ Позже",
      "data": "«меняется»",
-     "line": 645,
+     "line": 685,
      "dynamic": true,
      "to": null,
      "how": null
@@ -1624,7 +1668,7 @@ window.FRONTMAP = {
     {
      "label": "📦 К группам",
      "data": "flt_pool_list",
-     "line": 632,
+     "line": 672,
      "dynamic": false,
      "to": "pool_list",
      "how": "точно"
@@ -1634,7 +1678,7 @@ window.FRONTMAP = {
   {
    "id": "pool_delete",
    "file": "filters.py",
-   "line": 650,
+   "line": 690,
    "title": "",
    "side": "admin",
    "kind": "screen",
@@ -1646,7 +1690,7 @@ window.FRONTMAP = {
     {
      "label": "➕ Добавить группу",
      "data": "flt_pool_new",
-     "line": 441,
+     "line": 481,
      "dynamic": false,
      "to": "pool_name_request",
      "how": "точно",
@@ -1655,7 +1699,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 К фильтрам",
      "data": "flt_menu",
-     "line": 445,
+     "line": 485,
      "dynamic": false,
      "to": "filters_menu",
      "how": "точно",
@@ -1664,7 +1708,7 @@ window.FRONTMAP = {
     {
      "label": "📦 …",
      "data": "flt_pool_o_…",
-     "line": 443,
+     "line": 483,
      "dynamic": false,
      "to": "pool_open",
      "how": "по приставке «flt_pool_o_»",
@@ -1675,7 +1719,7 @@ window.FRONTMAP = {
   {
    "id": "pick_user",
    "file": "filters.py",
-   "line": 658,
+   "line": 698,
    "title": "",
    "side": "admin",
    "kind": "screen",
@@ -1696,7 +1740,7 @@ window.FRONTMAP = {
     {
      "label": "…/…",
      "data": "svc_noop",
-     "line": 676,
+     "line": 716,
      "dynamic": false,
      "to": "(без перехода)",
      "how": "точно"
@@ -1704,7 +1748,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Фильтры",
      "data": "flt_menu",
-     "line": 680,
+     "line": 720,
      "dynamic": false,
      "to": "filters_menu",
      "how": "точно"
@@ -1712,7 +1756,7 @@ window.FRONTMAP = {
     {
      "label": "……",
      "data": "flt_user_…",
-     "line": 670,
+     "line": 710,
      "dynamic": false,
      "to": "user_filters_screen",
      "how": "по приставке «flt_user_»"
@@ -1720,7 +1764,7 @@ window.FRONTMAP = {
     {
      "label": "⬅️",
      "data": "flt_pick_…",
-     "line": 675,
+     "line": 715,
      "dynamic": false,
      "to": "pick_user",
      "how": "по приставке «flt_pick_»"
@@ -1728,7 +1772,7 @@ window.FRONTMAP = {
     {
      "label": "➡️",
      "data": "flt_pick_…",
-     "line": 678,
+     "line": 718,
      "dynamic": false,
      "to": "pick_user",
      "how": "по приставке «flt_pick_»"
@@ -1738,7 +1782,7 @@ window.FRONTMAP = {
   {
    "id": "user_filters_screen",
    "file": "filters.py",
-   "line": 688,
+   "line": 728,
    "title": "Категории одного человека.",
    "side": "admin",
    "kind": "menu",
@@ -1763,7 +1807,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 К человеку",
      "data": "user_detail_…",
-     "line": 740,
+     "line": 780,
      "dynamic": false,
      "to": "user_detail_menu",
      "how": "по приставке «user_detail_»"
@@ -1771,7 +1815,7 @@ window.FRONTMAP = {
     {
      "label": "🟢 Исключения из запретов",
      "data": "flt_alw_…",
-     "line": 744,
+     "line": 784,
      "dynamic": false,
      "to": "allow_screen",
      "how": "по приставке «flt_alw_»"
@@ -1779,7 +1823,7 @@ window.FRONTMAP = {
     {
      "label": "🧹 К списку фильтров",
      "data": "flt_pick_0",
-     "line": 746,
+     "line": 786,
      "dynamic": false,
      "to": "pick_user",
      "how": "по приставке «flt_pick_»"
@@ -1787,7 +1831,7 @@ window.FRONTMAP = {
     {
      "label": "«меняется»",
      "data": "«меняется»",
-     "line": 738,
+     "line": 778,
      "dynamic": true,
      "to": null,
      "how": null
@@ -1797,7 +1841,7 @@ window.FRONTMAP = {
   {
    "id": "toggle_exempt",
    "file": "filters.py",
-   "line": 753,
+   "line": 793,
    "title": "Снимает с человека общую категорию или возвращает её.",
    "side": "admin",
    "kind": "screen",
@@ -1805,52 +1849,62 @@ window.FRONTMAP = {
     "set",
     "dict",
     "apply_filters",
-    "user_filters_screen",
-    "all_categories"
+    "all_categories",
+    "allow_screen",
+    "user_filters_screen"
    ],
    "buttons": [
     {
-     "label": "🔙 К человеку",
-     "data": "user_detail_…",
-     "line": 740,
-     "dynamic": false,
-     "to": "user_detail_menu",
-     "how": "по приставке «user_detail_»",
-     "inherited": "user_filters_screen"
-    },
-    {
-     "label": "🟢 Исключения из запретов",
-     "data": "flt_alw_…",
-     "line": 744,
-     "dynamic": false,
-     "to": "allow_screen",
-     "how": "по приставке «flt_alw_»",
-     "inherited": "user_filters_screen"
-    },
-    {
-     "label": "🧹 К списку фильтров",
-     "data": "flt_pick_0",
-     "line": 746,
-     "dynamic": false,
-     "to": "pick_user",
-     "how": "по приставке «flt_pick_»",
-     "inherited": "user_filters_screen"
-    },
-    {
-     "label": "«меняется»",
+     "label": "➕ Разрешить сайт",
      "data": "«меняется»",
-     "line": 738,
+     "line": 332,
      "dynamic": true,
      "to": null,
      "how": null,
-     "inherited": "user_filters_screen"
+     "inherited": "allow_screen"
+    },
+    {
+     "label": "🔙 Назад",
+     "data": "«меняется»",
+     "line": 370,
+     "dynamic": true,
+     "to": null,
+     "how": null,
+     "inherited": "allow_screen"
+    },
+    {
+     "label": "👤 Исключения для человека",
+     "data": "flt_pick_0",
+     "line": 336,
+     "dynamic": false,
+     "to": "pick_user",
+     "how": "по приставке «flt_pick_»",
+     "inherited": "allow_screen"
+    },
+    {
+     "label": "🗑 …",
+     "data": "flt_alw_del_…_…",
+     "line": 339,
+     "dynamic": false,
+     "to": "allow_remove",
+     "how": "по приставке «flt_alw_del_»",
+     "inherited": "allow_screen"
+    },
+    {
+     "label": "«меняется»",
+     "data": "flt_xa_…_…",
+     "line": 363,
+     "dynamic": true,
+     "to": "toggle_exempt",
+     "how": "по приставке «flt_xa_»",
+     "inherited": "allow_screen"
     }
    ]
   },
   {
    "id": "toggle_filter",
    "file": "filters.py",
-   "line": 772,
+   "line": 818,
    "title": "",
    "side": "admin",
    "kind": "screen",
@@ -1863,7 +1917,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 К человеку",
      "data": "user_detail_…",
-     "line": 740,
+     "line": 780,
      "dynamic": false,
      "to": "user_detail_menu",
      "how": "по приставке «user_detail_»",
@@ -1872,7 +1926,7 @@ window.FRONTMAP = {
     {
      "label": "🟢 Исключения из запретов",
      "data": "flt_alw_…",
-     "line": 744,
+     "line": 784,
      "dynamic": false,
      "to": "allow_screen",
      "how": "по приставке «flt_alw_»",
@@ -1881,7 +1935,7 @@ window.FRONTMAP = {
     {
      "label": "🧹 К списку фильтров",
      "data": "flt_pick_0",
-     "line": 746,
+     "line": 786,
      "dynamic": false,
      "to": "pick_user",
      "how": "по приставке «flt_pick_»",
@@ -1890,7 +1944,7 @@ window.FRONTMAP = {
     {
      "label": "«меняется»",
      "data": "«меняется»",
-     "line": 738,
+     "line": 778,
      "dynamic": true,
      "to": null,
      "how": null,
@@ -1901,7 +1955,7 @@ window.FRONTMAP = {
   {
    "id": "apply_now",
    "file": "filters.py",
-   "line": 781,
+   "line": 827,
    "title": "",
    "side": "admin",
    "kind": "screen",
@@ -1969,7 +2023,7 @@ window.FRONTMAP = {
   {
    "id": "common_screen",
    "file": "filters.py",
-   "line": 788,
+   "line": 834,
    "title": "Правила, действующие сразу на всех.",
    "side": "admin",
    "kind": "menu",
@@ -1989,7 +2043,7 @@ window.FRONTMAP = {
     {
      "label": "➕ Закрыть сайт",
      "data": "flt_cadd",
-     "line": 820,
+     "line": 866,
      "dynamic": false,
      "to": "custom_add_request",
      "how": "точно"
@@ -1997,7 +2051,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Фильтры",
      "data": "flt_menu",
-     "line": 824,
+     "line": 870,
      "dynamic": false,
      "to": "filters_menu",
      "how": "точно"
@@ -2005,7 +2059,7 @@ window.FRONTMAP = {
     {
      "label": "«меняется»",
      "data": "flt_ctog_…",
-     "line": 818,
+     "line": 864,
      "dynamic": true,
      "to": "common_toggle",
      "how": "по приставке «flt_ctog_»"
@@ -2013,7 +2067,7 @@ window.FRONTMAP = {
     {
      "label": "🚫 Свой список запретов",
      "data": "flt_clist",
-     "line": 822,
+     "line": 868,
      "dynamic": false,
      "to": "custom_list",
      "how": "точно"
@@ -2023,7 +2077,7 @@ window.FRONTMAP = {
   {
    "id": "common_toggle",
    "file": "filters.py",
-   "line": 831,
+   "line": 877,
    "title": "",
    "side": "admin",
    "kind": "screen",
@@ -2036,7 +2090,7 @@ window.FRONTMAP = {
     {
      "label": "➕ Закрыть сайт",
      "data": "flt_cadd",
-     "line": 820,
+     "line": 866,
      "dynamic": false,
      "to": "custom_add_request",
      "how": "точно",
@@ -2045,7 +2099,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Фильтры",
      "data": "flt_menu",
-     "line": 824,
+     "line": 870,
      "dynamic": false,
      "to": "filters_menu",
      "how": "точно",
@@ -2054,7 +2108,7 @@ window.FRONTMAP = {
     {
      "label": "«меняется»",
      "data": "flt_ctog_…",
-     "line": 818,
+     "line": 864,
      "dynamic": true,
      "to": "common_toggle",
      "how": "по приставке «flt_ctog_»",
@@ -2063,7 +2117,7 @@ window.FRONTMAP = {
     {
      "label": "🚫 Свой список запретов",
      "data": "flt_clist",
-     "line": 822,
+     "line": 868,
      "dynamic": false,
      "to": "custom_list",
      "how": "точно",
@@ -2074,7 +2128,7 @@ window.FRONTMAP = {
   {
    "id": "custom_add_request",
    "file": "filters.py",
-   "line": 841,
+   "line": 887,
    "title": "",
    "side": "admin",
    "kind": "screen",
@@ -2087,7 +2141,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Общие правила",
      "data": "flt_common",
-     "line": 849,
+     "line": 895,
      "dynamic": false,
      "to": "common_screen",
      "how": "точно"
@@ -2097,7 +2151,7 @@ window.FRONTMAP = {
   {
    "id": "custom_add_entered",
    "file": "filters.py",
-   "line": 854,
+   "line": 900,
    "title": "",
    "side": "admin",
    "kind": "screen",
@@ -2112,7 +2166,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Общие правила",
      "data": "flt_common",
-     "line": 869,
+     "line": 915,
      "dynamic": false,
      "to": "common_screen",
      "how": "точно"
@@ -2122,7 +2176,7 @@ window.FRONTMAP = {
   {
    "id": "custom_list",
    "file": "filters.py",
-   "line": 873,
+   "line": 919,
    "title": "Свой список с кнопками снятия: закрыть сайт легко, снять — тоже.",
    "side": "admin",
    "kind": "menu",
@@ -2140,7 +2194,7 @@ window.FRONTMAP = {
     {
      "label": "🗑 …",
      "data": "flt_cdel_…",
-     "line": 882,
+     "line": 928,
      "dynamic": false,
      "to": "custom_remove",
      "how": "по приставке «flt_cdel_»"
@@ -2148,7 +2202,7 @@ window.FRONTMAP = {
     {
      "label": "←",
      "data": "flt_cpg_…",
-     "line": 886,
+     "line": 932,
      "dynamic": false,
      "to": "custom_list",
      "how": "по приставке «flt_cpg_»"
@@ -2156,7 +2210,7 @@ window.FRONTMAP = {
     {
      "label": "→",
      "data": "flt_cpg_…",
-     "line": 888,
+     "line": 934,
      "dynamic": false,
      "to": "custom_list",
      "how": "по приставке «flt_cpg_»"
@@ -2164,7 +2218,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Общие правила",
      "data": "flt_common",
-     "line": 891,
+     "line": 937,
      "dynamic": false,
      "to": "common_screen",
      "how": "точно"
@@ -2174,7 +2228,7 @@ window.FRONTMAP = {
   {
    "id": "custom_remove",
    "file": "filters.py",
-   "line": 898,
+   "line": 944,
    "title": "",
    "side": "admin",
    "kind": "screen",
@@ -2186,7 +2240,7 @@ window.FRONTMAP = {
     {
      "label": "🗑 …",
      "data": "flt_cdel_…",
-     "line": 882,
+     "line": 928,
      "dynamic": false,
      "to": "custom_remove",
      "how": "по приставке «flt_cdel_»",
@@ -2195,7 +2249,7 @@ window.FRONTMAP = {
     {
      "label": "←",
      "data": "flt_cpg_…",
-     "line": 886,
+     "line": 932,
      "dynamic": false,
      "to": "custom_list",
      "how": "по приставке «flt_cpg_»",
@@ -2204,7 +2258,7 @@ window.FRONTMAP = {
     {
      "label": "→",
      "data": "flt_cpg_…",
-     "line": 888,
+     "line": 934,
      "dynamic": false,
      "to": "custom_list",
      "how": "по приставке «flt_cpg_»",
@@ -2213,7 +2267,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Общие правила",
      "data": "flt_common",
-     "line": 891,
+     "line": 937,
      "dynamic": false,
      "to": "common_screen",
      "how": "точно",
@@ -13140,7 +13194,7 @@ window.FRONTMAP = {
   {
    "id": "шаг: maintenance_warn",
    "file": "bot.py",
-   "line": 1399,
+   "line": 1403,
    "title": "шаг мастера, нарисован прямо в роутере",
    "side": "admin",
    "kind": "step",
@@ -13149,7 +13203,7 @@ window.FRONTMAP = {
     {
      "label": "✍️ Своя рассылка (свой текст)",
      "data": "broadcast_custom",
-     "line": 1401,
+     "line": 1405,
      "dynamic": false,
      "to": "шаг: broadcast_custom",
      "how": "точно"
@@ -13157,7 +13211,7 @@ window.FRONTMAP = {
     {
      "label": "⚠️ Стандартное: тех. работы",
      "data": "do_maintenance_warn",
-     "line": 1402,
+     "line": 1406,
      "dynamic": false,
      "to": "broadcast_message",
      "how": "точно"
@@ -13165,7 +13219,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Отмена",
      "data": "back_to_main",
-     "line": 1403,
+     "line": 1407,
      "dynamic": false,
      "to": "return_to_main_menu",
      "how": "точно"
@@ -13175,7 +13229,7 @@ window.FRONTMAP = {
   {
    "id": "шаг: broadcast_custom",
    "file": "bot.py",
-   "line": 1409,
+   "line": 1413,
    "title": "шаг мастера, нарисован прямо в роутере",
    "side": "admin",
    "kind": "step",
@@ -13184,7 +13238,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Отмена",
      "data": "back_to_main",
-     "line": 1414,
+     "line": 1418,
      "dynamic": false,
      "to": "return_to_main_menu",
      "how": "точно"
@@ -13194,7 +13248,7 @@ window.FRONTMAP = {
   {
    "id": "шаг: set_exp_",
    "file": "bot.py",
-   "line": 1454,
+   "line": 1458,
    "title": "шаг мастера, нарисован прямо в роутере",
    "side": "admin",
    "kind": "step",
@@ -13203,7 +13257,7 @@ window.FRONTMAP = {
     {
      "label": "⏩ Пропустить",
      "data": "skip_tg_link",
-     "line": 1463,
+     "line": 1467,
      "dynamic": false,
      "to": "finish_key_creation",
      "how": "точно"
@@ -13211,7 +13265,7 @@ window.FRONTMAP = {
     {
      "label": "🌍 Классический DNS (1.1.1.1)",
      "data": "set_dns_classic",
-     "line": 1457,
+     "line": 1461,
      "dynamic": false,
      "to": "шаг: set_dns_",
      "how": "по приставке «set_dns_»"
@@ -13219,7 +13273,7 @@ window.FRONTMAP = {
     {
      "label": "🛡 AdBlock DNS (Без рекламы)",
      "data": "set_dns_adblock",
-     "line": 1457,
+     "line": 1461,
      "dynamic": false,
      "to": "шаг: set_dns_",
      "how": "по приставке «set_dns_»"
@@ -13227,7 +13281,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Отмена",
      "data": "back_to_main",
-     "line": 1457,
+     "line": 1461,
      "dynamic": false,
      "to": "return_to_main_menu",
      "how": "точно"
@@ -13237,7 +13291,7 @@ window.FRONTMAP = {
   {
    "id": "шаг: set_dns_",
    "file": "bot.py",
-   "line": 1470,
+   "line": 1474,
    "title": "шаг мастера, нарисован прямо в роутере",
    "side": "admin",
    "kind": "step",
@@ -13246,7 +13300,7 @@ window.FRONTMAP = {
     {
      "label": "⏩ Пропустить",
      "data": "skip_tg_link",
-     "line": 1472,
+     "line": 1476,
      "dynamic": false,
      "to": "finish_key_creation",
      "how": "точно"
@@ -13256,7 +13310,7 @@ window.FRONTMAP = {
   {
    "id": "шаг: rename_user_",
    "file": "bot.py",
-   "line": 1481,
+   "line": 1485,
    "title": "шаг мастера, нарисован прямо в роутере",
    "side": "admin",
    "kind": "step",
@@ -13265,7 +13319,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Отмена",
      "data": "user_detail_…",
-     "line": 1483,
+     "line": 1487,
      "dynamic": false,
      "to": "user_detail_menu",
      "how": "по приставке «user_detail_»"
@@ -13275,7 +13329,7 @@ window.FRONTMAP = {
   {
    "id": "шаг: link_tg_",
    "file": "bot.py",
-   "line": 1493,
+   "line": 1497,
    "title": "шаг мастера, нарисован прямо в роутере",
    "side": "admin",
    "kind": "step",
@@ -13284,7 +13338,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Отмена",
      "data": "user_detail_…",
-     "line": 1495,
+     "line": 1499,
      "dynamic": false,
      "to": "user_detail_menu",
      "how": "по приставке «user_detail_»"
@@ -13294,7 +13348,7 @@ window.FRONTMAP = {
   {
    "id": "шаг: unlink_tg_",
    "file": "bot.py",
-   "line": 1501,
+   "line": 1505,
    "title": "шаг мастера, нарисован прямо в роутере",
    "side": "admin",
    "kind": "step",
@@ -13303,7 +13357,7 @@ window.FRONTMAP = {
     {
      "label": "❌ …",
      "data": "do_unlink_…_…",
-     "line": 1504,
+     "line": 1508,
      "dynamic": false,
      "to": "user_detail_menu",
      "how": "по приставке «do_unlink_»"
@@ -13311,7 +13365,7 @@ window.FRONTMAP = {
     {
      "label": "🔙 Назад",
      "data": "user_detail_…",
-     "line": 1505,
+     "line": 1509,
      "dynamic": false,
      "to": "user_detail_menu",
      "how": "по приставке «user_detail_»"
@@ -13414,10 +13468,10 @@ window.FRONTMAP = {
  ],
  "counts": {
   "screens": 273,
-  "buttons": 949,
+  "buttons": 954,
   "admin": 228,
   "client": 45
  },
- "reachable": 188,
+ "reachable": 189,
  "unrouted": 1
 };
