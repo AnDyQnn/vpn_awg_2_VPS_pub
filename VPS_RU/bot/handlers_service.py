@@ -266,7 +266,7 @@ async def service_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("📊 Нагрузка", callback_data="svc_load"),
          InlineKeyboardButton("⚖️ Лимиты", callback_data="svc_limits")],
         [InlineKeyboardButton("🔀 Протоколы", callback_data="proto_menu"),
-         InlineKeyboardButton("🌐 Подписка наружу", callback_data="psub_menu")],
+         InlineKeyboardButton("🌐 Домен и сертификаты", callback_data="psub_menu")],
         [InlineKeyboardButton("🛡 Доступы · роли", callback_data="roles_menu"),
          InlineKeyboardButton("🧹 Фильтры", callback_data="flt_menu")],
         [InlineKeyboardButton(
@@ -276,9 +276,9 @@ async def service_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
          # Не «Поддержка»: ниже есть «🆘 Поддержка» про обращения, и две кнопки
          # с одним словом читаются как одна и та же.
          InlineKeyboardButton("💳 Донаты", callback_data="don_menu")],
-        # Счета за сервера — тоже про деньги, и искать их владелец будет
+        # Биллинг — тоже про деньги, и искать его владелец будет
         # там же, где донаты.
-        [InlineKeyboardButton("🧾 Счета за сервера",
+        [InlineKeyboardButton("🧾 Биллинг",
                               callback_data="bill_menu")],
         [InlineKeyboardButton(
             "📋 Ждут решения" + (f" · {len(decisions)}" if decisions else ""),

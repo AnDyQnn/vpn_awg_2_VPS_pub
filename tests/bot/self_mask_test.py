@@ -99,7 +99,7 @@ async def main():
     # протокол вообще не заведётся.
     by_name = {r[2]: r[1] for r in rows}
     assert by_name["Своё имя узла"] is False
-    assert by_name["Подписка наружу"] is False
+    assert by_name["Доступ к подписке снаружи"] is False
     assert by_name["Ключи Reality"] is True
     print("  обязательного не хватает:", len(must_bad))
     print("обязательное отделено от желательного: ок")

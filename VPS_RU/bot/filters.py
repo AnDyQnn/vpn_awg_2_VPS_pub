@@ -145,6 +145,17 @@ async def apply_filters(reason: str = ""):
         for ip in ips.get(uuid_val, []):
             allow_clients[ip] = domains
 
+    # Снятое лично с общих категорий. Тоже переводим ключи в адреса: узел про
+    # людей не знает, он знает адреса.
+    try:
+        exempt_by_uuid = await db.get_all_exempt()
+    except Exception:
+        exempt_by_uuid = {}
+    except_clients = {}
+    for uuid_val, cats in exempt_by_uuid.items():
+        for ip in ips.get(uuid_val, []):
+            except_clients[ip] = cats
+
     # Свои пулы едут вместе с раскладкой: узел кладёт их в тот же кэш, откуда
     # читает встроенные категории, и дальше не различает.
     try:
@@ -156,6 +167,7 @@ async def apply_filters(reason: str = ""):
         async with api_session() as session:
             async with session.post(f"{WG_API_URL}/dns/filters",
                                     json={"clients": clients,
+                                          "except_clients": except_clients,
                                           "common": common,
                                           "custom": custom,
                                           "allow_common": allow_common,
@@ -675,6 +687,19 @@ async def pick_user(update: Update, context: ContextTypes.DEFAULT_TYPE, page: in
 
 async def user_filters_screen(update: Update, context: ContextTypes.DEFAULT_TYPE,
                               uuid_val: str):
+    """Категории одного человека.
+
+    Состояний у категории три, и путать их нельзя.
+
+    Личный запрет — владелец закрыл её этому человеку. Общий — она закрыта
+    всем сразу. Личное исключение — она закрыта всем, но этому человеку
+    открыта.
+
+    Третьего раньше не было вовсе, и это было настоящей дырой: общая категория
+    не снималась ни для кого. Единственным обходом оставалось перечислять
+    домены поштучно в разрешениях — для категории вроде «для взрослых» это не
+    работает и работать не может.
+    """
     query = update.callback_query
     user = await db.get_user_by_uuid(uuid_val)
     if not user:
@@ -682,21 +707,36 @@ async def user_filters_screen(update: Update, context: ContextTypes.DEFAULT_TYPE
         return await filters_menu(update, context)
 
     mine = set(await db.get_user_filters(uuid_val))
+    common = set(await db.get_common_filters())
+    exempt = set(await db.get_user_exempt(uuid_val))
+
+    closed = (mine | common) - (exempt - mine)
     lines = [f"🧹 **Фильтры: {escape_md(user['name'])}**", ""]
-    if mine:
-        lines.append(f"Запрещено категорий: **{len(mine)}** из {len(CATEGORIES)}.")
+    if closed:
+        lines.append(f"Закрыто категорий: **{len(closed)}** из {len(CATEGORIES)}.")
     else:
         lines.append("Запретов нет — интернет открыт полностью.")
-    lines += ["", "Нажмите на категорию, чтобы запретить её. Нажмите ещё раз — "
-                  "запрет снимется.",
-              "", "_Закрытый сайт не просто не открывается: человек попадает "
+
+    if common:
+        lines += ["", "🌍 — закрыто для всех. Такую категорию можно открыть "
+                      "лично этому человеку: нажмите, и она станет 🟢."]
+    lines += ["", "_Закрытый сайт не просто не открывается: человек попадает "
                   "на страницу с объяснением._"]
 
-    # 🚫 стоит у запрещённых. У остальных знака нет вовсе: пустая строка
-    # читается как «ничего не делаем», а любой значок пришлось бы объяснять.
-    kb = [[InlineKeyboardButton(("🚫 " if key in mine else "") + title,
-                                callback_data=f"flt_set_{key}_{uuid_val}")]
-          for key, title in await all_categories()]
+    # Значок говорит, откуда запрет. Одинаковый значок на личный и общий
+    # запрет означал бы, что владелец не понимает, почему снятие не работает.
+    kb = []
+    for key, title in await all_categories():
+        if key in mine:
+            mark, cb = "🚫 ", f"flt_set_{key}_{uuid_val}"
+        elif key in common and key in exempt:
+            mark, cb = "🟢 ", f"flt_exc_{key}_{uuid_val}"
+        elif key in common:
+            mark, cb = "🌍 ", f"flt_exc_{key}_{uuid_val}"
+        else:
+            mark, cb = "", f"flt_set_{key}_{uuid_val}"
+        kb.append([InlineKeyboardButton(mark + title, callback_data=cb)])
+
     kb.append([InlineKeyboardButton("🔙 К человеку",
                                     callback_data=f"user_detail_{uuid_val}")])
     # Исключения — рядом с категориями: закрыл «соцсети», тут же оставил рабочий
@@ -705,9 +745,28 @@ async def user_filters_screen(update: Update, context: ContextTypes.DEFAULT_TYPE
                                     callback_data=f"flt_alw_{uuid_val}")])
     kb.append([InlineKeyboardButton("🧹 К списку фильтров", callback_data="flt_pick_0")])
 
-    await show_screen(query, context, "\n".join(lines),
+    await show_screen(query, context, chr(10).join(lines),
                                   reply_markup=InlineKeyboardMarkup(kb),
                                   parse_mode=ParseMode.MARKDOWN)
+
+
+async def toggle_exempt(update: Update, context: ContextTypes.DEFAULT_TYPE,
+                        uuid_val: str, category: str):
+    """Снимает с человека общую категорию или возвращает её."""
+    query = update.callback_query
+    now = set(await db.get_user_exempt(uuid_val))
+    turning_on = category not in now
+    await db.set_user_exempt(uuid_val, category, turning_on)
+    ok, msg = await apply_filters("личное исключение из общей категории")
+    titles_map = dict(await all_categories())
+    name = titles_map.get(category, category)
+    if ok:
+        await query.answer(("«%s» открыта лично" % name) if turning_on
+                           else ("«%s» снова закрыта по общему правилу" % name))
+    else:
+        await query.answer(msg, show_alert=True)
+    await user_filters_screen(update, context, uuid_val)
+
 
 
 async def toggle_filter(update: Update, context: ContextTypes.DEFAULT_TYPE,

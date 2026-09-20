@@ -789,7 +789,16 @@ async def start_server():
     # в туннеле.
     await web.TCPSite(runner, "0.0.0.0", SUB_PORT, backlog=64).start()
     outside = await tls_start()
-    masked = await decoy_start()
+    # Вход-маска — через «попробуй»: он второстепенный. Порт может оказаться
+    # занят (в этой сетевой области живёт ещё и узел), и тогда исключение
+    # поднялось бы сюда и уронило бота в круг перезапусков — ради того, без
+    # чего всё прекрасно работает. Не поднялся — скажем и пойдём дальше, а
+    # наблюдение за сертификатом попробует снова.
+    try:
+        masked = await decoy_start()
+    except Exception as e:
+        masked = False
+        print("Вход-маска: не поднялся — %s" % e)
     asyncio.create_task(cert_watch())
     print("Сервер подписок: внутри порт %d, снаружи %s, вход-маска %s"
           % (SUB_PORT, ("порт %d" % PUBLIC_PORT) if outside

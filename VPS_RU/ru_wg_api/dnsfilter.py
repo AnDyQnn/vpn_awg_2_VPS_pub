@@ -285,6 +285,7 @@ class Filters:
         self.clients = {}          # ip -> [категории]
         self.allow_common = set()  # разрешено всем
         self.allow_clients = {}    # ip -> разрешено лично
+        self.except_clients = {}   # ip -> какие ОБЩИЕ категории ему не применять
         self.domains = {}          # категория -> set(доменов)
         self.common = []           # категории, включённые сразу всем
         self.custom = set()        # свой список доменов владельца
@@ -303,6 +304,7 @@ class Filters:
             if self.clients:
                 self.clients, self.domains = {}, {}
                 self.allow_common, self.allow_clients = set(), {}
+                self.except_clients = {}
             return
         if mtime == self._mtime:
             return
@@ -321,6 +323,9 @@ class Filters:
                              for d in (state.get("allow_common") or []) if d}
         self.allow_clients = {ip: {str(d).lower().strip(".") for d in doms if d}
                               for ip, doms in (state.get("allow_clients") or {}).items()}
+        self.except_clients = {ip: {str(c) for c in cats if c}
+                               for ip, cats in
+                               (state.get("except_clients") or {}).items()}
         # Общие категории и свой список — то же самое, но без разбора, кому
         # именно: они действуют на всех, кто ходит через узел.
         self.common = list(state.get("common") or [])
@@ -376,7 +381,12 @@ class Filters:
                 if ".".join(parts[i:]) in self.custom:
                     return "свой список"
 
-        cats = list(self.common) + list(self.clients.get(ip) or [])
+        # Общие категории — за вычетом того, что снято лично с этого адреса.
+        # Личные категории вычетом не трогаем: если владелец включил человеку
+        # категорию сам, он этого и хотел, а исключение относится к общему.
+        skip = self.except_clients.get(ip) or ()
+        cats = [c for c in self.common if c not in skip]
+        cats += list(self.clients.get(ip) or [])
         if not cats:
             return None
         for cat in cats:

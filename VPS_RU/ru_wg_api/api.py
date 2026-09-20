@@ -201,6 +201,11 @@ class DnsFilters(BaseModel):
     # Исключения: разрешено вопреки категории. Общие — всем, личные — адресу.
     allow_common: list = []
     allow_clients: dict = {}
+    # Кому какие ОБЩИЕ категории не применять. Адрес -> список категорий.
+    # Нужно затем, что общая категория иначе не снимается ни для кого: список
+    # общих просто складывался со списком личных, и вывести из него одного
+    # человека было нечем.
+    except_clients: dict = {}
     # Свои пулы: ключ категории -> список доменов. Узел кладёт их в тот же кэш,
     # откуда читает встроенные, и дальше не различает их вовсе.
     pools: dict = {}
@@ -866,7 +871,7 @@ def save_pool_list(key, domains):
 
 
 def save_dns_state(clients, bot_link="", common=None, custom=None,
-                   allow_common=None, allow_clients=None):
+                   allow_common=None, allow_clients=None, except_clients=None):
     try:
         with open(DNS_STATE_FILE, "w") as f:
             json.dump({"clients": clients, "bot_link": bot_link,
@@ -876,6 +881,8 @@ def save_dns_state(clients, bot_link="", common=None, custom=None,
                        "allow_common": list(allow_common or []),
                        "allow_clients": {k: list(v) for k, v in
                                          (allow_clients or {}).items()},
+                       "except_clients": {k: list(v) for k, v in
+                                          (except_clients or {}).items()},
                        "saved_at": int(time.time())}, f)
     except Exception as e:
         print(f"DNS state save warning: {e}")
@@ -1725,13 +1732,15 @@ def set_dns_filters(req: DnsFilters):
                         for d in (req.allow_common or []) if d]
         allow_clients = {str(k): [str(d).lower().strip().strip(".") for d in v if d]
                          for k, v in (req.allow_clients or {}).items()}
+        except_clients = {str(k): [str(c) for c in v if c]
+                          for k, v in (req.except_clients or {}).items()}
         # Свои пулы пишем в кэш до применения: резолвер читает списки оттуда,
         # и категории без файла он считает пустыми.
         for key, domains in (req.pools or {}).items():
             save_pool_list(str(key), [str(d) for d in domains if d])
 
         save_dns_state(clients, req.bot_link or "", common, custom,
-                       allow_common, allow_clients)
+                       allow_common, allow_clients, except_clients)
         # Общие правила и свой список действуют на всех, поэтому заворачивать
         # DNS надо всем, а не только тем, у кого включены личные категории.
         count = apply_dns_filters(clients, everyone=bool(common or custom))

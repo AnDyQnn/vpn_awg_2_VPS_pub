@@ -139,8 +139,9 @@ async def hits_screen(update: Update, context: ContextTypes.DEFAULT_TYPE, page=0
                          + (f" · `{row['ref']}`" if row.get("ref") else ""))
         # Срок хранения — здесь, а не в настройках: он объясняет, почему
         # старого в списке нет, ровно там, где этот вопрос и возникает.
-        lines += ["", "_Разобранные хранятся %d дней, неразобранные — %d._"
-                  % (db.HITS_KEEP_SEEN_DAYS, db.HITS_KEEP_NEW_DAYS)]
+        seen_days, new_days = await db.hits_keep_days()
+        lines += ["", "_Разобранные хранятся %d дней, неразобранные — %d. "
+                      "Изменить — кнопкой ниже._" % (seen_days, new_days)]
 
     kb = []
     for row in rows:
@@ -161,6 +162,7 @@ async def hits_screen(update: Update, context: ContextTypes.DEFAULT_TYPE, page=0
     # Поиск по номеру — то, ради чего номер и показан человеку. Ставим рядом со
     # списком: сюда владелец приходит с номером в руках.
     kb.append([InlineKeyboardButton("🔎 Найти по номеру", callback_data="hit_find")])
+    kb.append([InlineKeyboardButton("🗓 Сколько хранить", callback_data="hit_keep")])
     kb.append([InlineKeyboardButton("🔙 Администрирование", callback_data="svc_menu")])
 
     await show_screen(query, context, "\n".join(lines),
@@ -278,3 +280,70 @@ async def hits_seen_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await db.mark_all_filter_hits_seen()
     await update.callback_query.answer("Отмечено")
     await hits_screen(update, context)
+
+
+async def keep_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Сколько хранить карточки.
+
+    Два срока, а не один, потому что карточки разные. Разобранная — прочитанная
+    история: неделю она ещё нужна, дальше только копится. Неразобранная ждёт
+    владельца, и выбросить её раньше значит выбросить то, чего он не видел.
+    """
+    query = update.callback_query
+    seen_days, new_days = await db.hits_keep_days()
+
+    lines = ["🗓 **Сколько хранить инциденты**", "",
+             f"Разобранные: **{seen_days} дн.** — первый ряд кнопок",
+             f"Неразобранные: **{new_days} дн.** — второй ряд", "",
+             "Сроки разные не случайно. Разобранная карточка — прочитанная "
+             "история, она интересна несколько дней. Неразобранная ещё ждёт "
+             "вас, и выбросить её раньше значит выбросить то, чего вы не "
+             "видели.", "",
+             "_Совсем без хранения нельзя: человек приходит с номером со "
+             "страницы отказа, и этот номер должен где-то находиться._"]
+
+    kb = [
+        [InlineKeyboardButton(("✅ " if d == seen_days else "") + str(d),
+                              callback_data=f"hit_keep_seen_{d}")
+         for d in db.HITS_KEEP_CHOICES],
+        [InlineKeyboardButton(("✅ " if d == new_days else "") + str(d),
+                              callback_data=f"hit_keep_new_{d}")
+         for d in db.HITS_KEEP_CHOICES],
+        [InlineKeyboardButton("🧹 Убрать старое сейчас",
+                              callback_data="hit_keep_now")],
+        [InlineKeyboardButton("🔙 К инцидентам", callback_data="hit_list")],
+    ]
+
+    await show_screen(query, context, chr(10).join(lines),
+                      reply_markup=InlineKeyboardMarkup(kb),
+                      parse_mode=ParseMode.MARKDOWN)
+
+
+async def keep_set(update: Update, context: ContextTypes.DEFAULT_TYPE,
+                   which: str, days: int):
+    if days not in db.HITS_KEEP_CHOICES:
+        await update.callback_query.answer("Такого срока нет", show_alert=True)
+        return
+    await db.set_hits_keep(**{which: days})
+    seen_days, new_days = await db.hits_keep_days()
+    # Говорим, если поправили сами: неразобранные не могут жить меньше
+    # разобранных, и молча подменённое число выглядело бы как непонятая кнопка.
+    if which == "new" and new_days != days:
+        await update.callback_query.answer(
+            "Неразобранные не могут храниться меньше разобранных — "
+            "оставил %d дн." % new_days, show_alert=True)
+    else:
+        await update.callback_query.answer("Готово")
+    await keep_screen(update, context)
+
+
+async def keep_now(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Убрать старое прямо сейчас, не дожидаясь уборки."""
+    query = update.callback_query
+    try:
+        gone = await db.cleanup_filter_hits()
+    except Exception as e:
+        await query.answer("Не вышло: %s" % e, show_alert=True)
+        return
+    await query.answer("Убрано карточек: %d" % gone, show_alert=True)
+    await keep_screen(update, context)

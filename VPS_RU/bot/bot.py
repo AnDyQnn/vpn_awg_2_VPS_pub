@@ -94,6 +94,8 @@ from handlers_xray import (
 from handlers_hits import (
     hits_screen, hit_open, hits_seen_all, hits_loop,
     hit_find_request, hit_find_entered,
+    keep_screen as hits_keep_screen, keep_set as hits_keep_set,
+    keep_now as hits_keep_now,
 )
 from handlers_routes import (
     routes_menu, routes_ask, routes_delete, routes_show, handle_route_input,
@@ -128,7 +130,7 @@ from filters import (
     allow_screen as flt_allow, allow_add_request as flt_allow_add,
     allow_add_entered as flt_allow_entered, allow_remove as flt_allow_del,
     filters_menu, pick_user as filters_pick_user, user_filters_screen,
-    toggle_filter, apply_now as filters_apply_now, apply_filters
+    toggle_filter, toggle_exempt, apply_now as filters_apply_now, apply_filters
 )
 from acl import apply_access_rules
 
@@ -556,7 +558,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             kb_after = InlineKeyboardMarkup(
                 [[InlineKeyboardButton("🔑 Сертификат внутренних имён",
                                        callback_data="psub_zone")],
-                 [InlineKeyboardButton("🔙 Подписка наружу",
+                 [InlineKeyboardButton("🔙 Домен и сертификаты",
                                        callback_data="psub_menu")]])
         else:
             text = ("⚠️ **Имя не применилось.**\n\n"
@@ -1043,7 +1045,8 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "svc_tok_toggle": await token_toggle(update, context); return
     if data == "svc_tok_now": await token_now(update, context); return
     if data == "svc_tok_back": await token_rollback(update, context); return
-    # Подписка наружу: открыть, закрыть, продлить. Работу делает хост, здесь
+    # Домен и сертификаты: имя узла, выпуск и продление, доступ снаружи.
+    # Работу делает хост, здесь
     # только просьба и показ того, что вышло.
     if data.startswith("psub_"):
         import handlers_pubsub as hps
@@ -1062,7 +1065,7 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if data == "psub_zone_check": await hps.zone_check(update, context); return
         if data == "psub_zone_gen": await hps.zone_generate(update, context); return
         if data == "psub_zone_own": await hps.zone_own(update, context); return
-    # Счета за сервера: напоминания об оплате хостингов.
+    # Биллинг: напоминания об оплате хостингов.
     if data.startswith("bill_"):
         import billing
         if data == "bill_menu": await billing.menu(update, context); return
@@ -1234,6 +1237,14 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "hit_list": await hits_screen(update, context); return
     if data == "hit_seen_all": await hits_seen_all(update, context); return
     if data == "hit_find": await hit_find_request(update, context); return
+    if data == "hit_keep": await hits_keep_screen(update, context); return
+    if data == "hit_keep_now": await hits_keep_now(update, context); return
+    if data.startswith("hit_keep_seen_"):
+        await hits_keep_set(update, context, "seen",
+                            int(data.rsplit("_", 1)[1])); return
+    if data.startswith("hit_keep_new_"):
+        await hits_keep_set(update, context, "new",
+                            int(data.rsplit("_", 1)[1])); return
     if data.startswith("hit_pg_"):
         await hits_screen(update, context, int(data.split("hit_pg_")[1])); return
     if data.startswith("hit_open_"):
@@ -1277,6 +1288,9 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await filters_pick_user(update, context, int(data.split("_")[-1])); return
     if data.startswith("flt_user_"):
         await user_filters_screen(update, context, data.split("_", 2)[2]); return
+    if data.startswith("flt_exc_"):
+        parts = data.split("_", 3)          # flt | exc | категория | uuid
+        await toggle_exempt(update, context, parts[3], parts[2]); return
     if data.startswith("flt_set_"):
         parts = data.split("_", 3)          # flt | set | категория | uuid
         await toggle_filter(update, context, parts[3], parts[2]); return
@@ -1721,7 +1735,7 @@ async def post_init(application):
         asyncio.create_task(geo_files_loop(application)),
         # Сайт-заглушку отдельной задачей больше не поднимаем: её отдаёт
         # сервер подписок тем же входом и тем же сертификатом — см. decoy.py.
-        # Счета за сервера: напомнить об оплате заранее. Забытый платёж —
+        # Биллинг: напомнить об оплате заранее. Забытый платёж —
         # это выключенный узел и тридцать человек без связи.
         asyncio.create_task(billing_reminder_loop(application)),
         # Кто вышел на связь по Xray. У AmneziaWG это ловит рукопожатие, у

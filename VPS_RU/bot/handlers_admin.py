@@ -745,7 +745,12 @@ async def schedule_update_menu(update: Update, context: ContextTypes.DEFAULT_TYP
 
 async def do_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.callback_query.message.edit_reply_markup(reply_markup=None)
-    await broadcast_message(context.application, "⚠️ **Технические работы**\n\nСервер уходит на обновление. Связь может прерваться на 1-2 минуты.", db)
+    # Рассылка всем. Здесь важнее не точность, а чтобы человек не дёргался:
+    # для него значение имеет только момент обрыва, а он и правда короткий.
+    await broadcast_message(
+        context.application,
+        "⚠️ **Технические работы**\n\nСервер уходит на обновление. "
+        "Связь прервётся один раз, меньше чем на минуту, и вернётся сама.", db)
     await db.log_event("System", "Admin triggered system update via Git.")
     
     status_msg = await update.callback_query.message.reply_text("⚙️ Шаг 1/3: архив…")
@@ -758,7 +763,21 @@ async def do_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await status_msg.edit_text(f"⚠️ Не удалось собрать архив: {e}\nПродолжаю обновление...")
 
-    await status_msg.edit_text("🚀 **Обновление запущено.**\nКонтейнеры перезапускаются. Бот вернется через минуту.")
+    # Сроки названы по замеру, а не на глаз. На живом узле (одно ядро):
+    # сборка образов около четырёх минут, пересоздание и проверка — ещё минута.
+    # Связь при этом рвётся только в самом конце и меньше чем на минуту: пока
+    # идёт сборка, старые контейнеры продолжают работать.
+    #
+    # Обещание «вернусь через минуту» было вдвое-впятеро оптимистичнее правды, и
+    # это хуже, чем кажется: владелец идёт проверять, что сломалось, там, где
+    # всё идёт по плану.
+    await status_msg.edit_text(
+        "🚀 **Обновление запущено.**\n\n"
+        "Займёт около пяти минут: почти всё это время собираются образы, и "
+        "старые контейнеры продолжают работать. Связь оборвётся один раз в "
+        "самом конце, меньше чем на минуту.\n\n"
+        "_Если новая версия окажется нездоровой, выкладка откатится на "
+        "предыдущую сама._")
 
     os.makedirs("/volumes/flags", exist_ok=True)
     # was_updating ставит сам deploy.sh ПОСЛЕ успешного health-check (а на откате — не ставит),

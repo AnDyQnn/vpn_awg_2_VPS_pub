@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Подписка наружу: экран в администрировании.
+"""Домен и сертификаты: экран в администрировании.
 
 Открыта по умолчанию, и настройки у этого нет. Смысл подписки в том, что
 человек вставляет один адрес, а дальше сервера, маскировки и список исключений
@@ -78,36 +78,94 @@ async def _ask_host(mode: str):
 
 
 async def screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Главный экран раздела: где мы стоим и что делать дальше.
+
+    Раньше здесь была только подписка наружу, и экран рассказывал про неё. Но
+    настроек стало три — имя, сертификаты, доступ снаружи, — и связаны они
+    порядком: без имени нет хорошего сертификата, без сертификата нет ни
+    покрытия внутренних имён, ни своей маски.
+
+    Поэтому экран устроен как путь, а не как список тумблеров: пока шаг не
+    сделан, он назван шагом и стоит первым. Сделан — превращается в строку
+    состояния.
+    """
     query = update.callback_query
     on = is_on()
     st = state()
+    have = current_domain()
+    wild = wildcard_on()
 
-    lines = ["🌐 **Подписка наружу**", ""]
-    if on:
-        left = cert_days_left()
-        port = st.get("port", 2096)
-        lines.append(f"Состояние: **открыта**, порт `{port}`")
-        if left is not None:
-            lines.append("Сертификат: осталось **%.1f сут.**" % left)
-            if left < 1:
-                lines.append("     ⚠️ _Меньше суток. Проверьте таймер "
-                             "продления: `systemctl list-timers vpn-subcert`._")
-        try:
-            import subscription
-            shut = subscription.blocked_now()
-            if shut:
-                lines.append(f"Закрыто адресов за назойливость: **{shut}**")
-        except Exception:
-            pass
+    lines = ["🌐 **Домен и сертификаты**", ""]
+
+    # --- Где мы стоим. Три строки, по одной на настройку ---
+    lines.append("**Имя узла:** `%s`" % have if have
+                 else "**Имя узла:** не задано — работаем по IP-адресу")
+
+    left = cert_days_left()
+    if not on:
+        lines.append("**Сертификат:** нет — доступ снаружи закрыт")
+    elif left is None:
+        lines.append("**Сертификат:** есть, срок не читается")
     else:
-        lines.append("Состояние: **закрыта** — подписку видно только изнутри")
+        srok = "на имя, 90 дней" if have else "на адрес, 160 часов"
+        lines.append("**Сертификат:** осталось %.1f сут. (%s)" % (left, srok))
+        if left < 1:
+            lines.append("     ⚠️ _Меньше суток. Проверьте таймер продления: "
+                         "`systemctl list-timers vpn-subcert`._")
 
-    if on:
+    if have:
+        lines.append("**Внутренние имена:** " + (
+            "покрыты сертификатом" if wild
+            else "**без сертификата** — браузер ругается на наши страницы"))
+
+    port = st.get("port", 2096)
+    lines.append("**Доступ снаружи:** " + (
+        ("открыт, порт `%s`" % port) if on else "закрыт, подписка только внутри"))
+
+    # --- Что делать дальше. Только когда есть что ---
+    if not have:
         lines += [
             "",
-            "Человек вставляет один адрес — и дальше сервера, маскировки и "
-            "список исключений приезжают к нему сами. Ни рассылок, ни "
-            "перевыпусков.",
+            "**Чего не хватает и что это даёт.** Своё имя (домен, около 200 ₽ "
+            "в год) меняет четыре вещи:",
+            "",
+            "• сертификат живёт 90 дней вместо 160 часов — пропущенное "
+            "продление перестаёт быть катастрофой;",
+            "• подписку можно увести на 443, который не режут мобильные "
+            "операторы;",
+            "• наши страницы (отказ фильтра, «доступ закрыт», выдача ключей) "
+            "перестают открываться с предупреждением браузера;",
+            "• имена внутри туннеля переезжают в него: `дом.vpn` становится "
+            "`дом.ваш-домен`.",
+            "",
+            "**Порядок такой:**",
+            "1. Купить домен и направить его на этот сервер.",
+            "2. Вписать имя — кнопка ниже.",
+            "3. Дать доступ к зоне домена — вторая кнопка появится после "
+            "первой.",
+        ]
+    elif not wild:
+        lines += [
+            "",
+            "**Остался один шаг.** Сертификата на внутренние имена нет, и "
+            "поэтому страница отказа, «доступ закрыт» и выдача ключей "
+            "открываются с красным замком.",
+            "",
+            "Чинится доступом к зоне домена — вторая кнопка. Бот придумает "
+            "пароль сам, останется вставить его в панель регистратора.",
+        ]
+    elif not on:
+        lines += [
+            "",
+            "Доступ снаружи закрыт: прочитать подписку можно, лишь уже "
+            "подключившись. Значит первую настройку придётся отдавать текстом, "
+            "а новые исключения и переезды — рассылать.",
+        ]
+    else:
+        lines += [
+            "",
+            "Всё настроено. Человек вставляет один адрес — и дальше сервера, "
+            "маскировки и список исключений приезжают к нему сами.",
             "",
             "**Что видно снаружи.** Один порт, и на нём только чтение подписки "
             "по личному токену. На всё остальное — молчание, одно и то же на "
@@ -117,51 +175,45 @@ async def screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "адреса, потолок 50 в секунду на весь порт, а десять промахов по "
             "токену закрывают адрес на час.",
         ]
-    else:
-        lines += [
-            "",
-            "Пока закрыта, прочитать подписку можно, лишь уже подключившись. "
-            "Значит первую настройку придётся отдавать текстом, а новые "
-            "исключения и переезды — рассылать.",
-            "",
-            "_Открыть можно кнопкой ниже. Домен не нужен и покупать ничего не "
-            "надо: сертификат выдаётся прямо на IP-адрес, бесплатно._",
-        ]
-
-    if on:
-        lines += [
-            "",
-            "_Открыть порт без сертификата нельзя: бот слушает его только пока "
-            "сертификат лежит рядом. Поэтому настройки у этого нет — настройка, "
-            "которую можно выставить не так, была бы способом однажды отдать "
-            "подписку открытым текстом._",
-        ]
+        try:
+            import subscription
+            shut = subscription.blocked_now()
+            if shut:
+                lines.append("")
+                lines.append(f"Закрыто адресов за назойливость: **{shut}**")
+        except Exception:
+            pass
 
     msg = (st.get("msg") or "").strip()
     if msg and st.get("state") == "error":
         lines += ["", f"⚠️ Последняя попытка: _{msg}_"]
 
+    # --- Кнопки. Невыполненный шаг назван шагом и стоит первым ---
     kb = []
-    if on:
-        kb.append([InlineKeyboardButton("🔒 Закрыть наружу",
-                                        callback_data="psub_off")])
-        kb.append([InlineKeyboardButton("🔄 Продлить сертификат сейчас",
-                                        callback_data="psub_renew")])
+    if not have:
+        kb.append([InlineKeyboardButton("1️⃣ Вписать имя узла",
+                                        callback_data="psub_domain")])
     else:
-        kb.append([InlineKeyboardButton("🌐 Открыть наружу",
+        kb.append([InlineKeyboardButton("🌐 Имя узла · " + have,
+                                        callback_data="psub_domain")])
+        if wild:
+            kb.append([InlineKeyboardButton(
+                "🔑 Сертификат внутренних имён · есть",
+                callback_data="psub_zone")])
+        else:
+            kb.append([InlineKeyboardButton(
+                "2️⃣ Сертификат внутренних имён",
+                callback_data="psub_zone")])
+
+    if on:
+        kb.append([InlineKeyboardButton("🔄 Обновить сертификат",
+                                        callback_data="psub_renew")])
+        kb.append([InlineKeyboardButton("🔒 Закрыть доступ снаружи",
+                                        callback_data="psub_off")])
+    else:
+        kb.append([InlineKeyboardButton("🌐 Открыть доступ снаружи",
                                         callback_data="psub_on")])
-    have = current_domain()
-    kb.append([InlineKeyboardButton(
-        ("🌐 Имя · " + have) if have else "🌐 Задать своё имя",
-        callback_data="psub_domain")])
-    if have:
-        # Видно сразу, есть ли сертификат на внутренние имена: без него все
-        # наши собственные страницы открываются с предупреждением, а заметить
-        # это по одной строке «подписка открыта» невозможно.
-        kb.append([InlineKeyboardButton(
-            "🔑 Внутренние имена · есть" if wildcard_on()
-            else "🔑 Внутренние имена · без сертификата",
-            callback_data="psub_zone")])
+
     kb.append([InlineKeyboardButton("🔙 Администрирование",
                                     callback_data="svc_menu")])
 
@@ -262,12 +314,12 @@ async def _wait_screen(update, context, what):
 def status_line():
     """Строка для экрана администрирования и для отчёта проверки."""
     if not is_on():
-        return "🌐 *Подписка наружу:* закрыта, видно только изнутри"
+        return "🌐 *Домен и сертификаты:* доступ снаружи закрыт"
     left = cert_days_left()
     tail = (", сертификат на %.1f сут." % left) if left is not None else ""
     if left is not None and left < 1:
         tail += " ⚠️"
-    return "🌐 *Подписка наружу:* открыта" + tail
+    return "🌐 *Домен и сертификаты:* доступ снаружи открыт" + tail
 
 
 # --- Своё имя узла -----------------------------------------------------------
@@ -332,7 +384,7 @@ async def domain_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if have:
         kb.append([InlineKeyboardButton("🗑 Убрать имя",
                                         callback_data="psub_domain_off")])
-    kb.append([InlineKeyboardButton("🔙 Подписка наружу",
+    kb.append([InlineKeyboardButton("🔙 Домен и сертификаты",
                                     callback_data="psub_menu")])
     await show_screen(query, context, "\n".join(lines),
                       reply_markup=InlineKeyboardMarkup(kb),
@@ -368,7 +420,7 @@ async def domain_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
          "⚠️ Просьба положена, но демон на хосте не ответил.\n"
          "`systemctl status vpn-updater`"),
         reply_markup=InlineKeyboardMarkup(
-            [[InlineKeyboardButton("🔙 Подписка наружу",
+            [[InlineKeyboardButton("🔙 Домен и сертификаты",
                                    callback_data="psub_menu")]]),
         parse_mode=ParseMode.MARKDOWN)
 
@@ -520,7 +572,7 @@ async def zone_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         kb.append([InlineKeyboardButton("🌐 Сначала задать имя узла",
                                         callback_data="psub_domain")])
-    kb.append([InlineKeyboardButton("🔙 Подписка наружу", callback_data="psub_menu")])
+    kb.append([InlineKeyboardButton("🔙 Домен и сертификаты", callback_data="psub_menu")])
     await show_screen(query, context, "\n".join(lines),
                       reply_markup=InlineKeyboardMarkup(kb),
                       parse_mode=ParseMode.MARKDOWN)

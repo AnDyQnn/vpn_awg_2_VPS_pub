@@ -123,8 +123,19 @@ def create_backup():
             db_dump.unlink()
         subprocess.run(f"pg_dump --clean --if-exists -O -x '{DB_URL}' > {db_dump}",
                        shell=True, check=True)
+        # Кэш списков фильтрации в архив НЕ идёт, и это не экономия ради
+        # экономии. Там лежат публичные списки доменов — на живом узле это
+        # двадцать шесть мегабайт в одной только категории «для взрослых», и
+        # каждый архив таскал их с собой. Восстанавливать их бессмысленно:
+        # узел скачивает списки сам при старте контейнера и дальше раз в
+        # двенадцать часов, так что после восстановления они появятся всё
+        # равно — но уже сегодняшние, а не из архива недельной давности.
+        #
+        # Всё остальное из wireguard остаётся: ключ сервера, конфигурации
+        # пиров, раскладка имён, правила доступа — это не скачаешь ниоткуда.
         subprocess.run(
-            f"tar -czf {plain} -C /volumes wireguard configs backups/db_dump.sql",
+            f"tar -czf {plain} --exclude='wireguard/cache' "
+            f"-C /volumes wireguard configs backups/db_dump.sql",
             shell=True, check=True)
 
         ok, why = verify_archive(plain)
@@ -231,7 +242,8 @@ async def restore_backup(path: str):
     safety = None
     try:
         safety = ARCHIVE_DIR / f"before_restore_{get_moscow_now().strftime('%Y%m%d_%H%M%S')}.tar.gz"
-        subprocess.run(f"tar -czf {safety} -C /volumes wireguard configs",
+        subprocess.run(f"tar -czf {safety} --exclude='wireguard/cache' "
+                       f"-C /volumes wireguard configs",
                        shell=True, check=True)
         print(f"🛟 Снимок до восстановления: {safety.name}")
     except Exception as e:

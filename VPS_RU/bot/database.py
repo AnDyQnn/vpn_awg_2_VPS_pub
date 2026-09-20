@@ -507,6 +507,13 @@ class Database:
                 );
             """)
             await self.execute("""
+                CREATE TABLE IF NOT EXISTS filter_exempt (
+                    user_uuid TEXT REFERENCES users(uuid) ON DELETE CASCADE,
+                    category TEXT,
+                    PRIMARY KEY (user_uuid, category)
+                );
+            """)
+            await self.execute("""
                 CREATE TABLE IF NOT EXISTS role_grants (
                     id SERIAL PRIMARY KEY,
                     role_id INTEGER REFERENCES roles(id) ON DELETE CASCADE,
@@ -929,6 +936,41 @@ class Database:
         return await self.fetch_val("SELECT COUNT(*) FROM dns_names") or 0
 
     # --- ФИЛЬТРАЦИЯ САЙТОВ -----------------------------------------------
+    # --- Личные исключения из ОБЩИХ категорий ---------------------------
+    #
+    # Общая категория иначе не снимается ни для кого: узел складывал общий
+    # список с личным, и вывести из общего одного человека было нечем. Обходом
+    # оставалось перечислять домены поштучно в личных разрешениях — для
+    # категории вроде «для взрослых» это не работает вовсе.
+    #
+    # Здесь хранится ровно обратное личным категориям: не «что запретить
+    # дополнительно», а «что из общего к этому человеку не применять».
+
+    async def get_user_exempt(self, uuid):
+        rows = await self.fetch_all(
+            "SELECT category FROM filter_exempt WHERE user_uuid=$1 "
+            "ORDER BY category", uuid)
+        return [r["category"] for r in rows]
+
+    async def set_user_exempt(self, uuid, category, on: bool):
+        if on:
+            await self.execute(
+                "INSERT INTO filter_exempt (user_uuid, category) VALUES ($1,$2) "
+                "ON CONFLICT DO NOTHING", uuid, category)
+        else:
+            await self.execute(
+                "DELETE FROM filter_exempt WHERE user_uuid=$1 AND category=$2",
+                uuid, category)
+
+    async def get_all_exempt(self):
+        """Всё разом для раскладки на узел: ключ -> снятые с него категории."""
+        rows = await self.fetch_all(
+            "SELECT user_uuid, category FROM filter_exempt")
+        out = {}
+        for r in rows:
+            out.setdefault(r["user_uuid"], []).append(r["category"])
+        return out
+
     async def get_user_filters(self, uuid):
         rows = await self.fetch_all(
             "SELECT category FROM user_filters WHERE user_uuid=$1 ORDER BY category", uuid)
@@ -1634,20 +1676,50 @@ class Database:
     #
     # Дело не в месте (записей единицы в день), а в том, что список, где всё за
     # всё время, перестают открывать.
-    HITS_KEEP_SEEN_DAYS = 30
-    HITS_KEEP_NEW_DAYS = 90
+    # Сроки хранения инцидентов. Это значения по умолчанию, а не закон:
+    # владелец меняет их в боте, и выбранное живёт в настройках.
+    #
+    # Разбор по двум срокам, а не по одному, потому что карточки разные.
+    # Разобранная — это уже прочитанная история: она интересна неделю, дальше
+    # копится и мешает. Неразобранная — это то, что ещё ждёт владельца, и
+    # выбросить её раньше значит выбросить то, чего он не видел.
+    HITS_KEEP_SEEN_DAYS = 7
+    HITS_KEEP_NEW_DAYS = 30
+
+    # Допустимые сроки. Не свободное число: «0 дней» означало бы стирать
+    # инциденты в ту же секунду, когда человек ещё идёт спрашивать про свой
+    # номер со страницы отказа.
+    HITS_KEEP_CHOICES = (3, 7, 14, 30, 90)
+
+    async def hits_keep_days(self):
+        """Сколько хранить разобранные и сколько — неразобранные."""
+        try:
+            seen = int(await self.get_setting("hits_keep_seen")
+                       or self.HITS_KEEP_SEEN_DAYS)
+            new = int(await self.get_setting("hits_keep_new")
+                      or self.HITS_KEEP_NEW_DAYS)
+        except (TypeError, ValueError):
+            seen, new = self.HITS_KEEP_SEEN_DAYS, self.HITS_KEEP_NEW_DAYS
+        # Неразобранные не могут храниться меньше разобранных: иначе то, что
+        # владелец ещё не видел, исчезало бы раньше прочитанного.
+        return seen, max(new, seen)
+
+    async def set_hits_keep(self, seen=None, new=None):
+        if seen is not None:
+            await self.set_setting("hits_keep_seen", int(seen))
+        if new is not None:
+            await self.set_setting("hits_keep_new", int(new))
 
     async def cleanup_filter_hits(self):
         """Убирает старые инциденты. Возвращает, сколько убрано."""
+        seen_days, new_days = await self.hits_keep_days()
         before = await self.fetch_val("SELECT COUNT(*) FROM filter_hits") or 0
         await self.execute(
             "DELETE FROM filter_hits WHERE seen_at IS NOT NULL "
-            "AND happened_at < NOW() - INTERVAL '%d DAYS'"
-            % int(self.HITS_KEEP_SEEN_DAYS))
+            "AND happened_at < NOW() - INTERVAL '%d DAYS'" % int(seen_days))
         await self.execute(
             "DELETE FROM filter_hits WHERE seen_at IS NULL "
-            "AND happened_at < NOW() - INTERVAL '%d DAYS'"
-            % int(self.HITS_KEEP_NEW_DAYS))
+            "AND happened_at < NOW() - INTERVAL '%d DAYS'" % int(new_days))
         after = await self.fetch_val("SELECT COUNT(*) FROM filter_hits") or 0
         return before - after
 

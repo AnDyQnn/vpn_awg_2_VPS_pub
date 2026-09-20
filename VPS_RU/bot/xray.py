@@ -246,7 +246,7 @@ async def readiness():
         sub_out = handlers_pubsub.is_on()
     except Exception:
         sub_out = False
-    out.append((sub_out, False, "Подписка наружу",
+    out.append((sub_out, False, "Доступ к подписке снаружи",
                 "пока закрыта, профиль обновляется только у подключённых к "
                 "туннелю: изменения не доедут до того, у кого VPN как раз не "
                 "работает", "psub_menu"))
