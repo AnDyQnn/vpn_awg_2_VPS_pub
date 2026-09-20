@@ -104,7 +104,7 @@ async def screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     left = cert_days_left()
     named = cert_named()
     if not on:
-        lines.append("**Сертификат:** нет — доступ снаружи закрыт")
+        lines.append("**Сертификат:** нет — публичная подписка выключена")
     else:
         # Что за сертификат стоит СЕЙЧАС — по самому сертификату, а не по тому,
         # вписан ли домен. Между этими двумя вещами лежит отдельный шаг.
@@ -132,10 +132,10 @@ async def screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     port = st.get("port", 2096)
     # Не просто «открыт/закрыт»: само слово ничего не объясняет, а решение по
     # нему принимают. Говорим, что это значит для человека.
-    lines.append("**Доступ снаружи:** " + (
-        ("открыт, порт `%s` — люди обновляют профиль даже с выключенным VPN"
-         % port) if on else
-        "закрыт — профиль обновляется только из туннеля"))
+    lines.append("**Публичная подписка:** " + (
+        ("опубликована на порту `%s` — профиль обновляется даже с "
+         "выключенным VPN" % port) if on else
+        "не опубликована — профиль обновляется только из туннеля"))
 
     # --- Что делать дальше. Только когда есть что ---
     # Что делать дальше — одной строкой. Подробности живут в документации, а
@@ -151,8 +151,8 @@ async def screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines += ["", "**Дальше:** доступ к зоне домена — вторая кнопка. "
                       "Пароль бот придумает сам."]
     elif not on:
-        lines += ["", "**Дальше:** открыть доступ снаружи, иначе подписка "
-                      "читается только из туннеля."]
+        lines += ["", "**Дальше:** опубликовать подписку в интернет, иначе "
+                      "она читается только из туннеля."]
     else:
         lines += ["", "Всё настроено."]
         try:
@@ -187,10 +187,10 @@ async def screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if on:
         kb.append([InlineKeyboardButton("🔄 Обновить сертификат",
                                         callback_data="psub_renew")])
-        kb.append([InlineKeyboardButton("🔒 Закрыть доступ снаружи",
+        kb.append([InlineKeyboardButton("🔒 Убрать подписку из интернета",
                                         callback_data="psub_off")])
     else:
-        kb.append([InlineKeyboardButton("🌐 Открыть доступ снаружи",
+        kb.append([InlineKeyboardButton("🌐 Опубликовать подписку в интернет",
                                         callback_data="psub_on")])
 
     kb.append([InlineKeyboardButton("🔙 Администрирование",
@@ -220,7 +220,7 @@ async def turn_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     if context.user_data.get("psub_sure") != "off":
         context.user_data["psub_sure"] = "off"
-        text = ("🔒 **Закрыть подписку наружу?**\n\n"
+        text = ("🔒 **Убрать подписку из интернета?**\n\n"
                 "Она откроется только изнутри туннеля. Это значит:\n"
                 "• новые исключения и переезды перестанут доезжать сами;\n"
                 "• первую настройку снова придётся отдавать текстом;\n"
@@ -317,12 +317,12 @@ async def _wait_screen(update, context, what):
 def status_line():
     """Строка для экрана администрирования и для отчёта проверки."""
     if not is_on():
-        return "🌐 *Домен и сертификаты:* доступ снаружи закрыт"
+        return "🌐 *Домен и сертификаты:* публичная подписка выключена"
     left = cert_days_left()
     tail = (", сертификат на %.1f сут." % left) if left is not None else ""
     if left is not None and left < 1:
         tail += " ⚠️"
-    return "🌐 *Домен и сертификаты:* доступ снаружи открыт" + tail
+    return "🌐 *Домен и сертификаты:* публичная подписка включена" + tail
 
 
 # --- Своё имя узла -----------------------------------------------------------
