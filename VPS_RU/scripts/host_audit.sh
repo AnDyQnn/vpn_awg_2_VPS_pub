@@ -552,6 +552,14 @@ fi
 PSUB_CERT="$APP_DIR/volumes/certs/fullchain.pem"
 if [ -s "$PSUB_CERT" ]; then
     PSUB_UNTIL=$(openssl x509 -in "$PSUB_CERT" -noout -enddate 2>/dev/null | cut -d= -f2)
+    # Покрывает ли он внутренние имена. Отдельной строкой, потому что теряется
+    # это молча: неудачное продление сужает сертификат, страницы начинают
+    # ругаться, а дата на нём при этом свежая.
+    if openssl x509 -in "$PSUB_CERT" -noout -text 2>/dev/null | grep -q 'DNS:\*\.'; then
+        PSUB_WILD="со «звёздочкой» (внутренние имена покрыты)"
+    else
+        PSUB_WILD="без «звёздочки» (внутренние имена не покрыты)"
+    fi
     PSUB_TS=$(date -d "$PSUB_UNTIL" +%s 2>/dev/null || echo 0)
     PSUB_LEFT=$(( (PSUB_TS - $(date +%s)) / 86400 ))
     if [ "$PSUB_TS" -eq 0 ]; then
@@ -561,7 +569,7 @@ if [ -s "$PSUB_CERT" ]; then
     elif [ "$PSUB_LEFT" -lt 3 ]; then
         add_check CAT_SEC "Подписка наружу · сертификат" "warning" "осталось $PSUB_LEFT сут."
     else
-        add_check CAT_SEC "Подписка наружу · сертификат" "ok" "осталось $PSUB_LEFT сут."
+        add_check CAT_SEC "Подписка наружу · сертификат" "ok" "осталось $PSUB_LEFT сут., $PSUB_WILD"
     fi
 
     # Правила охраны. Их снимает перезапуск докера, и без этой проверки порт

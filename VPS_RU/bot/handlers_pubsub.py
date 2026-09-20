@@ -113,7 +113,7 @@ async def screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "по личному токену. На всё остальное — молчание, одно и то же на "
             "любой запрос.",
             "",
-            "Охрана: не больше 8 соединений и 30 запросов в минуту с одного "
+            "Охрана: не больше 64 соединений и 240 запросов в минуту с одного "
             "адреса, потолок 50 в секунду на весь порт, а десять промахов по "
             "токену закрывают адрес на час.",
         ]
@@ -601,7 +601,9 @@ async def zone_own(update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id=update.effective_chat.id,
         text="✏️ Пришлите пароль для API одной строкой.\n\n"
              "_Сообщение удалю сразу, как прочитаю._",
-        parse_mode=ParseMode.MARKDOWN)
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton("✖️ Отмена", callback_data="psub_zone")]]))
 
 
 async def zone_generate(update: Update, context: ContextTypes.DEFAULT_TYPE):

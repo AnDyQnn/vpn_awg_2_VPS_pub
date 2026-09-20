@@ -293,10 +293,15 @@ async def grant_name(update: Update, context: ContextTypes.DEFAULT_TYPE,
 async def grant_manual(update: Update, context: ContextTypes.DEFAULT_TYPE, role_id: int):
     context.user_data["state"] = "awaiting_role_grant"
     context.user_data["role_id"] = role_id
+    # Зона в примере — сегодняшняя, а не записанная когда-то. Пример, который
+    # врёт, хуже отсутствующего: человек скопирует его дословно, получит
+    # «имени нет» и решит, что сломано.
+    import dnsnames as dn
+    z = dn.zone()
     await show_screen(update.callback_query, context, 
         "🛡 **Новый доступ**\n\nПришли имя или адрес внутри туннеля. Примеры:\n"
-        "`дом.vpn` — всё, что на этой машине\n"
-        "`дом.vpn tcp 8096` — только один порт\n"
+        f"`дом.{z}` — всё, что на этой машине\n"
+        f"`дом.{z} tcp 8096` — только один порт\n"
         "`10.13.13.7` — то же самое, но адресом\n"
         "`10.13.13.0/28` — диапазон адресов\n\n"
         "Имя лучше адреса: оно разрешается в адрес каждый раз заново и "

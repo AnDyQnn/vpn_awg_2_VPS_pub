@@ -70,9 +70,21 @@ MASK_POOL = {
 # лежит редко. Спасает то, что запасные входы остаются на чужих масках:
 # приложение перейдёт на живой вход само.
 SELF_DEST = "self"
-# Куда Reality переадресует. Петля: заглушка живёт в том же сетевом
-# пространстве, что и узел, наружу не опубликована.
-SELF_ADDR = os.getenv("DECOY_ADDR", "127.0.0.1:8444")
+
+
+def self_addr() -> str:
+    """Куда Reality переадресует. Петля: заглушка живёт в том же сетевом
+    пространстве, что и узел, наружу не опубликована.
+
+    Порт спрашиваем у того, кто её слушает, а не помним своим числом. Два места,
+    знающих одно и то же, однажды разойдутся — и разойдутся молча: Reality будет
+    стучаться не туда, а выглядеть это будет как «Xray не работает».
+    """
+    try:
+        import subscription
+        return "127.0.0.1:%d" % subscription.DECOY_PORT
+    except Exception:
+        return "127.0.0.1:8444"
 
 
 def mask_names(dest: str):
@@ -90,7 +102,7 @@ def mask_names(dest: str):
 
 def dest_addr(dest: str) -> str:
     """Адрес, на который Reality уводит рукопожатие."""
-    return SELF_ADDR if dest == SELF_DEST else f"{dest}:443"
+    return self_addr() if dest == SELF_DEST else f"{dest}:443"
 
 
 def self_mask_ready():
