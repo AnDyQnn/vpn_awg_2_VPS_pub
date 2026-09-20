@@ -59,6 +59,37 @@ ok|Подписка наружу · охрана порта|ничего не о
     fi
 fi
 
+# Сайты-маски REALITY. Тоже проверка с хоста: нужен бинарь Xray из контейнера
+# узла, и нужен он именно оттуда — важно, как сайт выглядит С УЗЛА.
+#
+# Почему это вообще проверяется. В REALITY клиент проверяет сертификат маски
+# как настоящий; не проверился — соединение оборвано. Сбербанк отдаёт
+# сертификат российского удостоверяющего центра, которого нет в хранилищах
+# телефонов, и вход с такой маской не работал никогда. Глазами это не видно:
+# в России такой сертификат доверенный, и владелец видит «сайт открывается»
+# там, где у людей рвётся связь.
+#
+# Проверяем ровно то, что делает клиент: рукопожатие с SNI.
+if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx vpn_wireguard; then
+    DESTS=$(docker exec vpn_wireguard sh -c         'grep -o "\"dest\": \"[^\"]*\"" /etc/amnezia/amneziawg/xray.json' 2>/dev/null         | sed 's/.*: *"//; s/"$//; s/:443$//' | sort -u)
+    for D in $DESTS; do
+        OUT=$(docker exec vpn_wireguard sh -c "/usr/local/bin/xray tls ping $D 2>&1" 2>/dev/null)
+        SNI=$(printf '%s' "$OUT" | sed -n '/Pinging with SNI/,$p')
+        if printf '%s' "$SNI" | grep -q "Handshake failure"; then
+            WHY=$(printf '%s' "$SNI" | grep -m1 "Handshake failure" | cut -c1-90)
+            LINES="$LINES
+error|Маска REALITY · $D|$WHY"
+        elif printf '%s' "$SNI" | grep -q "TLS 1.3"; then
+            LINES="$LINES
+ok|Маска REALITY · $D|рукопожатие с SNI, TLS 1.3"
+        else
+            LINES="$LINES
+warning|Маска REALITY · $D|рукопожатие есть, но не TLS 1.3 — Reality требует его"
+        fi
+    done
+fi
+
+
 N_OK=$(printf '%s\n' "$LINES" | grep -c '^ok|') || true
 N_WARN=$(printf '%s\n' "$LINES" | grep -c '^warning|') || true
 N_ERR=$(printf '%s\n' "$LINES" | grep -c '^error|') || true
