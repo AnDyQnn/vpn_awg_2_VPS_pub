@@ -37,7 +37,6 @@ from monitor import (
     xray_connect_watch_loop
 )
 from billing import reminder_loop as billing_reminder_loop
-from decoy import start as decoy_start
 from wireguard_manager import pause_peer, resume_peer
 
 from handlers_client import (
@@ -551,13 +550,79 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     "_Имена внутри туннеля переедут в эту же зону сами: "
                     "«дом.vpn» станет «дом.%s». Правила доступа переедут "
                     "вместе с ними._" % (name, name))
+            # Сразу предлагаем следующий шаг, а не ждём, пока владелец сам
+            # найдёт его в списке недостающего: без сертификата на «звёздочку»
+            # наши собственные страницы так и останутся с предупреждением.
+            kb_after = InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🔑 Сертификат внутренних имён",
+                                       callback_data="psub_zone")],
+                 [InlineKeyboardButton("🔙 Подписка наружу",
+                                       callback_data="psub_menu")]])
         else:
             text = ("⚠️ **Имя не применилось.**\n\n"
                     "Записывает его служба обновлений на сервере, и она не "
                     "ответила:\n`systemctl status vpn-updater`\n\n"
                     "Просьба не потеряна и применится, когда служба поднимется.")
+            kb_after = None
         await context.bot.send_message(chat_id=chat_id, text=text,
-                                       parse_mode=ParseMode.MARKDOWN)
+                                       parse_mode=ParseMode.MARKDOWN,
+                                       reply_markup=kb_after)
+        return
+
+    # Доступ к зоне домена: логин, потом пароль. Пара нужна для сертификата на
+    # «звёздочку» — единственного, который покрывает имена внутри туннеля.
+    if state == "awaiting_regru_user":
+        context.user_data["state"] = "awaiting_regru_password"
+        context.user_data["regru_user"] = (update.message.text or "").strip()
+        await safe_delete(context, chat_id, user_msg_id)
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="✏️ **Теперь пароль для API**\n\nЭто НЕ пароль от кабинета: "
+                 "в reg.ru он задаётся отдельно, в разделе доступа к API. Там "
+                 "же впишите адрес узла в белый список — тогда пара будет "
+                 "бесполезна откуда-либо ещё.\n\n"
+                 "_Сообщение с паролем удалю сразу, как прочитаю._",
+            parse_mode=ParseMode.MARKDOWN)
+        return
+
+    if state == "awaiting_regru_password":
+        context.user_data["state"] = None
+        import handlers_pubsub as hps
+        password = (update.message.text or "").strip()
+        user = context.user_data.pop("regru_user", "")
+        # Удаляем ПЕРВЫМ делом, до любой другой работы: пароль не должен висеть
+        # в переписке ни секунды дольше необходимого.
+        await safe_delete(context, chat_id, user_msg_id)
+        if not user or not password:
+            await context.bot.send_message(
+                chat_id=chat_id, text="⚠️ Пусто — ничего не записал.")
+            return
+        # Пара идёт файлом на сервер, а не переменной окружения. Разница не
+        # косметическая: переменная доезжает только пересозданием контейнеров,
+        # то есть каждая правка роняла бы бота — притом что самому боту эта
+        # пара не нужна вовсе, ею пользуется скрипт на хосте. А ещё то, что не
+        # попало в окружение, не попадёт ни в `docker inspect`, ни в отладку.
+        try:
+            hps.zone_creds_write(user, password)
+            ok, why = True, ""
+        except Exception as e:
+            ok, why = False, str(e)
+        del password
+        if ok:
+            await db.log_event("Подписки", "Задан доступ к зоне домена")
+            text = ("🔑 **Записано.**\n\nНичего не перезапускается — пара "
+                    "лежит файлом на сервере, и она нужна только ему.\n\n"
+                    "Теперь нажмите «Проверить доступ»: это положит временную "
+                    "запись в зону и тут же уберёт её. Опечатку лучше найти "
+                    "сейчас, чем в середине выпуска сертификата.")
+        else:
+            text = ("⚠️ **Не записалось.**\n\n`%s`\n\nПапка для этого — "
+                    "`volumes/secrets` внутри ноды." % why)
+        await context.bot.send_message(
+            chat_id=chat_id, text=text, parse_mode=ParseMode.MARKDOWN,
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🔑 К сертификату внутренних имён",
+                                       callback_data="psub_zone")]]))
         return
 
     # Новый сервис в счетах: одной строкой через точку с запятой.
@@ -997,6 +1062,10 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if data == "psub_domain": await hps.domain_screen(update, context); return
         if data == "psub_domain_set": await hps.domain_ask(update, context); return
         if data == "psub_domain_off": await hps.domain_off(update, context); return
+        if data == "psub_zone": await hps.zone_screen(update, context); return
+        if data == "psub_zone_set": await hps.zone_ask(update, context); return
+        if data == "psub_zone_off": await hps.zone_off(update, context); return
+        if data == "psub_zone_check": await hps.zone_check(update, context); return
     # Счета за сервера: напоминания об оплате хостингов.
     if data.startswith("bill_"):
         import billing
@@ -1654,10 +1723,8 @@ async def post_init(application):
         asyncio.create_task(hits_loop(application)),
         # Гео-файлы для приложения: без них профиль маршрутизации не применяется.
         asyncio.create_task(geo_files_loop(application)),
-        # Сайт-заглушка на петле: её показывает Xray тому, кто пришёл без
-        # ключа. Нужна, чтобы маска была своя, а не чужой сайт, от которого
-        # мы зависим целиком.
-        asyncio.create_task(decoy_start(application)),
+        # Сайт-заглушку отдельной задачей больше не поднимаем: её отдаёт
+        # сервер подписок тем же входом и тем же сертификатом — см. decoy.py.
         # Счета за сервера: напомнить об оплате заранее. Забытый платёж —
         # это выключенный узел и тридцать человек без связи.
         asyncio.create_task(billing_reminder_loop(application)),

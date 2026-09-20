@@ -16,6 +16,11 @@ CLEANUP_FLAG="$FLAGS_DIR/do_cleanup"
 # он берёт сертификат, правит iptables и ставит таймер, и ничего из этого бот
 # из контейнера сделать не может.
 PUBSUB_FLAG="$FLAGS_DIR/do_public_sub"
+# Проверка доступа к зоне домена. Пустой файл-просьба: кладём временную запись
+# в DNS и тут же убираем. Нужна затем, чтобы владелец узнал об опечатке в
+# пароле сразу, а не через несколько минут в середине выпуска сертификата —
+# и не потратил на опечатку попытку у удостоверяющего центра.
+ZONE_FLAG="$FLAGS_DIR/do_zone_check"
 
 echo "[Updater] Демон запущен для ноды: $(basename "$NODE_DIR")"
 echo "[Updater] Ожидание флагов в директории: $FLAGS_DIR"
@@ -158,6 +163,31 @@ while true; do
                 echo "[Updater] Подписка наружу: непонятная команда '$MODE'"
                 ;;
         esac
+    fi
+
+    # 4.7 ДОСТУП К ЗОНЕ ДОМЕНА
+    #     Логин с паролем лежат в .env на хосте и в контейнер не передаются:
+    #     боту они не нужны, а всё, что попадает в контейнер, попадает и в его
+    #     окружение. Поэтому проверять умеет только хост, и ответом служит
+    #     короткий отчёт рядом с остальными.
+    if [ -f "$ZONE_FLAG" ]; then
+        rm -f "$ZONE_FLAG"
+        echo "[Updater] Проверяю доступ к зоне домена..."
+        ZOUT=$(bash "$(dirname "$SCRIPT_DIR")/../scripts/dns_regru.sh" \
+               check "$NODE_DIR" 2>&1)
+        ZRC=$?
+        printf '%s\n' "$ZOUT" > "$FLAGS_DIR/zone_check.log"
+        # Последняя строка — внятная: либо «доступ есть», либо причина отказа.
+        ZMSG=$(printf '%s' "$ZOUT" | sed 's/^\[dns-01\] *//' | tail -1 |
+               tr -d '"' | cut -c1-200)
+        if [ $ZRC -eq 0 ]; then
+            printf '{"ok":true,"msg":"%s","at":%s}\n' "$ZMSG" "$(date +%s)" \
+                > "$FLAGS_DIR/zone_check.json"
+        else
+            printf '{"ok":false,"msg":"%s","at":%s}\n' "$ZMSG" "$(date +%s)" \
+                > "$FLAGS_DIR/zone_check.json"
+        fi
+        echo "[Updater] Проверка зоны: $ZMSG"
     fi
 
     # 5. ОЧИСТКА МУСОРА

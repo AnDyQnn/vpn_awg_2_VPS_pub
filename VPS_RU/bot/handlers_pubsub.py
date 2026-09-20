@@ -150,10 +150,18 @@ async def screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         kb.append([InlineKeyboardButton("🌐 Открыть наружу",
                                         callback_data="psub_on")])
-    have = (os.getenv("PUBLIC_DOMAIN") or "").strip()
+    have = current_domain()
     kb.append([InlineKeyboardButton(
         ("🌐 Имя · " + have) if have else "🌐 Задать своё имя",
         callback_data="psub_domain")])
+    if have:
+        # Видно сразу, есть ли сертификат на внутренние имена: без него все
+        # наши собственные страницы открываются с предупреждением, а заметить
+        # это по одной строке «подписка открыта» невозможно.
+        kb.append([InlineKeyboardButton(
+            "🔑 Внутренние имена · есть" if wildcard_on()
+            else "🔑 Внутренние имена · без сертификата",
+            callback_data="psub_zone")])
     kb.append([InlineKeyboardButton("🔙 Администрирование",
                                     callback_data="svc_menu")])
 
@@ -189,6 +197,23 @@ async def turn_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "_Открытый порт сам по себе ничего не стоит: снаружи по нему "
                 "отдаётся только подписка по личному токену, всё остальное "
                 "молчит._")
+        # Отдельным криком — случай, когда закрытие рвёт не только подписку.
+        # Сертификат здесь один на всё: закрыв подписку, мы убираем его, а
+        # вместе с ним и сайт-заглушку. Если она стоит маской входа, Xray
+        # перестанет принимать на основном порту у ВСЕХ — Reality ходит к маске
+        # в каждом рукопожатии. Такое узнают от людей, если не сказать заранее.
+        try:
+            import xray
+            self_mask = (await db.get_setting("xray_dest")) == xray.SELF_DEST
+        except Exception:
+            self_mask = False
+        if self_mask:
+            text += ("\n\n⚠️ **Сейчас маской входа Xray стоит свой сайт.** "
+                     "Сертификат у них общий: закрыв подписку, вы уберёте и "
+                     "его, а вместе с ним — заглушку. Основной вход Xray "
+                     "перестанет принимать у всех, и люди уйдут на запасные "
+                     "входы.\n\nСначала смените маску на обычную: "
+                     "«Протоколы → Xray → Маска входа».")
         kb = [[InlineKeyboardButton("🔒 Да, закрыть", callback_data="psub_off")],
               [InlineKeyboardButton("✖️ Отмена", callback_data="psub_menu")]]
         return await show_screen(query, context, text,
@@ -346,3 +371,215 @@ async def domain_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [[InlineKeyboardButton("🔙 Подписка наружу",
                                    callback_data="psub_menu")]]),
         parse_mode=ParseMode.MARKDOWN)
+
+
+# --- Доступ к зоне домена ----------------------------------------------------
+#
+# Нужен ровно для одного: сертификата на «*.имя». Он единственный покрывает
+# имена внутри туннеля — «дом.example.ru», «закрыто.example.ru», — потому что
+# снаружи этих имён нет и обычную проверку они пройти не могут ни одним
+# способом. Без него браузер ругается на каждую нашу собственную страницу.
+#
+# Логин с паролем живут ТОЛЬКО в .env на хосте. В контейнер бота они не
+# передаются вовсе: боту они не нужны, а всё, что попадает в контейнер, попадает
+# и в его окружение, и в вывод отладки, и однажды — в чужие руки. Поэтому здесь
+# видно лишь «задано или нет», и это не неудобство, а устройство.
+
+ZONE_FLAG = os.path.join(FLAGS_DIR, "do_zone_check")
+ZONE_RESULT = os.path.join(FLAGS_DIR, "zone_check.json")
+
+# Где живёт пара. Не в .env, и это не мелочь.
+#
+# Переменная окружения доезжает до контейнера только пересозданием — то есть
+# каждая правка роняла бы бота, хотя самому боту эта пара не нужна вовсе: ею
+# пользуется скрипт на хосте. Файл в общей папке снимает и то, и другое: правка
+# мгновенная, а в окружение контейнеров значение не попадает совсем — значит не
+# попадёт ни в вывод отладки, ни в `docker inspect`.
+#
+# В архив бэкапа папка тоже не входит: туда кладутся wireguard, configs и дамп
+# базы, и только они.
+SECRETS_DIR = "/volumes/secrets"
+ZONE_SECRET = os.path.join(SECRETS_DIR, "regru.conf")
+
+
+def zone_creds_write(user, password):
+    """Кладёт пару рядом, куда смотрит хост. Права — только владельцу."""
+    os.makedirs(SECRETS_DIR, exist_ok=True)
+    try:
+        os.chmod(SECRETS_DIR, 0o700)
+    except OSError:
+        pass
+    tmp = ZONE_SECRET + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write("REGRU_API_USER=%s\nREGRU_API_PASSWORD=%s\n" % (user, password))
+    try:
+        os.chmod(tmp, 0o600)
+    except OSError:
+        pass
+    # Подменяем целиком: скрипт на хосте может читать файл ровно сейчас, и
+    # застать его наполовину переписанным он не должен.
+    os.replace(tmp, ZONE_SECRET)
+
+
+def zone_creds_clear():
+    for f in (ZONE_SECRET, ZONE_SECRET + ".tmp"):
+        try:
+            os.remove(f)
+        except OSError:
+            pass
+
+
+def zone_api_on():
+    """Задана ли пара для доступа к зоне.
+
+    Смотрим на файл сами: он лежит в общей папке, и бот его видит. Спрашивать
+    об этом хост значило бы узнавать о своей же правке с задержкой."""
+    try:
+        return os.path.getsize(ZONE_SECRET) > 0
+    except OSError:
+        return bool(state().get("dns_api"))
+
+
+def wildcard_on():
+    """Покрывает ли нынешний сертификат внутренние имена."""
+    return bool(state().get("wild"))
+
+
+def zone_check_result():
+    try:
+        with open(ZONE_RESULT, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+async def zone_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    have_domain = bool(current_domain())
+    api = zone_api_on()
+    wild = wildcard_on()
+
+    lines = ["🔑 **Сертификат на внутренние имена**", ""]
+    if not have_domain:
+        lines += ["Сначала нужно своё имя узла — без него этой задачи не "
+                  "существует.", ""]
+    elif wild:
+        lines += ["Состояние: **есть**. Сертификат покрывает и сам домен, и "
+                  "всё внутри туннеля.", ""]
+    elif api:
+        lines += ["Состояние: доступ к зоне задан, но сертификат ещё обычный. "
+                  "Нажмите «Обновить сертификат» в разделе подписки.", ""]
+    else:
+        lines += ["Состояние: **нет**. Наши собственные страницы открываются "
+                  "с предупреждением браузера.", ""]
+
+    lines += [
+        "**Зачем.** Имена внутри туннеля снаружи не существуют, поэтому обычную "
+        "проверку они пройти не могут — и сертификата на них не бывает. "
+        "Единственный, который их покрывает, — на «звёздочку»: `*.имя`. "
+        "Выдаётся он по проверке через зону домена: центр просит положить "
+        "временную запись, и класть её умеет только тот, у кого есть доступ к "
+        "зоне.",
+        "",
+        "**Что это чинит.** Предупреждение браузера на странице отказа "
+        "фильтра, на «доступ закрыт» и на выдаче ключей. Сейчас человек видит "
+        "красный замок там, где ему показывает страницу его же сеть.",
+        "",
+        "**Чем за это платят.** На узле появляется доступ к управлению зоной "
+        "домена. Отнимут узел — отнимут и возможность переписать записи. Это "
+        "настоящее повышение ставок, и уменьшить его стоит двумя вещами:",
+        "",
+        "• В панели reg.ru у API есть **белый список адресов** — впишите туда "
+        "адрес узла и только его.",
+        "• Пароль для API там задаётся **отдельно** от пароля к кабинету. "
+        "Задайте отдельный: тогда это доступ к зоне, а не ко всему аккаунту.",
+        "",
+        "_Пара лежит файлом на сервере, с правами только владельцу, и ни в "
+        "одно окружение не попадает — ни в `docker inspect`, ни в отладку, ни "
+        "в архив бэкапа. Менять её можно на ходу: ничего не перезапускается._",
+    ]
+
+    res = zone_check_result()
+    if res:
+        mark = "✅" if res.get("ok") else "⚠️"
+        lines += ["", f"{mark} Последняя проверка: {res.get('msg', '—')}"]
+
+    kb = []
+    if have_domain:
+        kb.append([InlineKeyboardButton(
+            "✏️ Задать доступ" if not api else "✏️ Заменить пару",
+            callback_data="psub_zone_set")])
+        if api:
+            kb.append([InlineKeyboardButton("🔍 Проверить доступ",
+                                            callback_data="psub_zone_check")])
+            kb.append([InlineKeyboardButton("🗑 Убрать доступ",
+                                            callback_data="psub_zone_off")])
+    else:
+        kb.append([InlineKeyboardButton("🌐 Сначала задать имя узла",
+                                        callback_data="psub_domain")])
+    kb.append([InlineKeyboardButton("🔙 Подписка наружу", callback_data="psub_menu")])
+    await show_screen(query, context, "\n".join(lines),
+                      reply_markup=InlineKeyboardMarkup(kb),
+                      parse_mode=ParseMode.MARKDOWN)
+
+
+async def zone_ask(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Спрашиваем логин. Пароль — следующим сообщением, и оно сразу удаляется."""
+    query = update.callback_query
+    context.user_data["state"] = "awaiting_regru_user"
+    await show_screen(
+        query, context,
+        "✏️ **Логин в reg.ru**\n\nОдной строкой — тот, которым входите в "
+        "кабинет.\n\n_Следующим сообщением спрошу пароль для API. Оно будет "
+        "удалено сразу, как только прочитаю._",
+        reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton("✖️ Отмена", callback_data="psub_zone")]]),
+        parse_mode=ParseMode.MARKDOWN)
+
+
+async def zone_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Убирает пару. Сертификат при этом остаётся — он уже выдан и живёт своё."""
+    query = update.callback_query
+    await query.answer("Убираю…")
+    zone_creds_clear()
+    try:
+        os.remove(ZONE_RESULT)
+    except OSError:
+        pass
+    await db.log_event("Подписки", "Доступ к зоне домена убран")
+    await show_screen(
+        query, context,
+        "🔑 Доступ убран.\n\nНынешний сертификат продолжит работать до конца "
+        "срока, но продлить «звёздочку» будет нечем — при следующем продлении "
+        "она сменится на обычный, и предупреждения браузера вернутся.",
+        reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton("🔙 Назад", callback_data="psub_zone")]]),
+        parse_mode=ParseMode.MARKDOWN)
+
+
+async def zone_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Проверка без выпуска: кладём временную запись и тут же убираем.
+
+    Отдельно от выпуска намеренно. Опечатка в пароле иначе всплыла бы через
+    несколько минут в середине выпуска и стоила бы попытки у удостоверяющего
+    центра — а их на неделю считанные единицы."""
+    import asyncio
+    query = update.callback_query
+    os.makedirs(FLAGS_DIR, exist_ok=True)
+    try:
+        os.remove(ZONE_RESULT)
+    except OSError:
+        pass
+    with open(ZONE_FLAG, "w") as f:
+        f.write("check\n")
+    await query.answer("Проверяю…")
+    await show_screen(query, context, "⏳ Спрашиваю регистратора…",
+                      reply_markup=InlineKeyboardMarkup(
+                          [[InlineKeyboardButton("🔄 Обновить",
+                                                 callback_data="psub_zone")]]),
+                      parse_mode=ParseMode.MARKDOWN)
+    for _ in range(60):
+        await asyncio.sleep(1)
+        if os.path.exists(ZONE_RESULT):
+            break
+    await zone_screen(update, context)

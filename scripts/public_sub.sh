@@ -82,8 +82,13 @@ cert_until() {
 }
 
 report() {   # report <состояние> <сообщение>
-    printf '{"state":"%s","msg":"%s","port":%s,"at":%s,"until":%s,"ip":"%s"}\n' \
-        "$1" "$2" "$PUBLIC_PORT" "$(date +%s)" "$(cert_until)" "$(public_ip)" > "$STATE"
+    # «wild» и «dns_api» бот показывает на экране, но сами логин с паролем к
+    # нему не попадают и попасть не могут: в контейнер они не передаются вовсе.
+    WILD=false; cert_is_wild && WILD=true
+    DAPI=false; dns_api_ready && DAPI=true
+    printf '{"state":"%s","msg":"%s","port":%s,"at":%s,"until":%s,"ip":"%s","domain":"%s","wild":%s,"dns_api":%s}\n' \
+        "$1" "$2" "$PUBLIC_PORT" "$(date +%s)" "$(cert_until)" "$(public_ip)" \
+        "$(read_domain)" "$WILD" "$DAPI" > "$STATE"
     say "$2"
 }
 
@@ -151,10 +156,42 @@ port80_free() {
 # Домен берётся из .env ноды, а не из кода: он у каждой установки свой, и
 # зашивать его в проект значит требовать правку кода от каждого, кто поднимет
 # копию. Пусто — работаем по адресу, как и раньше.
-read_domain() {
+read_env() {   # read_env КЛЮЧ
     [ -f "$NODE_DIR/.env" ] || return 0
-    grep -E "^PUBLIC_DOMAIN=" "$NODE_DIR/.env" 2>/dev/null |
+    grep -E "^$1=" "$NODE_DIR/.env" 2>/dev/null |
         tail -1 | cut -d= -f2- | tr -d "\"' \r"
+}
+
+read_domain() { read_env PUBLIC_DOMAIN; }
+
+# Есть ли доступ к зоне домена. Без него сертификат на «звёздочку» невозможен:
+# удостоверяющий центр проверяет владение записью в DNS, и класть её умеет
+# только тот, у кого есть доступ к зоне.
+#
+# Пара лежит файлом, а не в .env: ею пользуется только хост, и гонять ради неё
+# пересоздание контейнеров незачем. .env оставлен запасным путём.
+ZONE_SECRET="$NODE_DIR/volumes/secrets/regru.conf"
+
+read_secret() {   # read_secret КЛЮЧ
+    for F in "$ZONE_SECRET" "$NODE_DIR/.env"; do
+        [ -f "$F" ] || continue
+        V=$(grep -E "^$1=" "$F" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d "\"' \r")
+        [ -n "$V" ] && { printf '%s' "$V"; return 0; }
+    done
+    return 0
+}
+
+dns_api_ready() {
+    [ -n "$(read_secret REGRU_API_USER)" ] && [ -n "$(read_secret REGRU_API_PASSWORD)" ]
+}
+
+# Покрывает ли нынешний сертификат «звёздочку». По этому же признаку решается,
+# чем его продлевать: у выданного по DNS проверка другая, и навязать ему
+# http-01 значит сломать продление.
+cert_is_wild() {
+    [ -s "$CERT_DIR/fullchain.pem" ] || return 1
+    openssl x509 -in "$CERT_DIR/fullchain.pem" -noout -text 2>/dev/null |
+        grep -q 'DNS:\*\.'
 }
 
 issue() {
@@ -192,6 +229,35 @@ issue() {
     #
     # Домен поэтому не просто «красивее»: он снимает недельный срок и вместе с
     # ним целый класс отказов, когда продление не прошло и вход умер у всех.
+    # Сначала «звёздочка», если есть доступ к зоне. Она покрывает не только сам
+    # домен, но и всё, что внутри туннеля: «дом.example.ru»,
+    # «закрыто.example.ru». Другого способа получить на них сертификат не
+    # существует — снаружи этих имён нет, и обычную проверку они не пройдут.
+    #
+    # Проверка здесь другая, dns-01: центр просит положить запись в зону домена.
+    # Кладёт её крючок, логин с паролем он читает из .env сам.
+    if [ -n "$DOMAIN" ] && dns_api_ready; then
+        say "выпускаю на домен и «звёздочку» через запись в DNS (срок 90 дней)"
+        say "проверка идёт через зону — это занимает несколько минут"
+        HOOK="$SELF_DIR/dns_regru.sh"
+        NODE_DIR="$NODE_DIR" "$CB" certonly --manual --non-interactive --agree-tos \
+            --register-unsafely-without-email \
+            --preferred-challenges dns \
+            --manual-auth-hook "NODE_DIR=$NODE_DIR bash $HOOK add" \
+            --manual-cleanup-hook "NODE_DIR=$NODE_DIR bash $HOOK clean" \
+            --cert-name "$CERT_NAME" \
+            -d "$DOMAIN" -d "*.$DOMAIN" >/tmp/certbot.log 2>&1
+        if [ $? -eq 0 ]; then
+            copy_cert && report "on" "сертификат на «$DOMAIN» и «*.$DOMAIN» выдан"
+            return $?
+        fi
+        # Не бросаем человека без подписки: ниже обычный путь, который работал
+        # до сих пор. Но говорим вслух — иначе «звёздочка» молча не появится, и
+        # страницы так и останутся с предупреждением.
+        say "на «звёздочку» не вышло, беру обычный сертификат; подробности в /tmp/certbot.log"
+        tail -5 /tmp/certbot.log | sed 's/^/[подписка]   /'
+    fi
+
     if [ -n "$DOMAIN" ]; then
         say "выпускаю на домен (срок 90 дней)"
         "$CB" certonly --standalone --non-interactive --agree-tos \
@@ -391,8 +457,18 @@ case "${1:-status}" in
         report "error" "certbot пропал — продлить нечем"
         exit 1
     fi
-    "$CB" renew --cert-name "$CERT_NAME" --standalone --non-interactive \
-        >/tmp/certbot-renew.log 2>&1
+    # Чем продлевать, решает сам сертификат. У выданного по записи в DNS
+    # проверка другая, и навязать ему «--standalone» значит сломать продление:
+    # certbot послушается флага и пойдёт проверять по http, которого для
+    # «звёздочки» не бывает вовсе.
+    if cert_is_wild; then
+        say "продлеваю «звёздочку» — проверка снова через зону"
+        NODE_DIR="$NODE_DIR" "$CB" renew --cert-name "$CERT_NAME" --non-interactive \
+            >/tmp/certbot-renew.log 2>&1
+    else
+        "$CB" renew --cert-name "$CERT_NAME" --standalone --non-interactive \
+            >/tmp/certbot-renew.log 2>&1
+    fi
     if copy_cert; then
         UNTIL=$(openssl x509 -in "$CERT_DIR/fullchain.pem" -noout -enddate 2>/dev/null | cut -d= -f2)
         report "on" "сертификат действует до $UNTIL"

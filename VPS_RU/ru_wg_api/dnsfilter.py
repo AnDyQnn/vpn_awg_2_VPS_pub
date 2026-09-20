@@ -628,13 +628,47 @@ async def handle_tcp(reader, writer):
 # Человек видит объяснение вместо «сайт не открывается» — разница в том, что
 # он понимает: сеть работает, закрыт конкретно этот сайт и почему.
 #
-# Ограничение, которое надо понимать: показать страницу можно только для HTTP.
-# Для HTTPS браузер получит ошибку соединения — подменить сертификат чужого сайта
-# нельзя, не поставив свой корневой сертификат на каждое устройство. Делать это
-# ради страницы отказа неправильно: это уже вскрытие чужого трафика.
+# Ограничение, которое надо понимать: показать страницу ВМЕСТО ЧУЖОГО САЙТА
+# можно только для HTTP. Для HTTPS браузер получит ошибку соединения — подменить
+# сертификат чужого сайта нельзя, не поставив свой корневой сертификат на каждое
+# устройство. Делать это ради страницы отказа неправильно: это уже вскрытие
+# чужого трафика.
+#
+# А вот на СВОИ имена сертификат настоящий бывает — и с ним страница открывается
+# без единого предупреждения. Речь про «дом.example.ru» и «закрыто.example.ru»:
+# туда человека уводит не подмена, а наше же имя, и сертификат «*.example.ru»
+# покрывает их все. Берётся он из той же папки, что у подписки, и только на
+# чтение.
 BLOCK_PAGE = "/app/blocked.html"
 CERT_FILE = "/etc/amnezia/amneziawg/block_page.pem"
+# Папка с настоящим сертификатом. Монтируется в контейнер только на чтение;
+# нет её — работаем как раньше, на самоподписанном.
+REAL_CERT_DIR = os.getenv("BLOCK_CERT_DIR", "/certs")
 _page_cache = None
+_cert_seen = None
+
+
+def real_cert():
+    """Пара файлов настоящего сертификата, если она на месте."""
+    cert = os.path.join(REAL_CERT_DIR, "fullchain.pem")
+    key = os.path.join(REAL_CERT_DIR, "privkey.pem")
+    try:
+        if os.path.getsize(cert) > 0 and os.path.getsize(key) > 0:
+            return cert, key
+    except OSError:
+        pass
+    return None
+
+
+def cert_stamp():
+    """Метка файлов — по ней видно, что сертификат продлили."""
+    pair = real_cert()
+    if not pair:
+        return None
+    try:
+        return tuple(int(os.stat(f).st_mtime) for f in pair)
+    except OSError:
+        return None
 
 
 def ensure_cert():
@@ -770,6 +804,69 @@ async def handle_http(reader, writer):
             pass
 
 
+def build_page_ctx():
+    """Готовит TLS для страницы. Настоящий сертификат предпочтительнее.
+
+    Разница видна человеку и только человеку: на своё имя настоящий открывается
+    молча, а самоподписанный — через красный замок и «всё равно перейти». Для
+    чужого закрытого сайта оба одинаково не подходят, и это не лечится ничем.
+    """
+    global _cert_seen
+    import ssl
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+    pair = real_cert()
+    if pair:
+        try:
+            ctx.load_cert_chain(pair[0], pair[1])
+            _cert_seen = cert_stamp()
+            return ctx, "настоящий"
+        except Exception as e:
+            print(f"Страница отказа: настоящий сертификат не читается — {e}",
+                  flush=True)
+    cert = ensure_cert()
+    if not cert:
+        return None, ""
+    try:
+        ctx.load_cert_chain(cert)
+    except Exception as e:
+        print(f"Страница отказа: свой сертификат не читается — {e}", flush=True)
+        return None, ""
+    _cert_seen = None
+    return ctx, "самоподписанный"
+
+
+async def cert_watch(ctx):
+    """Следит за сертификатом: продление и появление.
+
+    Перечитываем цепочку на месте — SSLContext это разрешает, и новые
+    соединения берут уже новый сертификат. Перезапускать ради этого узел
+    значило бы рвать всем связь раз в три месяца.
+
+    Здесь же и переход с самоподписанного на настоящий: он появляется не при
+    старте, а когда владелец задаст имя и доступ к зоне. Ждать перезапуска
+    узла ради этого незачем.
+    """
+    global _cert_seen
+    while True:
+        await asyncio.sleep(600)
+        try:
+            stamp = cert_stamp()
+            if stamp == _cert_seen:
+                continue
+            pair = real_cert()
+            if not pair:
+                continue
+            ctx.load_cert_chain(pair[0], pair[1])
+            was = _cert_seen
+            _cert_seen = stamp
+            print("Страница отказа: сертификат "
+                  + ("перечитан" if was else "стал настоящим"), flush=True)
+        except Exception as e:
+            print(f"Страница отказа: сертификат обновить не вышло — {e}",
+                  flush=True)
+
+
 # Порт TLS-страницы отказа. 443 отдан Xray — см. пояснение ниже по коду.
 HTTPS_PAGE_PORT = 8443
 
@@ -783,19 +880,17 @@ async def main():
     try:
         await asyncio.start_server(handle_http, "0.0.0.0", 80)
         print("Страница отказа слушает :80", flush=True)
-        cert = ensure_cert()
-        if cert:
-            import ssl
-            ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-            ctx.load_cert_chain(cert)
+        ctx, kind = build_page_ctx()
+        if ctx:
             # Не 443: этот порт занимает Xray, и занимает обоснованно —
             # трафик к нему неотличим от обычного HTTPS. Человек сюда попадает
             # не по адресу, а по правилу подмены, поэтому номер порта ему
             # безразличен.
             await asyncio.start_server(handle_http, "0.0.0.0", HTTPS_PAGE_PORT,
                                        ssl=ctx)
-            print(f"Страница отказа слушает :{HTTPS_PAGE_PORT} "
-                  f"(самоподписанный)", flush=True)
+            print(f"Страница отказа слушает :{HTTPS_PAGE_PORT} ({kind})",
+                  flush=True)
+            asyncio.ensure_future(cert_watch(ctx))
     except Exception as e:
         # Не фатально: фильтр работает и без страницы, человек просто увидит
         # обычную ошибку соединения.

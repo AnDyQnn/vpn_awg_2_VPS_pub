@@ -25,18 +25,17 @@
 
 Слушает только петлю. Наружу её отдаёт Xray и только тем, кто не прошёл
 проверку, — сама она из интернета недостижима.
+
+**Где живёт сервер.** Здесь только сама страница. Отдаёт её сервер подписок —
+тем же входом на 127.0.0.1:8444, тем же сертификатом и через тот же рубеж. Так
+вышло не ради экономии строк: отдельный сервер заглушки означал бы второй TLS,
+второй разбор запроса и второе место, где можно ошибиться, причём на виду у
+всего интернета.
+
+А заодно подписка оказалась на 443 — том самом порту, который не режут
+мобильные операторы. Reality уводит к маске всех, кто не прошёл проверку, и
+наши клиенты подписки — ровно они.
 """
-import asyncio
-import os
-import ssl
-
-from aiohttp import web
-
-# Петля и только петля. Снаружи сюда попадают исключительно через REALITY,
-# который сам решает, кого переадресовать.
-DECOY_HOST = "127.0.0.1"
-DECOY_PORT = int(os.getenv("DECOY_PORT", "8444"))
-CERT_DIR = os.getenv("SUB_CERT_DIR", "/volumes/certs")
 
 # Страница. Ровно один экран, без внешних ссылок, без скриптов, без форм.
 # Формы тут особенно неуместны: любое поле ввода — это приглашение его
@@ -70,94 +69,18 @@ p{margin:0 0 12px;color:#4a5261}
 BODY = PAGE.encode("utf-8")
 
 
-async def handle(request):
-    """Один ответ на всё. Путь, метод и заголовки гостя не разбираются вовсе.
-
-    Разбирать их было бы нечем и незачем: у сайта нет ни страниц, ни файлов, ни
-    состояния. Зато каждая попытка разбора — это место, где можно ошибиться, а
-    ошибка здесь видна всему интернету.
-    """
-    return web.Response(
-        body=BODY,
-        status=503,
-        content_type="text/html",
-        charset="utf-8",
-        headers={
-            # Кэш: повторный визит того же сканера не стоит нам ничего.
-            "Cache-Control": "public, max-age=3600",
-            "Retry-After": "7200",
-            # Ни версии, ни имени движка: это бесплатная подсказка тому, кто
-            # ищет, чем нас пробовать.
-            "Server": "nginx",
-            "X-Content-Type-Options": "nosniff",
-            "Referrer-Policy": "no-referrer",
-        })
-
-
-def _ssl_context():
-    """Тот же сертификат, что у подписки. Нет его — сайта тоже нет."""
-    cert = os.path.join(CERT_DIR, "fullchain.pem")
-    key = os.path.join(CERT_DIR, "privkey.pem")
-    try:
-        if os.path.getsize(cert) < 1 or os.path.getsize(key) < 1:
-            return None
-    except OSError:
-        return None
-    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-    # Только 1.3 и 1.2: REALITY показывает гостю сертификат этого сайта, и
-    # набор протоколов тоже часть того, как он выглядит.
-    ctx.minimum_version = ssl.TLSVersion.TLSv1_2
-    try:
-        ctx.load_cert_chain(cert, key)
-    except Exception as e:
-        print("Заглушка: сертификат не загрузился — %s" % e)
-        return None
-    return ctx
-
-
-# Поднята ли она сейчас. Вопрос не праздный: пока заглушка не слушает, выбирать
-# её маской нельзя — Reality уводит к ней КАЖДОЕ рукопожатие, и вход с
-# неподнятой заглушкой не работает вообще ни у кого.
-_up = False
-
-
 def is_up() -> bool:
-    return _up
+    """Поднят ли вход-маска.
 
+    Вопрос не праздный: пока он не слушает, выбирать свой сайт маской нельзя —
+    Reality уводит к маске КАЖДОЕ рукопожатие, и вход с неподнятой заглушкой не
+    работает вообще ни у кого.
 
-async def start(app=None):
-    """Поднимает заглушку, если есть сертификат. Иначе молчит и ждёт.
-
-    Ждать приходится: сертификат выпускается скриптом на хосте и может
-    появиться через минуты после старта бота.
+    Спрашиваем у того, кто её держит, а не помним отдельным флагом: два места,
+    знающих одно и то же, однажды разойдутся, и разойдутся молча.
     """
-    global _up
-    runner = None
-    while True:
-        ctx = _ssl_context()
-        if ctx and runner is None:
-            try:
-                srv = web.Server(handle)
-                runner = web.ServerRunner(srv)
-                await runner.setup()
-                site = web.TCPSite(runner, DECOY_HOST, DECOY_PORT, ssl_context=ctx)
-                await site.start()
-                _up = True
-                print("Заглушка: поднята на %s:%d" % (DECOY_HOST, DECOY_PORT),
-                      flush=True)
-            except Exception as e:
-                print("Заглушка: не поднялась — %s" % e, flush=True)
-                runner = None
-                _up = False
-        elif ctx is None and runner is not None:
-            # Сертификат пропал — значит владелец закрыл подписку наружу.
-            # Снимаем и заглушку: отдавать её с истёкшим сертификатом хуже, чем
-            # не отдавать вовсе, а маска на неё после этого перестанет
-            # предлагаться сама.
-            try:
-                await runner.cleanup()
-            except Exception:
-                pass
-            runner, _up = None, False
-            print("Заглушка: сертификата больше нет — снята", flush=True)
-        await asyncio.sleep(600)
+    try:
+        import subscription
+        return subscription.decoy_up()
+    except Exception:
+        return False

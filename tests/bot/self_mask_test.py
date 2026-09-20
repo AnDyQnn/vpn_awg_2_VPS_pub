@@ -23,6 +23,12 @@ async def main():
     await db.connect()
     import decoy
     import handlers_pubsub
+    import subscription
+
+    # Заглушку держит сервер подписок — у него же и спрашиваем. Поднимать
+    # настоящий TLS ради этого незачем: проверяем связку решений, а не сокет.
+    def decoy_state(up):
+        subscription.decoy_up = lambda: up
 
     print("=== адрес, куда уводится рукопожатие ===")
     assert xray.dest_addr("avito.ru") == "avito.ru:443"
@@ -49,12 +55,12 @@ async def main():
     assert not ok and "имени" in why
 
     set_domain("example.ru")
-    decoy._up = False
+    decoy_state(False)
     ok, why = xray.self_mask_ready()
     print("  заглушка лежит:", ok, why)
     assert not ok and "заглушка" in why
 
-    decoy._up = True
+    decoy_state(True)
     ok, why = xray.self_mask_ready()
     print("  всё на месте:", ok, why or "—")
     assert ok, why
@@ -110,6 +116,24 @@ async def main():
     print("  подписка открыта:", base)
     assert base.startswith("https://example.ru"), base
     print("имя годится только вместе с открытой подпиской: ок")
+
+    print("\n=== со своей маской подписка едет по 443 ===")
+    # Ради этого всё и затевалось: нестандартные порты режут мобильные
+    # операторы, и человек за таким оператором профиль не получал вовсе.
+    await db.set_setting("xray_dest", xray.SELF_DEST)
+    decoy_state(True)
+    base = await xray.subscription_base()
+    print("  своя маска:", base)
+    assert base == "https://example.ru", base
+    assert ":2096" not in base, "порт, который режут, в ссылке остался"
+
+    # А если заглушка не поднята, 443 обещать нельзя: там некому ответить.
+    decoy_state(False)
+    base = await xray.subscription_base()
+    print("  заглушка лежит:", base)
+    assert base.endswith(":2096"), base
+    print("443 обещаем только когда есть кому отвечать: ок")
+    decoy_state(True)
 
     set_domain("")
     await db.set_setting("xray_dest", xray.DEFAULT_DEST)

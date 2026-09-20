@@ -36,6 +36,23 @@ SUB_PORT = int(os.getenv("SUB_PORT", "8080"))
 # снаружи не достучаться.
 CERT_DIR = os.getenv("SUB_CERT_DIR", "/volumes/certs")
 
+# Вход через маску: тот самый сайт-заглушка, к которому Reality уводит всех, кто
+# не прошёл проверку. Слушает ТОЛЬКО петлю — наружу его показывает Xray.
+#
+# Почему это один сервер с подпиской, а не два.
+#
+# Во-первых, так подписка оказывается на 443. Нестандартные порты режут
+# мобильные операторы, и человек за таким оператором не получал профиль вовсе —
+# а выглядело это как «VPN не работает». Через маску подписка приезжает по
+# обычному 443, неотличимо от захода на сайт.
+#
+# Во-вторых, рубеж у них общий. Отдельный сервер заглушки — это второй TLS,
+# второй разбор запроса и второе место, где можно ошибиться, причём на виду у
+# всего интернета. Здесь разбор один, проверенный, и он уже умеет отказывать
+# молча.
+DECOY_PORT = int(os.getenv("DECOY_PORT", "8444"))
+DECOY_HOST = "127.0.0.1"
+
 
 # --- Защита открытого порта -------------------------------------------------
 #
@@ -129,6 +146,53 @@ def blocked_now():
     return sum(1 for v in _miss.values() if v[1] > now)
 
 
+# Пути, которые вход-маска обслуживает по-настоящему. Всё остальное на нём —
+# страница-заглушка, одна и та же.
+_SUB_PATHS = ("/sub/", "/routing/", "/geo/")
+
+
+def _is_sub_path(path: str) -> bool:
+    return any(path.startswith(x) for x in _SUB_PATHS)
+
+
+def on_decoy(request) -> bool:
+    """Пришёл ли запрос на вход-маску. Отличаем по порту, а не по имени.
+
+    По имени было бы ненадёжно: имя приходит от гостя, а порт — от ядра."""
+    try:
+        return request.transport.get_extra_info("sockname")[1] == DECOY_PORT
+    except Exception:
+        return False
+
+
+def decoy_page():
+    """Страница, которую видит посторонний.
+
+    Она намеренно тупая: один и тот же ответ побайтово, ни чтения с диска по
+    просьбе гостя, ни состояния, ни форм. Форма тут особенно неуместна — любое
+    поле ввода приглашает его попробовать, а нам нечего с ним делать.
+
+    Маленькая, а не на десять мегабайт. Совет «пусть весит побольше, чтобы
+    объём трафика выглядел правдоподобно» делает из узла усилитель: каждый
+    случайный сканер вынудит машину с одним ядром отдать десять мегабайт, а
+    таких запросов бывают тысячи в сутки. Правдоподобия это всё равно не даёт —
+    через VPN за вечер проходят гигабайты.
+    """
+    import decoy
+    return web.Response(
+        body=decoy.BODY, status=503, content_type="text/html", charset="utf-8",
+        headers={
+            # Кэш: повторный визит того же сканера не стоит нам ничего.
+            "Cache-Control": "public, max-age=3600",
+            "Retry-After": "7200",
+            # Ни версии, ни имени движка: это бесплатная подсказка тому, кто
+            # ищет, чем нас пробовать.
+            "Server": "nginx",
+            "X-Content-Type-Options": "nosniff",
+            "Referrer-Policy": "no-referrer",
+        })
+
+
 @web.middleware
 async def guard(request, handler):
     """Общий рубеж: всё, что можно отклонить не думая, отклоняется здесь.
@@ -136,6 +200,15 @@ async def guard(request, handler):
     Отказ всегда один и тот же — 404 и слово. По ответу нельзя отличить
     «слишком часто», «закрыт» и «нет такого токена»: чужому эта разница
     подсказывает, куда давить, а свой всё равно спросит у бота."""
+    # Пришедший на вход-маску не по адресу подписки получает страницу сразу,
+    # до всех рубежей. Так и задумано: страница у нас одна и та же побайтово,
+    # отдать её не стоит ничего — а вот пустить сканеров в общий счётчик
+    # означало бы, что достаточно постучаться тысячу раз, и подписка перестанет
+    # работать у своих. Reality уводит сюда КАЖДОГО, кто не прошёл проверку,
+    # поэтому таких стуков будут тысячи.
+    if on_decoy(request) and not _is_sub_path(request.path):
+        return decoy_page()
+
     now = time.time()
     ip = request.remote or "?"
 
@@ -539,6 +612,14 @@ _ssl_ctx = None
 _cert_seen = (0, 0)
 _runner = None
 _tls_site = None
+_decoy_site = None
+
+
+def decoy_up() -> bool:
+    """Поднят ли вход-маска. От этого зависит, можно ли выбрать свой сайт
+    маской: Reality уводит к ней каждое рукопожатие, и вход с неподнятой
+    заглушкой не работает вообще ни у кого."""
+    return _decoy_site is not None
 
 
 def cert_paths():
@@ -596,6 +677,34 @@ async def tls_start():
     return True
 
 
+async def decoy_start():
+    """Поднять вход-маску. Тот же сертификат, что у подписки: имя одно."""
+    global _decoy_site
+    if _decoy_site is not None or _runner is None:
+        return False
+    ctx = build_ssl()
+    if ctx is None:
+        return False
+    site = web.TCPSite(_runner, DECOY_HOST, DECOY_PORT, ssl_context=ctx,
+                       backlog=64)
+    await site.start()
+    _decoy_site = site
+    print(f"Вход-маска: поднят на {DECOY_HOST}:{DECOY_PORT}")
+    return True
+
+
+async def decoy_stop():
+    """Снять вход-маску. Отдавать её без сертификата нельзя, а с истёкшим —
+    хуже, чем не отдавать вовсе."""
+    global _decoy_site
+    if _decoy_site is None:
+        return False
+    await _decoy_site.stop()
+    _decoy_site = None
+    print("Вход-маска: снят")
+    return True
+
+
 async def tls_stop():
     """Убрать внешний вход. Порт остаётся опубликованным, но слушать некому."""
     global _tls_site, _ssl_ctx
@@ -632,11 +741,16 @@ async def cert_watch():
         try:
             if not cert_ready():
                 await tls_stop()
+                await decoy_stop()
             elif _tls_site is None:
                 await tls_start()
+                await decoy_start()
             elif cert_stamp() != _cert_seen:
                 build_ssl()
                 print("Подписка: сертификат перечитан")
+                # Вход-маска мог не подняться при старте — например, при первой
+                # установке сертификата ещё не было.
+                await decoy_start()
         except Exception as e:
             print(f"Подписка: не удалось обновить внешний вход: {e}")
 
@@ -675,8 +789,10 @@ async def start_server():
     # в туннеле.
     await web.TCPSite(runner, "0.0.0.0", SUB_PORT, backlog=64).start()
     outside = await tls_start()
+    masked = await decoy_start()
     asyncio.create_task(cert_watch())
-    print("Сервер подписок: внутри порт %d, снаружи %s"
+    print("Сервер подписок: внутри порт %d, снаружи %s, вход-маска %s"
           % (SUB_PORT, ("порт %d" % PUBLIC_PORT) if outside
-             else "закрыто (нет сертификата)"))
+             else "закрыто (нет сертификата)",
+             ("на %d" % DECOY_PORT) if masked else "не поднят"))
     return runner
