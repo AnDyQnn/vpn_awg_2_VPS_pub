@@ -230,52 +230,50 @@ def wg_status():
 # Узел здесь ничего не решает: конфиг целиком собирает мастер, у которого база.
 # Дело агента — записать, проверить, запустить и доложить.
 XRAY_BIN = "/usr/local/bin/xray"
-XRAY_CONF = f"{CONF_DIR}/xray.json"
-XRAY_PID = "/tmp/xray.pid"
-XRAY_LOG = "/tmp/xray.log"
+# Общий том с контейнером моста. Агент сюда только КЛАДЁТ конфиг и ЧИТАЕТ
+# состояние; процесс живёт в соседнем контейнере и агенту не подчиняется — в
+# этом и смысл разделения.
+XRAY_DIR = "/etc/xray"
+XRAY_CONF = f"{XRAY_DIR}/xray.json"
+XRAY_STATUS = f"{XRAY_DIR}/status.json"
+XRAY_LOG = f"{XRAY_DIR}/xray.log"
 # Потолок памяти средствами самого рантайма Go. Жёсткий предел по адресному
 # пространству тут не работает: Xray резервирует больше гигабайта, а занимает
 # десятки мегабайт, и предел просто не дал бы процессу запуститься.
 XRAY_MEM_LIMIT = os.getenv("XRAY_MEM_LIMIT", "192MiB")
 
 
+def xray_state():
+    """Состояние моста — из файла, который пишет его контейнер.
+
+    Своего процесса у агента больше нет: мост живёт отдельно и переживает
+    перезапуск агента. Узнать о нём можно только тем, что он сам о себе
+    записал."""
+    try:
+        with open(XRAY_STATUS) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
 def xray_running():
-    """Жив ли процесс. Сигналом 0 проверять нельзя: он проходит и для зомби —
-    процесса, который умер, но ещё не прибран. Упавший Xray выглядел бы живым."""
-    try:
-        with open(XRAY_PID) as f:
-            pid = int(f.read().strip())
-        with open(f"/proc/{pid}/stat") as f:
-            state = f.read().rsplit(")", 1)[1].split()[0]
-        return state != "Z"
-    except Exception:
+    st = xray_state()
+    if not st:
         return False
-
-
-def xray_stop():
-    try:
-        with open(XRAY_PID) as f:
-            pid = int(f.read().strip())
-        os.kill(pid, 15)
-        for _ in range(20):
-            if not xray_running():
-                break
-            time.sleep(0.1)
-        if xray_running():
-            os.kill(pid, 9)
-    except Exception:
-        pass
-    try:
-        os.remove(XRAY_PID)
-    except OSError:
-        pass
+    # Состояние протухло — контейнер моста не работает вовсе. Иначе упавший
+    # контейнер выглядел бы вечно живым по последней записи.
+    if time.time() - int(st.get("checked_at") or 0) > 60:
+        return False
+    return bool(st.get("running"))
 
 
 def xray_check(path):
     """Проверяет конфиг силами самого Xray, ничего не запуская.
 
-    Порядок важен: ошибку генератора ловим ДО остановки работающего процесса,
-    поэтому связь у людей не прерывается вовсе."""
+    Проверяем ЗДЕСЬ, до записи в общий том: ошибку генератора надо поймать до
+    того, как мост увидит файл, — тогда он даже не станет перезапускаться.
+    Вторая такая же проверка есть и у моста: он не обязан верить нам на слово,
+    а мы не обязаны надеяться, что он проверит."""
     try:
         res = subprocess.run([XRAY_BIN, "run", "-test", "-c", path],
                              capture_output=True, text=True, timeout=20)
@@ -286,22 +284,6 @@ def xray_check(path):
     return False, (res.stderr or res.stdout or "").strip()[:400]
 
 
-def xray_start():
-    if not os.path.exists(XRAY_CONF):
-        return False, "конфиг ещё не прислан"
-    xray_stop()
-    env = dict(os.environ, GOMEMLIMIT=XRAY_MEM_LIMIT)
-    proc = subprocess.Popen([XRAY_BIN, "run", "-c", XRAY_CONF],
-                            stdout=open(XRAY_LOG, "a"),
-                            stderr=subprocess.STDOUT, env=env)
-    with open(XRAY_PID, "w") as f:
-        f.write(str(proc.pid))
-    time.sleep(1)
-    if not xray_running():
-        return False, "процесс не удержался, смотри /tmp/xray.log"
-    return True, "запущен"
-
-
 class XrayConfig(BaseModel):
     config: dict
     # Порт входа: под него открывается дверь. Мастер знает, какой прислал.
@@ -310,36 +292,37 @@ class XrayConfig(BaseModel):
 
 @app.post("/api/xray/apply")
 def xray_apply(data: XrayConfig):
-    """Принимает конфиг от мастера и запускается на нём.
+    """Принимает конфиг от мастера и кладёт его мосту.
 
-    Две ступени защиты, потому что цена ошибки — выход в интернет у всех, кто
-    на Xray: новый конфиг сначала проверяется во временном файле, а если
-    процесс не встал уже на проверенном — возвращается прежний."""
+    Запускать ничего не нужно: мост в соседнем контейнере сам заметит, что файл
+    изменился, проверит его ещё раз и поднимется. Битый конфиг он не возьмёт и
+    останется работать на прежнем — поэтому связь не рвётся из-за опечатки в
+    генераторе."""
     try:
-        prev = None
-        if os.path.exists(XRAY_CONF):
-            with open(XRAY_CONF) as f:
-                prev = f.read()
-
+        os.makedirs(XRAY_DIR, exist_ok=True)
         tmp = XRAY_CONF + ".new"
         with open(tmp, "w") as f:
             json.dump(data.config, f, indent=2)
+
         ok, why = xray_check(tmp)
         if not ok:
             os.remove(tmp)
             raise HTTPException(status_code=400, detail=f"конфиг не принят: {why}")
+
+        # Подменяем одним движением: мост может читать файл в этот самый миг,
+        # и половинчатый конфиг он бы отверг.
         os.replace(tmp, XRAY_CONF)
-
-        started, detail = xray_start()
-        if not started and prev is not None:
-            with open(XRAY_CONF, "w") as f:
-                f.write(prev)
-            xray_start()
-            raise HTTPException(status_code=500,
-                                detail=f"не запустился, вернул прежний: {detail}")
-
         xray_port_gate(data.port)
-        return {"status": "ok", "running": xray_running(), "detail": detail}
+
+        # Мосту нужно несколько секунд, чтобы заметить и подняться. Ждём не
+        # вслепую, а до появления признака — иначе владелец увидит «не
+        # работает» на исправной настройке.
+        for _ in range(20):
+            time.sleep(1)
+            if xray_running():
+                break
+        return {"status": "ok", "running": xray_running(),
+                "detail": xray_state().get("error") or ""}
     except HTTPException:
         raise
     except Exception as e:
@@ -370,11 +353,14 @@ def xray_port_gate(port):
 
 @app.get("/api/xray/status")
 def xray_status():
-    """Состояние второго конца цепочки."""
+    """Состояние моста. Берётся из файла, который пишет его контейнер."""
+    st = xray_state()
     return {
         "installed": os.path.exists(XRAY_BIN),
         "configured": os.path.exists(XRAY_CONF),
         "running": xray_running(),
+        "error": st.get("error") or "",
+        "checked_at": st.get("checked_at") or 0,
     }
 
 
@@ -428,9 +414,16 @@ def xray_whoami():
 
 @app.post("/api/xray/off")
 def xray_off():
-    """Выключить второй конец. Люди на Xray останутся без выхода — поэтому
-    отдельной кнопкой и только осознанно."""
-    xray_stop()
+    """Выключить мост. Убираем конфиг — мост это заметит и остановится сам.
+
+    Именно убираем, а не останавливаем: своего процесса у агента нет, а
+    контейнер моста поднимется заново при любом перезапуске. Без конфига он
+    просто ждёт, ничего не делая."""
+    try:
+        if os.path.exists(XRAY_CONF):
+            os.remove(XRAY_CONF)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
     return {"status": "ok", "running": False}
 
 
