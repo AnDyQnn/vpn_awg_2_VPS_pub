@@ -1,6 +1,7 @@
 import json
 import os
 import subprocess
+import time
 import psutil
 import tarfile
 from fastapi import FastAPI, HTTPException, Depends, Request
@@ -215,6 +216,214 @@ def wg_status():
         return {"status": "offline", "details": "Interface wg0 is down"}
 
 # ----------------- СИСТЕМНЫЙ МОНИТОРИНГ И УПРАВЛЕНИЕ -----------------
+
+# --- XRAY: ВТОРОЙ КОНЕЦ ЦЕПОЧКИ -------------------------------------------
+# Зачем он здесь. Раньше мировой трафик обоих каналов — и амнезии, и Xray —
+# уходил из России по одному туннелю: этот узел висел обычным пиром на том
+# интерфейсе, где живут клиенты мастера. Два канала были на деле одним, и
+# выключение амнезии оставляло Xray без выхода.
+#
+# Теперь у каждого канала свой путь до Германии и своя маскировка: амнезия
+# идёт амнезией, Xray — своим же VLESS. Снаружи второй участок выглядит как
+# обычное исходящее HTTPS-соединение сервера к сайту, а не как туннель.
+#
+# Узел здесь ничего не решает: конфиг целиком собирает мастер, у которого база.
+# Дело агента — записать, проверить, запустить и доложить.
+XRAY_BIN = "/usr/local/bin/xray"
+XRAY_CONF = f"{CONF_DIR}/xray.json"
+XRAY_PID = "/tmp/xray.pid"
+XRAY_LOG = "/tmp/xray.log"
+# Потолок памяти средствами самого рантайма Go. Жёсткий предел по адресному
+# пространству тут не работает: Xray резервирует больше гигабайта, а занимает
+# десятки мегабайт, и предел просто не дал бы процессу запуститься.
+XRAY_MEM_LIMIT = os.getenv("XRAY_MEM_LIMIT", "192MiB")
+
+
+def xray_running():
+    """Жив ли процесс. Сигналом 0 проверять нельзя: он проходит и для зомби —
+    процесса, который умер, но ещё не прибран. Упавший Xray выглядел бы живым."""
+    try:
+        with open(XRAY_PID) as f:
+            pid = int(f.read().strip())
+        with open(f"/proc/{pid}/stat") as f:
+            state = f.read().rsplit(")", 1)[1].split()[0]
+        return state != "Z"
+    except Exception:
+        return False
+
+
+def xray_stop():
+    try:
+        with open(XRAY_PID) as f:
+            pid = int(f.read().strip())
+        os.kill(pid, 15)
+        for _ in range(20):
+            if not xray_running():
+                break
+            time.sleep(0.1)
+        if xray_running():
+            os.kill(pid, 9)
+    except Exception:
+        pass
+    try:
+        os.remove(XRAY_PID)
+    except OSError:
+        pass
+
+
+def xray_check(path):
+    """Проверяет конфиг силами самого Xray, ничего не запуская.
+
+    Порядок важен: ошибку генератора ловим ДО остановки работающего процесса,
+    поэтому связь у людей не прерывается вовсе."""
+    try:
+        res = subprocess.run([XRAY_BIN, "run", "-test", "-c", path],
+                             capture_output=True, text=True, timeout=20)
+    except Exception as e:
+        return False, f"проверка не выполнилась: {e}"
+    if res.returncode == 0:
+        return True, "конфиг корректен"
+    return False, (res.stderr or res.stdout or "").strip()[:400]
+
+
+def xray_start():
+    if not os.path.exists(XRAY_CONF):
+        return False, "конфиг ещё не прислан"
+    xray_stop()
+    env = dict(os.environ, GOMEMLIMIT=XRAY_MEM_LIMIT)
+    proc = subprocess.Popen([XRAY_BIN, "run", "-c", XRAY_CONF],
+                            stdout=open(XRAY_LOG, "a"),
+                            stderr=subprocess.STDOUT, env=env)
+    with open(XRAY_PID, "w") as f:
+        f.write(str(proc.pid))
+    time.sleep(1)
+    if not xray_running():
+        return False, "процесс не удержался, смотри /tmp/xray.log"
+    return True, "запущен"
+
+
+class XrayConfig(BaseModel):
+    config: dict
+    # Порт входа: под него открывается дверь. Мастер знает, какой прислал.
+    port: int = 443
+
+
+@app.post("/api/xray/apply")
+def xray_apply(data: XrayConfig):
+    """Принимает конфиг от мастера и запускается на нём.
+
+    Две ступени защиты, потому что цена ошибки — выход в интернет у всех, кто
+    на Xray: новый конфиг сначала проверяется во временном файле, а если
+    процесс не встал уже на проверенном — возвращается прежний."""
+    try:
+        prev = None
+        if os.path.exists(XRAY_CONF):
+            with open(XRAY_CONF) as f:
+                prev = f.read()
+
+        tmp = XRAY_CONF + ".new"
+        with open(tmp, "w") as f:
+            json.dump(data.config, f, indent=2)
+        ok, why = xray_check(tmp)
+        if not ok:
+            os.remove(tmp)
+            raise HTTPException(status_code=400, detail=f"конфиг не принят: {why}")
+        os.replace(tmp, XRAY_CONF)
+
+        started, detail = xray_start()
+        if not started and prev is not None:
+            with open(XRAY_CONF, "w") as f:
+                f.write(prev)
+            xray_start()
+            raise HTTPException(status_code=500,
+                                detail=f"не запустился, вернул прежний: {detail}")
+
+        xray_port_gate(data.port)
+        return {"status": "ok", "running": xray_running(), "detail": detail}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def xray_port_gate(port):
+    """Открывает дверь входу Xray и закрывает прежнюю.
+
+    Дверь именно на внешнем интерфейсе: сюда приходит мастер из России, а не
+    пир из туннеля. Правило идемпотентно."""
+    try:
+        subprocess.run(f"iptables -C INPUT -p tcp --dport {int(port)} -j ACCEPT",
+                       shell=True, check=True, capture_output=True)
+    except Exception:
+        subprocess.run(f"iptables -I INPUT 1 -p tcp --dport {int(port)} -j ACCEPT",
+                       shell=True, stderr=subprocess.DEVNULL)
+
+
+@app.get("/api/xray/status")
+def xray_status():
+    """Состояние второго конца цепочки."""
+    return {
+        "installed": os.path.exists(XRAY_BIN),
+        "configured": os.path.exists(XRAY_CONF),
+        "running": xray_running(),
+    }
+
+
+@app.get("/api/xray/keys")
+def xray_keys():
+    """Пара ключей для маскировки входа. Приватный остаётся здесь, в конфиге;
+    наружу уходит только публичный — его мастер вписывает себе в исходящий
+    канал."""
+    try:
+        res = subprocess.run([XRAY_BIN, "x25519"], capture_output=True,
+                             text=True, timeout=15)
+        priv = pub = ""
+        for line in res.stdout.splitlines():
+            low = line.lower()
+            if "private" in low:
+                priv = line.split(":", 1)[1].strip()
+            elif "public" in low or "password" in low:
+                pub = line.split(":", 1)[1].strip()
+        if not priv or not pub:
+            raise Exception(res.stdout.strip()[:200] or "пустой ответ")
+        return {"private_key": priv, "public_key": pub}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/xray/whoami")
+def xray_whoami():
+    """Внешний адрес этого узла — тот, с которого он подключается к мастеру.
+
+    Нужен мастеру один раз, при настройке: по нему он потом проверяет, жив ли
+    мост. Спрашивать это у агента каждый раз нельзя — агент живёт за туннелем
+    амнезии, и тогда отказ амнезии выглядел бы как отказ второго канала.
+
+    Только IPv4: вход мастера слушает четвёртую версию, и адрес шестой версии
+    в проверке дал бы вечное «моста нет».
+    """
+    for src in ("https://ifconfig.me", "https://api.ipify.org",
+                "https://ipv4.icanhazip.com"):
+        try:
+            res = subprocess.run(f"curl -4 -s --max-time 6 {src}", shell=True,
+                                 capture_output=True, text=True, timeout=10)
+            addr = (res.stdout or "").strip()
+            parts = addr.split(".")
+            if len(parts) == 4 and all(p.isdigit() for p in parts):
+                return {"ip": addr, "source": src}
+        except Exception:
+            continue
+    raise HTTPException(status_code=500,
+                        detail="не удалось определить внешний адрес")
+
+
+@app.post("/api/xray/off")
+def xray_off():
+    """Выключить второй конец. Люди на Xray останутся без выхода — поэтому
+    отдельной кнопкой и только осознанно."""
+    xray_stop()
+    return {"status": "ok", "running": False}
+
 
 @app.get("/api/health")
 def health():

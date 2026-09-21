@@ -23,6 +23,11 @@ from database import db
 import hashlib
 import os
 from utils import CONFIGS_DIR, WG_API_URL, api_session
+# Подсеть туннеля и служебный порт счётчиков. Держим рядом с генератором
+# конфига: он единственный, кто вписывает их в конфиг Xray.
+VPN_SUBNET = os.getenv("INTERNAL_SUBNET", "10.13.13.0")
+XRAY_API_PORT = int(os.getenv("XRAY_API_PORT", "10085"))
+
 
 # Порт входа. 443 выбран не для красоты: трафик к нему неотличим от обычного
 # HTTPS, а блокировка этого порта ломает провайдеру половину интернета.
@@ -374,6 +379,14 @@ async def build_config():
     people = await db.list_xray_users()
     ips = await peer_ip_map()
 
+    # Свой канал до Германии вместо общего туннеля амнезии. Не настроен,
+    # выключен или мост не подключён — собираем как раньше, и люди выходят
+    # прежним путём. Откат здесь важнее удобства: канал без моста означает не
+    # «медленнее», а тишину у всех сразу.
+    import cascade
+    chain_on, _chain_why = await cascade.ready()
+    chain = await cascade.settings() if chain_on else None
+
     clients, outbounds, rules = [], [], []
     addresses, skipped = [], []
     for person in people:
@@ -394,6 +407,9 @@ async def build_config():
             "email": person["user_uuid"],      # имя учётной записи = наш uuid
             "flow": "xtls-rprx-vision",
         })
+        # Канал с личным адресом человека нужен в любом случае: через него
+        # идут обращения ВНУТРЬ туннеля, а на них держатся роли, фильтры и
+        # страница отказа. Трогать этот путь нельзя.
         outbounds.append({
             "protocol": "freedom",
             "tag": tag,
@@ -401,15 +417,49 @@ async def build_config():
             # собственного адреса, а не с общего адреса сервера.
             "sendThrough": twin,
         })
-        rules.append({
-            "type": "field",
-            "user": [person["user_uuid"]],
-            "outboundTag": tag,
-        })
+        if chain:
+            # Внутрь туннеля — прежним путём, с личного адреса. Правило обязано
+            # стоять ВЫШЕ следующего, иначе обращение к домашнему сервису
+            # уехало бы в Германию и вернулось оттуда чужим адресом.
+            rules.append({
+                "type": "field",
+                "user": [person["user_uuid"]],
+                "ip": [f"{VPN_SUBNET}/24"],
+                "outboundTag": tag,
+            })
+            # Всё остальное — в свой канал до Германии.
+            rules.append({
+                "type": "field",
+                "user": [person["user_uuid"]],
+                "outboundTag": cascade.PORTAL_TAG,
+            })
+        else:
+            rules.append({
+                "type": "field",
+                "user": [person["user_uuid"]],
+                "outboundTag": tag,
+            })
+
+    if chain:
+        # Мост приходит на тот же вход, что и люди, — ещё одним посетителем
+        # среди тридцати. Отдельный порт под него завёл бы новую заметную
+        # дверь там, где можно обойтись без неё.
+        clients.append(cascade.portal_client(chain))
 
     ways = await entries()
     config = {
         "log": {"loglevel": "warning"},
+        # Счётчики по людям. Нужны там, где трафик уходит не пакетами с
+        # личного адреса, а внутрь соединения моста: файрвол его не видит, а
+        # Xray считает сам. Байты считает, пакеты — нет.
+        "stats": {},
+        "api": {"tag": "api", "services": ["StatsService"]},
+        "policy": {
+            "levels": {"0": {"statsUserUplink": True,
+                             "statsUserDownlink": True}},
+            "system": {"statsInboundUplink": False,
+                       "statsInboundDownlink": False},
+        },
         # Один вход на маску. Люди и правила у всех общие: правило выбирает
         # канал по человеку, а не по тому, через какой вход он пришёл.
         "inbounds": [{
@@ -430,12 +480,25 @@ async def build_config():
                     "shortIds": [cfg["short_id"]],
                 },
             },
-        } for port, dest in ways],
+        } for port, dest in ways] + [{
+            # Служебный вход для счётчиков. Слушает только петлю: ни снаружи,
+            # ни из туннеля до него не добраться. Стоит последним — первым
+            # всегда идёт вход людей, на него смотрят и проверки, и человек.
+            "tag": "api",
+            "listen": "127.0.0.1",
+            "port": XRAY_API_PORT,
+            "protocol": "dokodemo-door",
+            "settings": {"address": "127.0.0.1"},
+        }],
         # Запасной канал нужен всегда: если человек почему-то не совпал ни с
         # одним правилом, он должен просто выйти в интернет, а не упереться в
         # тишину.
-        "outbounds": outbounds + [{"protocol": "freedom", "tag": "direct"}],
-        "routing": {"domainStrategy": "AsIs", "rules": rules},
+        "outbounds": [{"protocol": "freedom", "tag": "direct"}] + outbounds,
+        "routing": {
+            "domainStrategy": "AsIs",
+            "rules": [{"type": "field", "inboundTag": ["api"],
+                       "outboundTag": "api"}] + rules,
+        },
     }
     return config, addresses, (f"пропущены без адреса: {', '.join(skipped)}"
                                if skipped else "")

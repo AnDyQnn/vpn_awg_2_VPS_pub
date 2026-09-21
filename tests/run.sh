@@ -119,7 +119,7 @@ run_node() {
             -v "$(dpath "$TESTS_DIR")/node/$t:/t.py" \
             -v "$(dpath "$ROOT")/scripts:/scripts:ro" \
             -v "$(dpath "$ROOT")/VPS_RU/scripts:/nodescripts:ro" \
-            -v "$(dpath "$ROOT")/VPS_DE/scripts:/descripts:ro" vpn-wg-test \
+            -v "$(dpath "$ROOT")/VPS_DE/scripts:/descripts:ro" -v "$(dpath "$TESTS_DIR")/out:/out" vpn-wg-test \
             -c "apk add --no-cache -q curl >/dev/null 2>&1;                 PY=/opt/venv/bin/python3; [ -x \$PY ] || PY=python3;                 \$PY /t.py" 2>&1) || true
         report "$t" "$out"
     done

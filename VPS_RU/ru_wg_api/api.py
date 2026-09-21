@@ -1904,6 +1904,96 @@ def api_xray_config(req: XrayConfig):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# --- СЧЁТЧИКИ XRAY И МОСТ ГЕРМАНИИ ----------------------------------------
+# Зачем это понадобилось. Пока трафик человека уходил наружу пакетами с его
+# адреса-двойника, весь учёт делал файрвол — и байты, и пакеты. Со своим
+# каналом до Германии трафик уезжает внутрь соединения моста, пакетами с
+# двойника он больше не идёт, и файрвол его не видит.
+#
+# Байты умеет считать сам Xray, по учётному имени. Пакеты — нет, и это честная
+# потеря: лимит в пакетах в секунду у людей на Xray не работает. Записано в
+# документации, чтобы не выяснять это через полгода.
+#
+# Служебный вход слушает только петлю: снаружи и из туннеля до него не добраться.
+XRAY_API_PORT = int(os.getenv("XRAY_API_PORT", "10085"))
+
+
+def xray_stats(reset=False):
+    """Счётчики по людям: сколько байт пришло и ушло.
+
+    `reset` обнуляет их при чтении — так вызывающему не надо помнить прошлое
+    значение и вычитать, а перезапуск процесса не выглядит как отрицательный
+    прирост."""
+    cmd = (f"{XRAY_BIN} api statsquery --server=127.0.0.1:{XRAY_API_PORT}"
+           + (" --reset" if reset else ""))
+    res = subprocess.run(cmd, shell=True, capture_output=True, text=True,
+                         timeout=20)
+    if res.returncode != 0:
+        raise RuntimeError((res.stderr or res.stdout or "нет ответа").strip()[:200])
+    try:
+        data = json.loads(res.stdout or "{}")
+    except Exception:
+        return {}
+
+    out = {}
+    for item in data.get("stat", []) or []:
+        name = item.get("name") or ""
+        value = int(item.get("value") or 0)
+        # Имя счётчика: user>>>кто>>>traffic>>>uplink
+        parts = name.split(">>>")
+        if len(parts) != 4 or parts[0] != "user":
+            continue
+        who, direction = parts[1], parts[3]
+        rec = out.setdefault(who, {"up": 0, "down": 0})
+        if direction == "uplink":
+            rec["up"] += value
+        elif direction == "downlink":
+            rec["down"] += value
+    return out
+
+
+def xray_bridge_present(peer=""):
+    """Подключён ли мост Германии.
+
+    Проверяем по живому соединению с её адреса на входы Xray. Не по счётчикам:
+    мост может молчать часами, а счётчик при этом стоит на месте — и молчащий,
+    но живой мост выглядел бы мёртвым.
+
+    Адрес передаёт бот: узлу знать его неоткуда, а держать вторую копию
+    настройки — значит однажды с ней разойтись."""
+    peer = (peer or "").strip()
+    if not peer:
+        return False
+    res = subprocess.run("ss -tn state established", shell=True,
+                         capture_output=True, text=True)
+    for line in res.stdout.splitlines():
+        if f"{peer}:" in line:
+            return True
+    return False
+
+
+class XrayStatsReq(BaseModel):
+    reset: bool = False
+
+
+@app.post("/api/xray/stats")
+def api_xray_stats(req: XrayStatsReq):
+    """Счётчики по людям. Только байты — пакетов Xray не считает."""
+    try:
+        return {"users": xray_stats(reset=req.reset)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/xray/bridge")
+def api_xray_bridge(peer: str = ""):
+    """Есть ли живое соединение моста Германии."""
+    try:
+        return {"present": xray_bridge_present(peer), "peer": peer}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/xray/status")
 def api_xray_status():
     """Состояние обоих протоколов — для экрана администрирования."""

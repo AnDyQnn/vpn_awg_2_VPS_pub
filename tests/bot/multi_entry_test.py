@@ -69,7 +69,10 @@ async def main():
 
     xray.peer_ip_map = fake_ips
     config, addresses, note = await xray.build_config()
-    ins = config["inbounds"]
+    # Служебный вход счётчиков стоит в том же списке, но он не про людей:
+    # слушает петлю, масок и учётных записей у него нет. Считаем только входы
+    # людей, иначе проверка ловила бы его и ругалась на пустом месте.
+    ins = [i for i in config["inbounds"] if i.get("protocol") == "vless"]
     check("входов в конфиге столько же", len(ins) == len(ways), "%d" % len(ins))
     check("порты совпадают с задуманными",
           [i["port"] for i in ins] == [p for p, _ in ways],
@@ -83,7 +86,8 @@ async def main():
           all(i["settings"]["clients"] == ins[0]["settings"]["clients"] for i in ins),
           "иначе человек подключился бы не везде")
     check("правила выбирают канал по человеку",
-          all("user" in r for r in config["routing"]["rules"]),
+          all("user" in r for r in config["routing"]["rules"]
+              if r.get("inboundTag") != ["api"]),
           "а не по входу — иначе запасной вход ходил бы не с того адреса")
 
     print()

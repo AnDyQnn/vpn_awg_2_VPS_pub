@@ -99,6 +99,9 @@ async def main():
 
     print("\n=== правила ведут человека в его канал ===")
     for rule in cfg["routing"]["rules"]:
+        # Правило служебного входа счётчиков не про людей — пропускаем.
+        if not rule.get("user"):
+            continue
         user = rule["user"][0]
         tag = rule["outboundTag"]
         expect = "10.13.13.134" if user == "xr-1" else "10.13.13.135"

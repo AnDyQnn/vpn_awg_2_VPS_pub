@@ -53,6 +53,16 @@ iptables -C INPUT -i lo -p tcp --dport 8000 -j ACCEPT 2>/dev/null \
 iptables -C INPUT -p tcp --dport 8000 -j DROP 2>/dev/null \
     || iptables -A INPUT -p tcp --dport 8000 -j DROP || true
 
+# --- XRAY: ПРИЁМНИК ВТОРОГО КАНАЛА ----------------------------------------
+# Конфиг лежит в томе и переживает перезапуск контейнера, а процесс — нет.
+# Поднимаем его здесь: иначе после любого перезапуска люди на Xray остались бы
+# без выхода, хотя на вид всё настроено.
+if [ -x /usr/local/bin/xray ] && [ -s /etc/amnezia/amneziawg/xray.json ]; then
+    echo "--> Поднимаю приёмник Xray..."
+    GOMEMLIMIT="${XRAY_MEM_LIMIT:-192MiB}"         nice -n 15 /usr/local/bin/xray run -c /etc/amnezia/amneziawg/xray.json         >> /tmp/xray.log 2>&1 &
+    echo $! > /tmp/xray.pid
+fi
+
 echo "🚀 Starting DE Agent (AmneziaWG Client + Monitor API)..."
 
 # Запускаем API агента

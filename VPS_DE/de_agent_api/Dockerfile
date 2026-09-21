@@ -41,6 +41,32 @@ RUN python3 -m venv /opt/venv && \
     done; \
     [ "$ok" = "1" ] || { echo "ВСЕ источники pip недоступны" >&2; exit 1; }
 
+
+# --- XRAY: ВТОРОЙ КОНЕЦ ЦЕПОЧКИ -------------------------------------------
+# Раньше весь мировой трафик — и амнезии, и Xray — уходил сюда по одному
+# туннелю, где этот узел висел обычным пиром на клиентском интерфейсе мастера.
+# Два канала были на деле одним: выключение амнезии оставляло Xray без выхода.
+#
+# Теперь у каждого канала свой транспорт до Германии и своя маскировка:
+# амнезия идёт амнезией, Xray — своим же VLESS. Для этого здесь нужен Xray.
+#
+# Версия закреплена и совпадает с той, что на мастере: концы одной цепочки
+# обязаны говорить на одном диалекте, а «последняя» на каждой пересборке
+# означала бы, что однажды они разойдутся молча.
+ARG XRAY_VERSION=v26.3.27
+RUN set -e; \
+    apk add --no-cache --virtual .xray-build unzip >/dev/null; \
+    for M in "https://github.com/XTLS/Xray-core/releases/download/${XRAY_VERSION}/Xray-linux-64.zip" \
+             "https://ghproxy.net/https://github.com/XTLS/Xray-core/releases/download/${XRAY_VERSION}/Xray-linux-64.zip"; do \
+        if curl -fsSL --max-time 120 -o /tmp/xray.zip "$M"; then break; fi; \
+        echo ">>> источник Xray недоступен, пробую следующий..."; \
+    done; \
+    unzip -o -q /tmp/xray.zip -d /usr/local/bin/ xray geoip.dat geosite.dat; \
+    chmod +x /usr/local/bin/xray; \
+    rm -f /tmp/xray.zip; \
+    apk del .xray-build >/dev/null; \
+    /usr/local/bin/xray version | head -1
+
 # Копируем скрипты
 COPY run_api.sh /run_api.sh
 RUN chmod +x /run_api.sh
