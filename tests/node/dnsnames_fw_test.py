@@ -91,10 +91,11 @@ print("\n=== фильтры и имена не мешают друг другу 
 ns["set_dns_filters"](type("R", (), {"clients": {"10.13.13.9": ["adult"]},
                                      "common": [], "custom": [],
                                      "allow_common": [], "allow_clients": {},
+                                     "except_clients": {},
                                      "pools": {},
                                      "bot_link": ""})())
 ns["set_dns_names"](type("R", (), {"names": {"panel.vpn": "10.13.13.1"},
-                                    "upstreams": {}})())
+                                    "upstreams": {}, "zone": "vpn"})())
 body = chain()
 assert "-s 10.13.13.9/32" in body, "заворот для фильтруемого пропал"
 assert "-s 10.13.13.0/24" in body, "заворот для имён не встал"

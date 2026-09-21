@@ -551,6 +551,13 @@ ACL_CHAIN = "WG_ACL"
 ACL_STATE_FILE = f"{CONF_DIR}/acl.json"
 TUNNEL_NET = f"{VPN_SUBNET}/24"
 DE_AGENT_IP = "10.13.13.254"
+# Сам узел. Роль не имеет права его закрывать: на нём живут резолвер, страница
+# отказа и подписка, и в профиле Xray наш резолвер прописан как DNS туннеля.
+# Для пиров AmneziaWG это и так работало — их обращения к узлу идут через INPUT,
+# который мы намеренно не трогаем. А вот пакеты людей на Xray рождаются на узле
+# и идут через OUTPUT, то есть под правила ролей попадали. Человек с ролью
+# терял разрешение имён целиком: подключение вставало, но ничего не грузилось.
+NODE_IP = f"{VPN_SUBNET.rsplit('.', 1)[0]}.1"
 
 
 def _hook_after_accounting(chain, spec):
@@ -607,6 +614,16 @@ def apply_acl(peers):
     _acl_ensure_chain()
     # Ответный трафик уже разрешённых сессий и весь путь в интернет через агента.
     subprocess.run(f"iptables -A {ACL_CHAIN} -d {DE_AGENT_IP} -j RETURN",
+                   shell=True, stderr=subprocess.DEVNULL)
+    # Панель узла — закрыть до того, как разрешим узел целиком. В INPUT она
+    # закрыта правилом с «-i wg0», но пакет человека на Xray приходит к узлу по
+    # локальной петле, а не с wg0, и под то правило не попадает. Без этой строки
+    # разрешение узла открыло бы панель через Xray.
+    subprocess.run(f"iptables -A {ACL_CHAIN} -d {NODE_IP} -p tcp --dport 8000 "
+                   f"-j REJECT --reject-with tcp-reset",
+                   shell=True, stderr=subprocess.DEVNULL)
+    # Сам узел — раньше любой роли: резолвер, страница отказа, подписка.
+    subprocess.run(f"iptables -A {ACL_CHAIN} -d {NODE_IP} -j RETURN",
                    shell=True, stderr=subprocess.DEVNULL)
     subprocess.run(f"iptables -A {ACL_CHAIN} -m conntrack "
                    f"--ctstate ESTABLISHED,RELATED -j RETURN",

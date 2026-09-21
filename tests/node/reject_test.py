@@ -10,7 +10,7 @@ import time
 SRC = "/app/api.py"
 NEED = {"_hook_after_accounting", "_acl_ensure_chain", "_acl_rule_spec", "apply_acl", "save_acl_state",
         "rebuild_acl", "_acl_web_ensure_chain", "apply_acl_web"}
-CONSTS = {"ACL_CHAIN", "ACL_STATE_FILE", "TUNNEL_NET", "DE_AGENT_IP", "VPN_SUBNET",
+CONSTS = {"ACL_CHAIN", "ACL_STATE_FILE", "TUNNEL_NET", "DE_AGENT_IP", "NODE_IP", "VPN_SUBNET",
           "CONF_DIR", "ACL_WEB_CHAIN", "ACL_WEB_PORTS", "BLOCK_PAGE_IP"}
 
 tree = ast.parse(io.open(SRC, encoding="utf-8").read())
@@ -47,7 +47,11 @@ assert any("tcp-reset" in r for r in acl), "для TCP ожидается мгн
 assert any("icmp-port-unreachable" in r for r in acl), "для остального — отказ ICMP"
 print("\nотказ мгновенный, а не таймаут: ок")
 
-tcp_i = next(i for i, r in enumerate(acl) if "tcp-reset" in r)
+# Именно замыкающий отказ этого человека, а не любой отказ в цепочке: выше
+# него стоит ещё один — панель узла, закрытая до того, как узел разрешается
+# всем. Искать первый попавшийся tcp-reset значило бы сравнивать не то.
+tcp_i = next(i for i, r in enumerate(acl)
+             if "tcp-reset" in r and "-s 10.13.13.2/32" in r)
 allow_i = max(i for i, r in enumerate(acl) if "10.13.13.5/32" in r)
 assert allow_i < tcp_i, "разрешение должно стоять выше отказа"
 print("разрешения выше отказа: ок")
@@ -93,7 +97,14 @@ print("повторное применение идемпотентно: ок")
 
 ns["apply_acl"]([]); ns["apply_acl_web"]([])
 assert not [r for r in chain("nat", ns["ACL_WEB_CHAIN"]) if "DNAT" in r]
-assert not [r for r in chain("", ns["ACL_CHAIN"]) if "REJECT" in r]
+# Отказы по людям — те, у которых есть «-s». Запрет панели узла адресный
+# («-d узел --dport 8000») и снятию ролей не подчиняется: он закрывает нашу же
+# панель от людей на Xray и должен стоять всегда.
+assert not [r for r in chain("", ns["ACL_CHAIN"])
+            if "REJECT" in r and "-s " in r]
+assert [r for r in chain("", ns["ACL_CHAIN"])
+        if "REJECT" in r and "--dport 8000" in r], "панель осталась открытой"
 print("снятие ролей убирает и отказы, и заворот: ок")
+print("запрет панели снятию ролей не подчиняется: ок")
 
 print("\nВСЁ ПРОШЛО")

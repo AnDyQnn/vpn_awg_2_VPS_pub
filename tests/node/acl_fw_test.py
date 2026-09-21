@@ -16,7 +16,7 @@ SRC = "/app/api.py"
 NEED_FUNCS = {"_hook_after_accounting", "_acl_ensure_chain", "_acl_rule_spec", "apply_acl",
               "save_acl_state", "rebuild_acl",
               "_acl_web_ensure_chain", "apply_acl_web"}
-NEED_CONSTS = {"ACL_CHAIN", "ACL_STATE_FILE", "TUNNEL_NET", "DE_AGENT_IP",
+NEED_CONSTS = {"ACL_CHAIN", "ACL_STATE_FILE", "TUNNEL_NET", "DE_AGENT_IP", "NODE_IP",
                "VPN_SUBNET", "CONF_DIR", "ACL_WEB_CHAIN", "ACL_WEB_PORTS",
                "BLOCK_PAGE_IP"}
 
@@ -79,6 +79,29 @@ assert any("-s 10.13.13.2/32 -j REJECT" in l for l in body), "замыкающи
 assert any("-s 10.13.13.3/32 -j REJECT" in l for l in body), \
     "пустая роль обязана закрывать туннель целиком"
 print("\nсодержимое цепочки: ок")
+
+# --- узел должен быть доступен при любой роли -----------------------------
+# Это ломалось по-настоящему: в профиле Xray наш резолвер прописан как DNS
+# туннеля, а цепочка ролей висит и на OUTPUT — то есть пакеты человека на Xray
+# к 10.13.13.1 попадали под замыкающий запрет его роли. Интернет по адресам
+# работал, имена не разрешались: «подключается, но ничего не грузится».
+node_idx = next((i for i, l in enumerate(body)
+                 if "-d %s/32 -j RETURN" % ns["NODE_IP"] in l), None)
+assert node_idx is not None, "узел не выведен из-под правил ролей"
+for who in ("10.13.13.2", "10.13.13.3"):
+    deny = next(i for i, l in enumerate(body) if "-s %s/32 -j REJECT" % who in l)
+    assert node_idx < deny, "%s: запрет роли выше доступа к узлу" % who
+print("резолвер и страница отказа доступны при любой роли: ок")
+
+# А панель узла при этом обязана остаться закрытой. В INPUT её закрывает
+# правило с «-i wg0», но запрос человека на Xray приходит к узлу по локальной
+# петле и под то правило не попадает — значит закрывать надо здесь.
+panel_idx = next((i for i, l in enumerate(body)
+                  if "-d %s/32" % ns["NODE_IP"] in l and "--dport 8000" in l
+                  and "REJECT" in l), None)
+assert panel_idx is not None, "панель узла осталась открытой через Xray"
+assert panel_idx < node_idx, "панель закрывается позже, чем разрешается узел"
+print("панель узла закрыта раньше разрешения: ок")
 
 # порядок разрешений и запрета внутри одного пира
 allow_idx = max(i for i, l in enumerate(body)
