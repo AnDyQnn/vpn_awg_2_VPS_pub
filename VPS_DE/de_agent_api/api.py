@@ -596,6 +596,14 @@ def download_backup():
         with tarfile.open(archive_path, "w:gz") as tar:
             if os.path.exists(CONF_DIR):
                 tar.add(CONF_DIR, arcname=os.path.basename(CONF_DIR))
+            # Конфиг моста тоже: восстановить его можно и с мастера, но тогда
+            # придётся вспоминать, что канал вообще был настроен. В архиве он
+            # занимает пару килобайт и снимает этот вопрос.
+            #
+            # Журнал и состояние не берём: это сиюминутное, в архиве от них
+            # только вес и лишние сведения о том, что и когда ломалось.
+            if os.path.exists(XRAY_CONF):
+                tar.add(XRAY_CONF, arcname="xray/xray.json")
         return FileResponse(path=archive_path, filename="de_agent_backup.tar.gz", media_type="application/gzip")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

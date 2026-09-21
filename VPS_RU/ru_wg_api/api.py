@@ -464,6 +464,13 @@ def setup_network():
     rebuild_accounting()
     rebuild_acl()
     rebuild_dns_filters()
+    # Обход фильтра через чужой DNS закрываем всегда: фильтр без этого держится
+    # на честном слове телефона, а телефон по умолчанию спрашивает мимо нас.
+    try:
+        n = doh_block_apply(True)
+        print(f"Обход фильтра через чужой DNS закрыт, правил: {n}", flush=True)
+    except Exception as e:
+        print(f"Запрет обходного DNS не встал: {e}", flush=True)
 
 # --- УЧЁТ ПАКЕТОВ ПО ПИРАМ -------------------------------------------------
 # WireGuard считает по пирам только БАЙТЫ — пакетов он не отдаёт вовсе. А упирается
@@ -577,6 +584,87 @@ DE_AGENT_IP = "10.13.13.254"
 # и идут через OUTPUT, то есть под правила ролей попадали. Человек с ролью
 # терял разрешение имён целиком: подключение вставало, но ничего не грузилось.
 NODE_IP = f"{VPN_SUBNET.rsplit('.', 1)[0]}.1"
+
+
+# --- ОБХОД ФИЛЬТРА ЧЕРЕЗ DNS ПОВЕРХ HTTPS И TLS ---------------------------
+# Фильтр сайтов держится на том, что имена спрашивают у нас. Заворот на 53-м
+# порту это обеспечивал — но только для обычного DNS.
+#
+# А телефон и браузер по умолчанию спрашивают иначе:
+#
+#   «Приватный DNS» в Android и iOS — это DNS поверх TLS, порт 853;
+#   Chrome и Firefox — DNS поверх HTTPS, порт 443 к известным резолверам.
+#
+# Оба пути идут мимо нас, и фильтр выглядит сломанным, хотя он исправен:
+# проверено на узле, запрещённое имя он отдаёт страницей отказа. Просто его не
+# спрашивают.
+#
+# Закрываем оба. Отказ мгновенный, а не молчаливый: приложение, получив отказ,
+# возвращается к обычному DNS — то есть к нам. Молчание же заставило бы его
+# ждать таймаут и выглядело бы как «интернет тупит».
+DOH_CHAIN = "DNS_BYPASS"
+DOH_SET = "doh_nets"
+# Известные резолверы DNS поверх HTTPS. Список намеренно короткий: сюда входят
+# только адреса, которые кроме DNS ничего не отдают, — закрыть их на 443 ничего
+# больше не ломает.
+DOH_ADDRS = [
+    "1.1.1.1", "1.0.0.1", "1.1.1.2", "1.0.0.2", "1.1.1.3", "1.0.0.3",
+    "8.8.8.8", "8.8.4.4",
+    "9.9.9.9", "9.9.9.10", "9.9.9.11", "149.112.112.112",
+    "94.140.14.14", "94.140.15.15", "94.140.14.15", "94.140.15.16",
+    "208.67.222.222", "208.67.220.220",
+    "45.90.28.0/24", "45.90.30.0/24",
+    "76.76.2.0/24", "76.76.10.0/24",
+]
+
+
+def doh_block_apply(enabled=True):
+    """Собирает цепочку запрета обходных путей к чужому DNS.
+
+    Вешается на те же две точки, что и правила ролей: транзит пиров и трафик,
+    рождающийся на узле, — потому что люди на Xray ходят вторым путём."""
+    subprocess.run(f"ipset create {DOH_SET} hash:net family inet -exist",
+                   shell=True, stderr=subprocess.DEVNULL)
+    subprocess.run(f"ipset flush {DOH_SET}", shell=True, stderr=subprocess.DEVNULL)
+    for addr in DOH_ADDRS:
+        subprocess.run(f"ipset add {DOH_SET} {addr} -exist", shell=True,
+                       stderr=subprocess.DEVNULL)
+
+    subprocess.run(f"iptables -N {DOH_CHAIN}", shell=True, stderr=subprocess.DEVNULL)
+    subprocess.run(f"iptables -F {DOH_CHAIN}", shell=True, stderr=subprocess.DEVNULL)
+
+    hook = f"-s {TUNNEL_NET} -j {DOH_CHAIN}"
+    for chain in ("FORWARD", "OUTPUT"):
+        have = subprocess.run(f"iptables -C {chain} {hook}", shell=True,
+                              stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+        if enabled and have.returncode != 0:
+            subprocess.run(f"iptables -A {chain} {hook}", shell=True,
+                           stderr=subprocess.DEVNULL)
+        elif not enabled and have.returncode == 0:
+            subprocess.run(f"iptables -D {chain} {hook}", shell=True,
+                           stderr=subprocess.DEVNULL)
+    if not enabled:
+        return 0
+
+    rules = [
+        # DNS поверх TLS: «Приватный DNS» в телефоне.
+        f"-p tcp --dport 853 -j REJECT --reject-with tcp-reset",
+        f"-p udp --dport 853 -j REJECT --reject-with icmp-port-unreachable",
+        # DNS поверх HTTPS у известных резолверов — и по TCP, и по QUIC.
+        f"-p tcp --dport 443 -m set --match-set {DOH_SET} dst "
+        f"-j REJECT --reject-with tcp-reset",
+        f"-p udp --dport 443 -m set --match-set {DOH_SET} dst "
+        f"-j REJECT --reject-with icmp-port-unreachable",
+        # Обычный DNS к чужим резолверам: заворот на 53 уже есть, но он в nat, а
+        # его можно обойти, если резолвер слушает нестандартный порт. Здесь
+        # закрываем сам факт похода к известному резолверу мимо нас.
+        f"-p udp --dport 53 -m set --match-set {DOH_SET} dst "
+        f"! -d {NODE_IP} -j REJECT --reject-with icmp-port-unreachable",
+    ]
+    for spec in rules:
+        subprocess.run(f"iptables -A {DOH_CHAIN} {spec}", shell=True,
+                       stderr=subprocess.DEVNULL)
+    return len(rules)
 
 
 def _hook_after_accounting(chain, spec):

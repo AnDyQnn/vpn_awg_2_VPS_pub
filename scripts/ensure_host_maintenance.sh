@@ -130,13 +130,28 @@ systemctl daemon-reload 2>/dev/null || true
 systemctl enable --now vpn-security-upgrade.timer 2>/dev/null || true
 echo "[maintenance] Заплатки безопасности ставятся ежедневно в 03:40."
 
-# 3. Потолок логов journald (по умолчанию лимит = 10% диска; на DE диск всего 10 ГБ).
+# 3. Потолок логов journald.
+#
+# Он тут был и раньше — 200 МБ. Но на узле выхода диск всего десять гигабайт, и
+# журнал честно упирался в этот потолок: 194 МБ при двух с половиной свободных.
+# Поломкой это не было, просто цифра оказалась щедрой не по размеру диска.
+#
+# Теперь считаем от диска: на тесном узле 64 МБ, на просторном 256 МБ.
+DISK_GB=$(df -BG --output=size / 2>/dev/null | tail -1 | tr -dc '0-9')
+if [ "${DISK_GB:-0}" -gt 0 ] && [ "${DISK_GB:-0}" -lt 20 ]; then
+    JOURNAL_CAP=64M
+else
+    JOURNAL_CAP=256M
+fi
 mkdir -p /etc/systemd/journald.conf.d
-cat > /etc/systemd/journald.conf.d/size.conf <<'EOF'
+cat > /etc/systemd/journald.conf.d/size.conf <<EOF
 [Journal]
-SystemMaxUse=200M
+SystemMaxUse=${JOURNAL_CAP}
 SystemKeepFree=500M
+RuntimeMaxUse=32M
 EOF
+systemctl restart systemd-journald 2>/dev/null || true
+echo "Потолок журнала: ${JOURNAL_CAP} (диск ${DISK_GB:-?} ГБ)"
 
 # 4. Еженедельная авто-очистка мусора (docker + журналы) через systemd-таймер.
 #    Раньше это делал только бот на RU (ежедневно, флаг do_cleanup) — DE оставалась без
@@ -167,9 +182,40 @@ ExecStart=/bin/bash ${SELF_DIR}/host_health.sh ${NODE_DIR_FOR_WATCHDOG}
 # лишних, разложены ли имена, стоят ли правила ролей, считается ли трафик, не
 # отстала ли вторая нода. Ту же сверку показывает аудит по кнопке, но кнопку
 # нажимают редко, а расходится состояние само. Расхождения уходят в журнал —
-# видно через `journalctl -u vpn-cleanup`. Ничего не меняет, только читает.
+# видно через "journalctl -u vpn-cleanup". Ничего не меняет, только читает.
+#
+# ВНИМАНИЕ: этот блок пишется НЕзакавыченным heredoc — иначе не подставятся
+# пути. Значит оболочка выполняет здесь и обратные кавычки, и $(...). Раньше в
+# этой самой строке стояли обратные кавычки вокруг journalctl — и весь его
+# вывод вписывался прямо в файл службы. Дальше петля кормила сама себя: systemd
+# ругался на мусорные строки, ругань попадала в журнал, журнал вписывался
+# снова. На боевых узлах файл дорос до 41 МБ и двухсот тысяч строк, а журнал
+# systemd — до 194 МБ на диске в десять гигабайт.
+#
+# Никаких обратных кавычек и $(...) в этом блоке.
 ExecStart=/bin/bash ${SELF_DIR}/contract_check.sh ${NODE_DIR_FOR_WATCHDOG}
 EOF
+# Проверка сразу после записи: файл службы — это десяток строк. Если он вышел
+# больше, значит в heredoc снова что-то выполнилось и натекло. Такое лучше
+# поймать здесь, чем спустя месяц по раздутому журналу.
+UNIT_SIZE=$(wc -c < /etc/systemd/system/vpn-cleanup.service 2>/dev/null || echo 0)
+if [ "$UNIT_SIZE" -gt 8192 ]; then
+    echo "⚠️  Файл службы уборки вышел ${UNIT_SIZE} байт вместо пары тысяч." >&2
+    echo "    В него натекло лишнее — чиню и продолжаю." >&2
+    cat > /etc/systemd/system/vpn-cleanup.service <<EOF2
+[Unit]
+Description=VPN node weekly cleanup (docker, journald, apt)
+
+[Service]
+Type=oneshot
+Environment=GC_FLAGS_DIR=${NODE_DIR_FOR_WATCHDOG}/volumes/flags
+ExecStart=/bin/bash ${SELF_DIR}/gc.sh
+ExecStart=/usr/sbin/logrotate -f /etc/logrotate.conf
+ExecStart=/bin/bash ${SELF_DIR}/host_health.sh ${NODE_DIR_FOR_WATCHDOG}
+ExecStart=/bin/bash ${SELF_DIR}/contract_check.sh ${NODE_DIR_FOR_WATCHDOG}
+EOF2
+fi
+
 cat > /etc/systemd/system/vpn-cleanup.timer <<'EOF'
 [Unit]
 Description=Weekly VPN node cleanup

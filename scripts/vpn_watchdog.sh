@@ -108,6 +108,24 @@ ensure_subguard() {
     bash "$SCRIPT_DIR/public_sub.sh" firewall "$NODE_DIR" >/dev/null 2>&1
 }
 
+# Мост Xray на Германии — отдельный контейнер, и он не должен лежать молча.
+#
+# Лечим его ОТДЕЛЬНО от узла и не даём влиять на решение о лечении самого узла:
+# упавший мост означает, что люди на Xray идут прежним путём через общий
+# туннель, — это неприятно, но связь у них есть. Ронять из-за него весь узел
+# было бы лекарством хуже болезни.
+#
+# Мастер этой проверки не касается: моста там нет.
+check_bridge() {
+    [ "$IS_MASTER" = "0" ] || return 0
+    # Контейнера нет вовсе — значит канал не разворачивали, сторожить нечего.
+    docker inspect de_vpn_xray >/dev/null 2>&1 || return 0
+    [ "$(docker inspect -f '{{.State.Running}}' de_vpn_xray 2>/dev/null)" = "true" ] \
+        && return 0
+    log "Мост Xray не работает — поднимаю"
+    docker start de_vpn_xray >/dev/null 2>&1 || true
+}
+
 check_ipsets() {
     [ "$IS_MASTER" = "1" ] || return 0
     local n
@@ -186,6 +204,7 @@ while true; do
     fi
 
     if [ -z "$problem" ]; then
+        check_bridge
         if [ "$fails" -gt 0 ] || [ "$level" -gt 0 ]; then
             log "Восстановлено. Проверки снова проходят."
         fi

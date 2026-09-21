@@ -92,7 +92,7 @@ from handlers_xray import (
     apply_now as xray_apply_now, apps_screen, move_screen,
     connections_screen, issue_xray, send_link, drop_awg, why_locked,
     mask_screen, mask_set,
-    chain_screen, chain_ask, chain_entered, chain_off)
+    chain_screen, chain_ask, chain_go, chain_off)
 from handlers_hits import (
     hits_screen, hit_open, hits_seen_all, hits_loop,
     hit_find_request, hit_find_entered,
@@ -483,14 +483,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data["state"] = None
             return
         if await flt_allow_entered(update, context):
-            return
-
-    # Путь трафика всех людей на Xray — только владелец.
-    if state == "awaiting_chain_host":
-        if not check_admin(update.effective_user.id):
-            context.user_data["state"] = None
-            return
-        if await chain_entered(update, context):
             return
 
     # Свои исключения меняют маршрутизацию на чужом устройстве — только владелец.
@@ -1192,6 +1184,7 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "xr_mask": await mask_screen(update, context); return
     if data == "xr_chain": await chain_screen(update, context); return
     if data == "xr_chain_set": await chain_ask(update, context); return
+    if data == "xr_chain_go": await chain_go(update, context); return
     if data == "xr_chain_off": await chain_off(update, context); return
     if data.startswith("xr_mask_"):
         await mask_set(update, context, data[len("xr_mask_"):]); return

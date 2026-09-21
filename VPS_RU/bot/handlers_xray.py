@@ -802,63 +802,92 @@ async def chain_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def chain_ask(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Спрашивает адрес, по которому Германия будет к нам звонить.
+    """Показывает, чем будет настроен канал, и просит подтвердить.
 
-    Одно поле и один пример — объяснения живут в документации, а не на экране
-    настройки."""
+    Спрашивать нечего: адрес узла, порт входа и маску бот уже знает — это те же
+    самые, по которым к нему подключаются люди. Вводить их руками значило бы
+    завести вторую копию тех же сведений и однажды с ними разойтись."""
     query = update.callback_query
-    context.user_data["state"] = "awaiting_chain_host"
+    cfg = await xray.settings()
+    host = await xray.server_host()
+    names = mask_names(cfg["dest"])
+
+    if not host:
+        await show_screen(
+            query, context,
+            "🔗 **Свой канал в Германию**\n\n"
+            "Сначала нужен адрес этого сервера — он же нужен людям для "
+            "подключения. Задайте его в настройках Xray, и возвращайтесь сюда.",
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🔙 Назад", callback_data="xr_chain")]]),
+            parse_mode=ParseMode.MARKDOWN)
+        return
+    if not names:
+        await show_screen(
+            query, context,
+            "🔗 **Свой канал в Германию**\n\n"
+            "Сначала выберите маску входа — мост прикрывается тем же именем, "
+            "что и люди.",
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🎭 Маска входа", callback_data="xr_mask")],
+                 [InlineKeyboardButton("🔙 Назад", callback_data="xr_chain")]]),
+            parse_mode=ParseMode.MARKDOWN)
+        return
+
     await show_screen(
         query, context,
-        "🔗 **Куда Германия будет звонить**\n\n"
-        "Пришлите адрес этого сервера и порт входа Xray:\n"
-        "`203.0.113.10:443`\n\n"
-        "Порт можно не писать — тогда 443.",
-        reply_markup=InlineKeyboardMarkup(
-            [[InlineKeyboardButton("🔙 Отмена", callback_data="xr_chain")]]),
+        "🔗 **Настроить свой канал в Германию**\n\n"
+        f"Германия будет подключаться сюда: `{escape_md(host)}:{cfg['port']}`\n"
+        f"Прикрываясь именем: `{escape_md(names[0])}`\n\n"
+        "Пока мост не поднимется, люди идут прежним путём — связь не "
+        "прервётся.",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ Настроить", callback_data="xr_chain_go")],
+            [InlineKeyboardButton("🔙 Отмена", callback_data="xr_chain")],
+        ]),
         parse_mode=ParseMode.MARKDOWN)
 
 
-async def chain_entered(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Настраивает обе стороны разом."""
+async def chain_go(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Настраивает обе стороны. Ничего не спрашивает: всё уже известно."""
     import cascade
-    context.user_data["state"] = None
-    raw = (update.message.text or "").strip()
-    host, _, port = raw.partition(":")
-    host = host.strip()
-    if not host:
-        await update.message.reply_text("Пустой адрес. Попробуйте ещё раз.")
-        return True
+    query = update.callback_query
+    await show_screen(query, context, "⏳ Настраиваю обе стороны…",
+                      reply_markup=None)
 
-    msg = await update.message.reply_text("⏳ Настраиваю обе стороны…")
     cfg = await xray.settings()
     try:
+        host = await xray.server_host()
+        names = mask_names(cfg["dest"])
         keys = await xray.ensure_keys()
         if not keys:
             raise RuntimeError("узел не отдал ключи маскировки")
         # Мост прикрывается тем же именем, что и люди: вход принимает только
-        # имена из своего списка, и своё, отдельное, он бы не принял.
-        names = mask_names(cfg["dest"])
-        if not names:
-            raise RuntimeError("у входа нет имени для маскировки — "
-                               "сначала выберите маску")
-        chain = await cascade.setup(
-            host, int(port) if port.strip().isdigit() else 443,
-            names[0], keys["public_key"], keys["short_id"])
+        # имена из своего списка, своё отдельное он бы не принял.
+        chain = await cascade.setup(host, cfg["port"], names[0],
+                                    keys["public_key"], keys["short_id"])
     except Exception as e:
-        await msg.edit_text(
-            f"❌ Не вышло: {str(e)[:250]}\n\n"
-            f"Xray продолжает работать прежним путём — люди ничего не заметили.")
-        return True
+        await show_screen(
+            query, context,
+            f"❌ Не вышло: {escape_md(str(e)[:250])}\n\n"
+            f"Xray продолжает работать прежним путём — "
+            f"люди ничего не заметили.",
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🔙 Назад", callback_data="xr_chain")]]),
+            parse_mode=ParseMode.MARKDOWN)
+        return
 
     ok, note = await xray.apply_config("свой канал в Германию")
-    tail = "" if ok else f"\n\n⚠️ Конфиг узла не применился: {note}"
-    await msg.edit_text(
-        f"✅ Германия настроена и звонит на {chain['host']}:{chain['port']}.\n\n"
-        f"Люди пойдут новым каналом, как только мост подключится — "
-        f"обычно меньше минуты. До этого они идут прежним путём, "
-        f"и связь не прерывается.{tail}")
-    return True
+    tail = "" if ok else f"\n\n⚠️ Конфиг узла не применился: {escape_md(note)}"
+    await show_screen(
+        query, context,
+        f"✅ Германия настроена и подключается на "
+        f"`{escape_md(chain['host'])}:{chain['port']}`.\n\n"
+        f"Люди перейдут на новый канал, как только мост поднимется — обычно "
+        f"меньше минуты. До этого они идут прежним путём.{tail}",
+        reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton("🔗 К каналу", callback_data="xr_chain")]]),
+        parse_mode=ParseMode.MARKDOWN)
 
 
 async def chain_off(update: Update, context: ContextTypes.DEFAULT_TYPE):

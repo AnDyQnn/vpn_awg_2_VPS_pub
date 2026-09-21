@@ -225,6 +225,48 @@ def build_block_response(query, qend, qtype):
     return build_a_response(query, qend, qtype, BLOCK_IP)
 
 
+# --- ИМЯ-ИНДИКАТОР ДЛЯ БРАУЗЕРА -------------------------------------------
+# Firefox включает свой собственный DNS поверх HTTPS по умолчанию и тем самым
+# обходит фильтр. Но перед этим он спрашивает особое имя: если сеть отвечает на
+# него «такого нет», он считает, что у сети свои правила, и свой DNS НЕ
+# включает.
+#
+# Это вежливый путь: браузер отказывается от обхода сам, а не бьётся в закрытую
+# дверь. Резать ему соединения мы тоже умеем (запрет на узле), но это грубее и
+# заметнее для человека.
+#
+# Список именно отказных имён держим отдельно от фильтра категорий: это не
+# «запрещённый сайт», а служебный ответ, и в журнал попыток он попадать не
+# должен — иначе владелец увидит десятки «нарушений» на ровном месте.
+CANARY_NAMES = {
+    # Firefox: «есть ли у сети свои правила»
+    "use-application-dns.net",
+    # Apple и Chrome смотрят на доступность своих резолверов по именам —
+    # отказ по ним тоже возвращает их к обычному DNS.
+    "mozilla.cloudflare-dns.com",
+    "dns.google",
+    "dns.quad9.net",
+    "doh.opendns.com",
+    "dns.adguard.com",
+    "dns.nextdns.io",
+    "chrome.cloudflare-dns.com",
+}
+
+
+def build_nxdomain(query):
+    """Ответ «такого имени нет». Не блокировка и не ошибка — именно отсутствие.
+
+    Важно отвечать именно так: на «сервер не смог» браузер попробует ещё раз и
+    другим путём, а на «такого нет» — примет и успокоится."""
+    out = bytearray(query[:12])
+    out[2] = 0x81
+    out[3] = 0x83          # ответ, рекурсия доступна, код 3 — имени нет
+    out[6:8] = b"\x00\x00"   # записей в ответе нет
+    out[8:10] = b"\x00\x00"
+    out[10:12] = b"\x00\x00"
+    return bytes(out) + query[12:]
+
+
 def build_servfail(query):
     if len(query) < 12:
         return query
@@ -556,6 +598,12 @@ class DnsProtocol(asyncio.DatagramProtocol):
             own = NAMES.lookup(name)
             if own:
                 self.transport.sendto(build_a_response(data, qend, qtype, own), addr)
+                return
+            # Служебные имена, по которым браузер решает, включать ли свой
+            # DNS. Отвечаем «такого нет» — и он не включает. В журнал попыток
+            # это не пишем: нарушения тут нет, спрашивает сам браузер.
+            if name in CANARY_NAMES:
+                self.transport.sendto(build_nxdomain(data), addr)
                 return
             cat = FILTERS.blocked(addr[0], name)
             if cat:
