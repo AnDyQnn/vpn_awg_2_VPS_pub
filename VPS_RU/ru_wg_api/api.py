@@ -2119,6 +2119,35 @@ def api_xray_bridge(peer: str = ""):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/xray/keep")
+def api_xray_keep():
+    """Поднимает Xray, если он включён, но не работает.
+
+    У амнезии присмотр был с самого начала: сторож видит пропавшее рукопожатие
+    и лечит узел по ступеням. У Xray не было ничего — процесс поднимался при
+    старте контейнера, и на этом всё. Упал через неделю — люди на нём без
+    связи, пока кто-нибудь не заметит.
+
+    Вызывается сторожем по кругу. Идемпотентна: работающий процесс не трогает,
+    поэтому дёргать её можно хоть каждую минуту."""
+    try:
+        state = proto_state()
+        if not state.get("xray"):
+            return {"enabled": False, "up": False, "action": "выключен"}
+        if xray_running():
+            # Заодно подрезаем журнал. Раньше это делалось только при
+            # перезапуске процесса, а он живёт месяцами — и журнал рос всё это
+            # время без единого присмотра.
+            xray_log_rotate()
+            return {"enabled": True, "up": True, "action": "работает"}
+        ok, note = xray_start()
+        print(f"Присмотр: Xray не работал, поднимаю — {note}", flush=True)
+        return {"enabled": True, "up": xray_running(),
+                "action": "поднят" if ok else f"не поднялся: {note}"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/dns/bypass-status")
 def api_dns_bypass_status():
     """Сколько правил запрета обходного DNS стоит сейчас.

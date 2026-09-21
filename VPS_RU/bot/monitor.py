@@ -201,6 +201,50 @@ async def xray_stats_delta():
         return {}
 
 
+# Окно, в котором трафик по адресу считается «человек сейчас на связи». Шире
+# периода опроса (пять минут) с запасом: иначе человек, у которого трафик шёл
+# ровно между двумя опросами, выглядел бы отключившимся.
+XRAY_SEEN_WINDOW = 600
+
+
+async def mark_xray_active():
+    """Ставит отметку активности людям на Xray.
+
+    У них рукопожатия нет вовсе, и отметка им не ставилась никогда — человек,
+    сидящий только на Xray, вечно выглядел неактивным. А от этой отметки
+    зависит и «не подключался N дней», и вопросы владельцу, и снятие
+    заброшенных ключей.
+
+    Признак у них один: живой трафик по адресу-двойнику. Узел его видит и
+    складывает в отметки по адресам, остаётся перевести адрес в человека.
+
+    Возвращает, скольким поставили, — для проверок и разбора."""
+    seen = state_data.get("addr_seen") or {}
+    if not seen:
+        return 0
+    try:
+        from xray import twin_addr
+        from acl import peer_ip_map
+        now = time.time()
+        marked = 0
+        for uuid_val, ip in (await peer_ip_map()).items():
+            twin = twin_addr(ip)
+            if not twin:
+                continue
+            last = seen.get(twin)
+            if last and (now - last) < XRAY_SEEN_WINDOW:
+                await db.execute(
+                    "UPDATE users SET last_active_at=NOW() WHERE uuid=$1",
+                    uuid_val)
+                marked += 1
+        return marked
+    except Exception as e:
+        # Отметка — дело наблюдательное: её отказ не должен останавливать сбор
+        # статистики, ради которого цикл и работает.
+        print(f"Отметка активности для Xray: {e}")
+        return 0
+
+
 async def repair_traffic_directions():
     """Разворачивает промежутки истории, записанные с перепутанными колонками.
 
@@ -934,6 +978,8 @@ async def stats_collector_loop():
                             if uuid_val and len(uuid_val) < 40:
                                 await db.save_stats(uuid_val, rx, tx)
                                 if hs > 0 and (now - hs) < 180: await db.execute("UPDATE users SET last_active_at=NOW() WHERE uuid=$1", uuid_val)
+
+            await mark_xray_active()
         except Exception: pass
         await asyncio.sleep(300)
 

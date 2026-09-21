@@ -166,6 +166,32 @@ async def check_connection_animation(context, chat_id, message_id, uuid=None):
                         if hs > 0 and (now - hs) < 180: is_online = True
     except Exception: pass
 
+    # Xray спрашиваем отдельно: рукопожатия у него нет вовсе, и по пирам он
+    # невидим. Без этой ветки человек, у которого всё работает, получал
+    # «сервер не видит трафика от вас» — и шёл жаловаться владельцу на
+    # исправную связь.
+    if not is_online:
+        try:
+            from xray import online_uuids
+            targets = set([uuid] if uuid else
+                          [u["uuid"] for u in await db.get_users_by_tg_id(chat_id)])
+            if targets & await online_uuids():
+                is_online = True
+                # Время последней активности берём из отметки по адресу: у Xray
+                # это единственный признак, и он же лежит в основе всего учёта.
+                from utils import state_data
+                from xray import twin_addr
+                from acl import peer_ip_map
+                seen = state_data.get("addr_seen") or {}
+                for uid, ip in (await peer_ip_map()).items():
+                    if uid in targets:
+                        twin = twin_addr(ip)
+                        last = int(seen.get(twin, 0)) if twin else 0
+                        if last > last_hs_time:
+                            last_hs_time = last
+        except Exception as e:
+            print(f"Проверка связи по Xray: {e}")
+
     keyboard = [[InlineKeyboardButton("🔙 К списку проверок", callback_data="client_select_check")]]
     if is_online:
         date_str = ts_to_moscow(last_hs_time).strftime('%H:%M:%S')
@@ -602,13 +628,36 @@ async def client_regen_all_action_handler(update: Update, context: ContextTypes.
     )
 
     # config-first: сначала выдаём ВСЕ новые конфиги, копим старые пиры на снятие
+    #
+    # Протокол проверяем у КАЖДОГО ключа. Перевыпуск одного ключа это делал, а
+    # массовый — нет: он гнал всех путём амнезии. Человеку на Xray это завело бы
+    # лишний пир вместо новой ссылки, а старый ключ повис бы в очереди на снятие
+    # навсегда — она ждёт рукопожатия, которого у Xray не бывает вовсе.
     retire_list = []
+    xray_done = 0
     for user in keys:
         try:
+            if await db.get_xray_user(user["uuid"]):
+                import xray
+                ok, res = await xray.issue(user["uuid"])
+                if not ok:
+                    raise RuntimeError(res)
+                await send_xray_profile(context, chat_id, user["uuid"])
+                xray_done += 1
+                continue
             retire_list.append(await _issue_new_config(context, chat_id, user))
         except Exception as e:
             await context.bot.send_message(chat_id=chat_id, text=f"❌ Ошибка перевыпуска ключа {escape_md(user['name'])}: {e}",
         reply_markup=exit_kb(to_client=True))
+
+    # Раскладку на узле пересобираем один раз на всех, а не на каждого: у людей
+    # на Xray сменились адреса-двойники, и правила знают про старые.
+    if xray_done:
+        try:
+            from restrictions import reapply
+            await reapply("массовый перевыпуск ссылок Xray")
+        except Exception as e:
+            print(f"Массовый перевыпуск, пересборка правил: {e}")
 
     await context.bot.send_message(
         chat_id=chat_id,
