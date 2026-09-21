@@ -177,6 +177,30 @@ async def geo_files_loop(app):
         await asyncio.sleep(3600)
 
 
+async def xray_stats_delta():
+    """Сколько байт прошло у каждого человека на Xray с прошлого опроса.
+
+    Нужно там, где трафик уходит внутрь соединения моста: пакетами с личного
+    адреса он больше не идёт, и счётчики файрвола его не видят. Xray считает
+    сам, по учётному имени — а учётное имя у нас и есть uuid человека.
+
+    Счётчики читаются со сбросом: узел отдаёт прирост, а не сумму. Так
+    перезапуск процесса не выглядит отрицательным приростом и не требует
+    помнить прошлое значение.
+
+    Байты — всё, что Xray умеет. Пакетов он не считает, поэтому лимит в
+    пакетах в секунду на этом пути не срабатывает. Записано честно."""
+    try:
+        async with api_session() as session:
+            async with session.post(f"{WG_API_URL}/xray/stats",
+                                    json={"reset": True}, timeout=15) as r:
+                if r.status != 200:
+                    return {}
+                return (await r.json()).get("users") or {}
+    except Exception:
+        return {}
+
+
 async def repair_traffic_directions():
     """Разворачивает промежутки истории, записанные с перепутанными колонками.
 
@@ -1198,8 +1222,32 @@ async def load_collector_loop(app):
                     # два адреса сразу — пир AmneziaWG и двойник Xray, — и
                     # проверять их порознь нельзя: лимит обходился бы делением
                     # трафика пополам.
+                    # Люди на своём канале считаются НЕ файрволом, а самим
+                    # Xray: их трафик уходит внутрь соединения моста, и мимо
+                    # счётчиков адреса-двойника. Складывать оба источника
+                    # нельзя — внутренний трафик посчитался бы дважды, и у
+                    # человека, ходящего к домашнему сервису, вырос бы вдвое.
+                    import cascade
+                    chain_on, _why = await cascade.ready()
+                    xray_bytes = await xray_stats_delta() if chain_on else {}
+                    # Адреса-двойники исключаем из разбора файрвола: по ним
+                    # сейчас идёт только внутритуннельное, и его посчитает Xray.
+                    # Исключаем двойников ТОЛЬКО если счётчики Xray реально
+                    # ответили. Иначе вышла бы тихая дыра: файрвол мы уже не
+                    # слушаем, а взамен не получили ничего — и трафик человека
+                    # перестал бы считаться вовсе, без единого признака.
+                    skip_twins = set()
+                    if chain_on and xray_bytes:
+                        from xray import twin_addr as _twin
+                        for _ip in list(ip_to_uuid):
+                            _t = _twin(_ip)
+                            if _t and _t in snapshot:
+                                skip_twins.add(_t)
+
                     merged = {}
                     for ip, cur in snapshot.items():
+                        if ip in skip_twins:
+                            continue
                         old = prev_snapshot.get(ip)
                         uuid_val = ip_to_uuid.get(ip)
                         if not old or not uuid_val:
@@ -1224,6 +1272,20 @@ async def load_collector_loop(app):
                         # видно, что человек сейчас на связи.
                         if up_pkt or down_pkt:
                             state_data["addr_seen"][ip] = time.time()
+
+                    # Приросты от Xray — тем же людям, в те же колонки.
+                    # Названия направлений у Xray с нашей стороны: uplink — то,
+                    # что человек отдал нам, downlink — то, что мы отдали ему.
+                    # В базе договорённость та же: bytes_in — отдача человека.
+                    for who, rec_x in xray_bytes.items():
+                        if who == cascade.BRIDGE_USER:
+                            # Мост — не человек: через него идёт трафик всех
+                            # остальных, и под личные лимиты он попадать не
+                            # должен, иначе «превысил» покажет на нём одном.
+                            continue
+                        rec = merged.setdefault(who, [0, 0, 0, 0])
+                        rec[2] += int(rec_x.get("up") or 0)
+                        rec[3] += int(rec_x.get("down") or 0)
 
                     # Имена — от лица человека и в том же смысле, что в базе:
                     # in — его отдача, out — его приём.
@@ -1858,3 +1920,77 @@ async def bypass_add_request_handler(update: Update, context: ContextTypes.DEFAU
     else:
         await db.set_bypass_request_status(req_id, "rejected")
         await query.edit_message_text(f"❌ Заявка на `{escape_md(req['domain'])}` отклонена.", parse_mode=ParseMode.MARKDOWN)
+
+
+async def cascade_healing_loop(app):
+    """Следит за мостом Германии и уводит людей на прежний путь, если он пропал.
+
+    Зачем отдельный сторож. У амнезии такой откат есть с самого начала: Германия
+    не отвечает — мир-трафик идёт напрямую через РФ и возвращается сам. Свой
+    канал Xray обязан жить по тем же правилам, иначе он выйдет каналом второго
+    сорта: его обрыв означал бы не «медленнее», а тишину у всех, кто на Xray.
+
+    Проверка смотрит на живое соединение с адреса Германии, а не спрашивает её
+    агента. Агент живёт за туннелем амнезии, и опрос через него сделал бы отказ
+    амнезии похожим на отказ второго канала — каналы снова оказались бы
+    связаны, только уже в проверке.
+
+    Цена отката — перезапуск процесса Xray: конфиг меняется, соединения
+    переустанавливаются. Это секунды, и случается только когда иначе связи не
+    будет вовсе."""
+    import cascade
+    # Лениво, как и остальная автоматика здесь: при импорте сверху модуль
+    # тянул бы за собой половину бота ещё до готовности базы.
+    from xray import apply_config
+    fails = 0
+    while True:
+        await asyncio.sleep(60)
+        try:
+            cfg = await cascade.settings()
+            # Не настроен или выключен вручную — сторожить нечего.
+            if not cfg.get("uuid") or not cfg.get("on"):
+                fails = 0
+                continue
+
+            alive = await cascade.bridge_present()
+            if alive:
+                fails = 0
+                if cfg.get("fallback"):
+                    await db.set_setting(cascade.KEY_FALLBACK, "0")
+                    await apply_config("мост Германии подключился")
+                    await db.log_event(
+                        "Self-Healing",
+                        "Cascade bridge up — Xray traffic goes via Germany.")
+                    if ADMIN_ID:
+                        try:
+                            await notify_admin(app, text=(
+                                "🔼 **Свой канал в Германию поднялся** — "
+                                "трафик Xray идёт через него."),
+                                parse_mode="Markdown")
+                        except Exception:
+                            pass
+                continue
+
+            fails += 1
+            # Три проверки по минуте: одиночный обрыв не повод дёргать всех,
+            # а три минуты тишины — уже повод.
+            if fails < 3 or cfg.get("fallback"):
+                continue
+            fails = 0
+            await db.set_setting(cascade.KEY_FALLBACK, "1")
+            await apply_config("мост Германии пропал")
+            await db.log_event(
+                "Self-Healing",
+                "Cascade bridge down — Xray falls back to the shared tunnel.")
+            if ADMIN_ID:
+                try:
+                    await notify_admin(app, text=(
+                        "⚠️ **Мост Германии не подключён.**\n"
+                        "🔻 Люди на Xray временно идут прежним путём — через "
+                        "общий туннель. Вернётся автоматически."),
+                        parse_mode="Markdown")
+                except Exception:
+                    pass
+        except Exception as e:
+            # Сторож не имеет права умереть: без него откат не вернётся.
+            print(f"Сторож своего канала споткнулся: {e}", flush=True)

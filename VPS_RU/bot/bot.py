@@ -27,6 +27,7 @@ from ui import main_menu
 from monitor import (
     alert_loop, cleanup_peers, stats_collector_loop, self_healing_loop,
     de_self_healing_loop,
+    cascade_healing_loop,
     expiration_loop, inactivity_loop, weekly_report_loop, log_cleanup_loop,
     auto_reboot_loop, scheduled_update_loop, auto_update_check_loop, resource_monitor_loop,
     routing_upgrade_loop, bypass_reresolve_loop, run_bypass_check_handler, bypass_notify_now_handler,
@@ -91,7 +92,7 @@ from handlers_xray import (
     apply_now as xray_apply_now, apps_screen, move_screen,
     connections_screen, issue_xray, send_link, drop_awg, why_locked,
     mask_screen, mask_set,
-)
+    chain_screen, chain_ask, chain_entered, chain_off)
 from handlers_hits import (
     hits_screen, hit_open, hits_seen_all, hits_loop,
     hit_find_request, hit_find_entered,
@@ -482,6 +483,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data["state"] = None
             return
         if await flt_allow_entered(update, context):
+            return
+
+    # Путь трафика всех людей на Xray — только владелец.
+    if state == "awaiting_chain_host":
+        if not check_admin(update.effective_user.id):
+            context.user_data["state"] = None
+            return
+        if await chain_entered(update, context):
             return
 
     # Свои исключения меняют маршрутизацию на чужом устройстве — только владелец.
@@ -1181,6 +1190,9 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "xr_apply": await xray_apply_now(update, context); return
     if data == "xr_apps": await apps_screen(update, context); return
     if data == "xr_mask": await mask_screen(update, context); return
+    if data == "xr_chain": await chain_screen(update, context); return
+    if data == "xr_chain_set": await chain_ask(update, context); return
+    if data == "xr_chain_off": await chain_off(update, context); return
     if data.startswith("xr_mask_"):
         await mask_set(update, context, data[len("xr_mask_"):]); return
     if data == "xr_move": await move_screen(update, context); return
@@ -1730,6 +1742,7 @@ async def post_init(application):
         asyncio.create_task(check_update_completion(application)),
         asyncio.create_task(self_healing_loop(application)),
         asyncio.create_task(de_self_healing_loop(application)),
+        asyncio.create_task(cascade_healing_loop(application)),
         asyncio.create_task(expiration_loop(application)),
         asyncio.create_task(inactivity_loop(application)),
         asyncio.create_task(weekly_report_loop(application)),

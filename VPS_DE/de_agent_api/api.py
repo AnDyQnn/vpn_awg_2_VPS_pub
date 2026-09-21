@@ -347,10 +347,19 @@ def xray_apply(data: XrayConfig):
 
 
 def xray_port_gate(port):
-    """Открывает дверь входу Xray и закрывает прежнюю.
+    """Открывает дверь входу Xray.
 
-    Дверь именно на внешнем интерфейсе: сюда приходит мастер из России, а не
-    пир из туннеля. Правило идемпотентно."""
+    Ноль означает «двери не нужно»: у моста нет своего входа, он подключается
+    сам. Без этой проверки сюда ушло бы правило с нулевым портом — iptables его
+    не примет, а выглядело бы это как сбой применения конфига.
+
+    Правило идемпотентно."""
+    try:
+        port = int(port)
+    except (TypeError, ValueError):
+        return
+    if port <= 0 or port > 65535:
+        return
     try:
         subprocess.run(f"iptables -C INPUT -p tcp --dport {int(port)} -j ACCEPT",
                        shell=True, check=True, capture_output=True)

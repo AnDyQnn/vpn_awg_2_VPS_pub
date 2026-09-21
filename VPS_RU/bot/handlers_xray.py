@@ -11,6 +11,7 @@ from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
 import xray
+from xray import mask_names
 from database import db
 from utils import (exit_kb, escape_md, show_screen, send_copyable,
                    GOSUSLUGI_APP_WARNING,
@@ -302,7 +303,9 @@ async def xray_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     kb = [[InlineKeyboardButton("🔄 Применить конфиг заново", callback_data="xr_apply")],
           [InlineKeyboardButton("🎭 Маска входа", callback_data="xr_mask"),
-           InlineKeyboardButton("📱 Приложения", callback_data="xr_apps")]]
+           InlineKeyboardButton("📱 Приложения", callback_data="xr_apps")],
+          [InlineKeyboardButton("🔗 Свой канал в Германию",
+                                callback_data="xr_chain")]]
     for ok, _must, nm, _why, cb in ready:
         if not ok and cb not in ("xr_apply", "xr_mask"):
             kb.append([InlineKeyboardButton(f"➡️ {nm}", callback_data=cb)])
@@ -745,3 +748,122 @@ async def handout(update, context, uuid_val, name, tg_id=None):
         reply_markup=InlineKeyboardMarkup(
             [[InlineKeyboardButton("🔙 В главное меню", callback_data="back_to_main")]]))
     return True
+
+
+
+# --- СВОЙ КАНАЛ В ГЕРМАНИЮ -------------------------------------------------
+# Германия подключена пиром на тот же интерфейс, где живут клиенты AmneziaWG:
+# два канала на деле один. Здесь настраивается второй — Германия подключается
+# к нам сама, на тот же 443, что и люди.
+async def chain_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    import cascade
+    st = await cascade.status()
+    de = st.get("de") or {}
+
+    lines = ["🔗 **Свой канал в Германию**", "",
+             "Xray ходит в Германию своим путём, а не через туннель амнезии. "
+             "Заблокируют амнезию — этот канал переживёт.", ""]
+
+    if st.get("on"):
+        lines.append("Состояние: **включён**")
+        lines.append("Мост: " + ("**подключён**" if st.get("bridge")
+                                 else "**не подключён** — люди идут прежним путём"))
+        if st.get("host"):
+            lines.append(f"Германия звонит на: `{escape_md(st['host'])}:{st['port']}`")
+        if st.get("de_ip"):
+            lines.append(f"Адрес Германии: `{escape_md(st['de_ip'])}`")
+    else:
+        lines.append("Состояние: **выключен** — Xray идёт через туннель амнезии")
+
+    if de.get("error"):
+        lines += ["", f"⚠️ Германия не ответила: {escape_md(str(de['error'])[:120])}"]
+    elif de:
+        lines += ["",
+                  "На той стороне: "
+                  f"{'установлен' if de.get('installed') else 'НЕ установлен'}, "
+                  f"{'настроен' if de.get('configured') else 'не настроен'}, "
+                  f"{'работает' if de.get('running') else 'не работает'}"]
+
+    lines += ["", "⚠️ Лимит в пакетах в секунду на этом канале не работает: "
+                  "Xray считает байты, а пакеты — нет."]
+
+    kb = []
+    if st.get("on"):
+        kb.append([InlineKeyboardButton("🔁 Перенастроить", callback_data="xr_chain_set")])
+        kb.append([InlineKeyboardButton("⏹ Выключить", callback_data="xr_chain_off")])
+    else:
+        kb.append([InlineKeyboardButton("▶️ Настроить", callback_data="xr_chain_set")])
+    kb.append([InlineKeyboardButton("🔙 Xray", callback_data="proto_xray")])
+
+    await show_screen(query, context, "\n".join(lines),
+                      reply_markup=InlineKeyboardMarkup(kb),
+                      parse_mode=ParseMode.MARKDOWN)
+
+
+async def chain_ask(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Спрашивает адрес, по которому Германия будет к нам звонить.
+
+    Одно поле и один пример — объяснения живут в документации, а не на экране
+    настройки."""
+    query = update.callback_query
+    context.user_data["state"] = "awaiting_chain_host"
+    await show_screen(
+        query, context,
+        "🔗 **Куда Германия будет звонить**\n\n"
+        "Пришлите адрес этого сервера и порт входа Xray:\n"
+        "`203.0.113.10:443`\n\n"
+        "Порт можно не писать — тогда 443.",
+        reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton("🔙 Отмена", callback_data="xr_chain")]]),
+        parse_mode=ParseMode.MARKDOWN)
+
+
+async def chain_entered(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Настраивает обе стороны разом."""
+    import cascade
+    context.user_data["state"] = None
+    raw = (update.message.text or "").strip()
+    host, _, port = raw.partition(":")
+    host = host.strip()
+    if not host:
+        await update.message.reply_text("Пустой адрес. Попробуйте ещё раз.")
+        return True
+
+    msg = await update.message.reply_text("⏳ Настраиваю обе стороны…")
+    cfg = await xray.settings()
+    try:
+        keys = await xray.ensure_keys()
+        if not keys:
+            raise RuntimeError("узел не отдал ключи маскировки")
+        # Мост прикрывается тем же именем, что и люди: вход принимает только
+        # имена из своего списка, и своё, отдельное, он бы не принял.
+        names = mask_names(cfg["dest"])
+        if not names:
+            raise RuntimeError("у входа нет имени для маскировки — "
+                               "сначала выберите маску")
+        chain = await cascade.setup(
+            host, int(port) if port.strip().isdigit() else 443,
+            names[0], keys["public_key"], keys["short_id"])
+    except Exception as e:
+        await msg.edit_text(
+            f"❌ Не вышло: {str(e)[:250]}\n\n"
+            f"Xray продолжает работать прежним путём — люди ничего не заметили.")
+        return True
+
+    ok, note = await xray.apply_config("свой канал в Германию")
+    tail = "" if ok else f"\n\n⚠️ Конфиг узла не применился: {note}"
+    await msg.edit_text(
+        f"✅ Германия настроена и звонит на {chain['host']}:{chain['port']}.\n\n"
+        f"Люди пойдут новым каналом, как только мост подключится — "
+        f"обычно меньше минуты. До этого они идут прежним путём, "
+        f"и связь не прерывается.{tail}")
+    return True
+
+
+async def chain_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    import cascade
+    query = update.callback_query
+    await cascade.turn_off()
+    await xray.apply_config("свой канал в Германию выключен")
+    await chain_screen(update, context)

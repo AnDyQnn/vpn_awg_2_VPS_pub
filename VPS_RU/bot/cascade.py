@@ -68,6 +68,11 @@ KEY_UUID = "cascade_uuid"          # чем мост представляетс�
 KEY_MASK = "cascade_mask"          # маска, под которой он приходит
 KEY_HOST = "cascade_ru_host"       # куда мосту звонить
 KEY_PORT = "cascade_ru_port"
+# Внешний адрес Германии. Спрашиваем у неё ОДИН РАЗ, при настройке, и кладём
+# сюда. Дальше проверка «жив ли мост» смотрит на живое соединение с этого
+# адреса и агента Германии не трогает вовсе: агент живёт за туннелем амнезии, и
+# ходить через него значило бы снова связать каналы — только уже в проверке.
+KEY_DE_IP = "cascade_de_ip"
 # Канал настроен, но моста сейчас нет. Отдельно от «выключено вручную»:
 # возвращаться надо само, без участия владельца.
 KEY_FALLBACK = "cascade_fallback"
@@ -89,6 +94,7 @@ async def settings():
         "mask": await db.get_setting(KEY_MASK),
         "host": await db.get_setting(KEY_HOST),
         "port": int(await db.get_setting(KEY_PORT) or 443),
+        "de_ip": await db.get_setting(KEY_DE_IP),
     }
 
 
@@ -183,11 +189,20 @@ async def setup(ru_host, ru_port, mask, public_key, short_id):
     Ключи маскировки не заводятся отдельные — мост приходит на тот же вход, что
     и люди, и пользуется той же маскировкой. Меньше сущностей, меньше мест,
     где они разойдутся."""
+    # Спрашиваем адрес Германии до того, как что-то менять: если она недоступна,
+    # лучше не начинать вовсе, чем оставить настройку на полпути.
+    de_ip = ""
+    try:
+        de_ip = (await _agent("GET", "/xray/whoami", timeout=25)).get("ip", "")
+    except Exception as e:
+        raise RuntimeError(f"Германия не назвала свой адрес: {e}")
+
     cfg = {
         "uuid": str(uuid_lib.uuid4()),
         "mask": mask,
         "host": str(ru_host).strip(),
         "port": int(ru_port or 443),
+        "de_ip": de_ip,
     }
     # Порт 0: у моста нет своего входа, дверь открывать нечего.
     await _agent("POST", "/xray/apply",
@@ -198,7 +213,10 @@ async def setup(ru_host, ru_port, mask, public_key, short_id):
     await db.set_setting(KEY_MASK, cfg["mask"])
     await db.set_setting(KEY_HOST, cfg["host"])
     await db.set_setting(KEY_PORT, str(cfg["port"]))
-    await db.set_setting(KEY_FALLBACK, "0")
+    await db.set_setting(KEY_DE_IP, cfg["de_ip"])
+    # Первая сверка — не сразу: мосту нужно время дозвониться. Пока считаем,
+    # что его нет, и люди идут прежним путём. Сторож переключит, когда увидит.
+    await db.set_setting(KEY_FALLBACK, "1")
     await db.set_setting(KEY_ON, "1")
     return cfg
 
@@ -222,9 +240,14 @@ async def bridge_present():
     амнезии, и если ходить через него, отказ амнезии выглядел бы как отказ
     нашего канала. Каналы снова оказались бы связаны — только уже в проверке,
     а вся затея ровно в том, чтобы они не зависели друг от друга."""
+    cfg = await settings()
+    peer = cfg.get("de_ip")
+    if not peer:
+        return False
     try:
         async with api_session() as session:
-            async with session.get(f"{WG_API_URL}/xray/bridge", timeout=10) as r:
+            async with session.get(f"{WG_API_URL}/xray/bridge?peer={peer}",
+                                   timeout=10) as r:
                 if r.status != 200:
                     return False
                 return bool((await r.json()).get("present"))

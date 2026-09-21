@@ -1918,6 +1918,39 @@ def api_xray_config(req: XrayConfig):
 XRAY_API_PORT = int(os.getenv("XRAY_API_PORT", "10085"))
 
 
+def xray_stats_parse(data):
+    """Разбирает ответ со счётчиками в «кто → сколько».
+
+    Имя счётчика у Xray составное: `user>>>кто>>>traffic>>>uplink`. Отдельной
+    функцией, потому что ломается это молча: поменяется разделитель или порядок
+    частей — и учёт тихо покажет нули, а понять это по работающему узлу нельзя.
+
+    Счётчики не по людям (входы, каналы) пропускаем: они про узел, а не про
+    человека, и попади они сюда — превратились бы в несуществующего посетителя.
+    """
+    out = {}
+    for item in (data or {}).get("stat", []) or []:
+        name = str(item.get("name") or "")
+        parts = name.split(">>>")
+        if len(parts) != 4 or parts[0] != "user":
+            continue
+        try:
+            value = int(item.get("value") or 0)
+        except (TypeError, ValueError):
+            continue
+        if value < 0:
+            continue
+        who, direction = parts[1], parts[3]
+        if not who:
+            continue
+        rec = out.setdefault(who, {"up": 0, "down": 0})
+        if direction == "uplink":
+            rec["up"] += value
+        elif direction == "downlink":
+            rec["down"] += value
+    return out
+
+
 def xray_stats(reset=False):
     """Счётчики по людям: сколько байт пришло и ушло.
 
@@ -1934,22 +1967,7 @@ def xray_stats(reset=False):
         data = json.loads(res.stdout or "{}")
     except Exception:
         return {}
-
-    out = {}
-    for item in data.get("stat", []) or []:
-        name = item.get("name") or ""
-        value = int(item.get("value") or 0)
-        # Имя счётчика: user>>>кто>>>traffic>>>uplink
-        parts = name.split(">>>")
-        if len(parts) != 4 or parts[0] != "user":
-            continue
-        who, direction = parts[1], parts[3]
-        rec = out.setdefault(who, {"up": 0, "down": 0})
-        if direction == "uplink":
-            rec["up"] += value
-        elif direction == "downlink":
-            rec["down"] += value
-    return out
+    return xray_stats_parse(data)
 
 
 def xray_bridge_present(peer=""):
