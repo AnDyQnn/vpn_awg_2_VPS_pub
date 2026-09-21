@@ -1468,6 +1468,34 @@ async def weekly_health_loop(app):
                     snap[key] = s
                 lines.append("")
 
+            # Xray отдельным блоком. Раньше отчёт говорил только про уборку и
+            # диск — а второй протокол отказывает молча и выглядит одинаково с
+            # чем угодно: «VPN не работает». Раз в неделю про него надо
+            # напомнить, даже когда всё хорошо.
+            try:
+                import cascade
+                from xray import status as xray_status
+                st = await xray_status()
+                xr = (st or {}).get("xray") or {}
+                if xr.get("enabled"):
+                    people = await db.count_xray_users()
+                    lines.append(f"🔶 **Xray**: людей {people}, "
+                                 f"процесс {'работает' if xr.get('up') else 'НЕ работает'}")
+                    ch = await cascade.settings()
+                    if ch.get("uuid") and ch.get("on"):
+                        alive = await cascade.bridge_present()
+                        if alive:
+                            lines.append("Свой канал в Германию: мост на связи")
+                        else:
+                            # Не ошибка: люди идут прежним путём, связь есть. Но
+                            # молчать нельзя — иначе канал окажется выключенным
+                            # месяцами, а владелец будет думать, что он работает.
+                            lines.append("⚠️ Свой канал в Германию: моста нет, "
+                                         "люди идут общим туннелем")
+                    lines.append("")
+            except Exception as e:
+                print(f"Недельный отчёт, блок Xray: {e}")
+
             # Сверка базы с узлом: её делает только мастер, за обе стороны.
             if contract and contract.get("answered"):
                 n_err = contract.get("error", 0)

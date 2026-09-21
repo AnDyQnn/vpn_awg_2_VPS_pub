@@ -2119,6 +2119,24 @@ def api_xray_bridge(peer: str = ""):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/dns/bypass-status")
+def api_dns_bypass_status():
+    """Сколько правил запрета обходного DNS стоит сейчас.
+
+    Нужна сверке: без этого запрета фильтр держится на честном слове телефона,
+    а телефон по умолчанию спрашивает имена мимо нас."""
+    out = subprocess.run(f"iptables -S {DOH_CHAIN}", shell=True,
+                         capture_output=True, text=True).stdout
+    rules = [l for l in out.splitlines() if l.startswith("-A ")]
+    hooked = 0
+    for chain in ("FORWARD", "OUTPUT"):
+        body = subprocess.run(f"iptables -S {chain}", shell=True,
+                              capture_output=True, text=True).stdout
+        if DOH_CHAIN in body:
+            hooked += 1
+    return {"rules": len(rules), "hooked": hooked}
+
+
 @app.get("/api/xray/status")
 def api_xray_status():
     """Состояние обоих протоколов — для экрана администрирования."""
