@@ -37,6 +37,9 @@ NAMES_FILE = "/etc/amnezia/amneziawg/dns_names.json"
 UPSTREAM = os.getenv("DNS_UPSTREAM", "1.1.1.1")
 BLOCK_IP = os.getenv("DNS_BLOCK_IP", "10.13.13.1")   # адрес страницы отказа
 LISTEN_PORT = int(os.getenv("DNS_PORT", "53"))
+# В python нет готовой константы, а ядру нужна именно она: разрешает занять
+# адрес, которого на интерфейсе ещё нет.
+IP_FREEBIND = 15
 STATE_POLL_SECONDS = 5
 BLOCK_TTL = 60
 # Потолок на категорию. Держим не строки, а отпечатки — восемь байт на домен,
@@ -885,7 +888,48 @@ async def main():
     os.makedirs(CACHE_DIR, exist_ok=True)
     FILTERS.maybe_reload()
     loop = asyncio.get_event_loop()
-    await loop.create_datagram_endpoint(DnsProtocol, local_addr=("0.0.0.0", LISTEN_PORT))
+    # Общий сокет создаём руками, а не через local_addr: asyncio не ставит на
+    # него разрешение делить адрес, и тогда второй сокет — на адресе узла —
+    # занять этот же порт уже не сможет.
+    wide = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    wide.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    wide.setblocking(False)
+    wide.bind(("0.0.0.0", LISTEN_PORT))
+    await loop.create_datagram_endpoint(DnsProtocol, sock=wide)
+    # Второй сокет — ровно на адресе узла, и он нужен не для красоты.
+    #
+    # Сокет на 0.0.0.0 сам выбирает, с какого адреса отвечать, по маршруту до
+    # спрашивающего. Для пира AmneziaWG это всегда наш адрес: до пира идти
+    # через wg0. А люди на Xray спрашивают с адресов-двойников, которые живут
+    # на этом же узле, — маршрут до них ведёт в петлю, и ядро подставляет в
+    # ответ САМ АДРЕС СПРАШИВАЮЩЕГО. Человек спросил 10.13.13.1, а ответ ему
+    # приходит от него самого — нормальный DNS-клиент такой ответ выбрасывает.
+    #
+    # Отсюда и росло «Xray подключается, но ничего не грузится»: российские
+    # сервисы идут мимо туннеля своим DNS и работали, а всё остальное
+    # спрашивает нас и оставалось без имён. Проверено на стенде: слушатель на
+    # 0.0.0.0 отвечает с 10.13.13.143, слушатель на 10.13.13.1 — с 10.13.13.1.
+    #
+    # Сокет с явным адресом ядро предпочитает общему, и ответ уходит с
+    # правильного адреса сам собой.
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        # Адрес может ещё не подняться к моменту старта резолвера: контейнер
+        # поднимает сеть отдельно. FREEBIND разрешает занять его заранее.
+        try:
+            sock.setsockopt(socket.IPPROTO_IP, IP_FREEBIND, 1)
+        except OSError:
+            pass
+        sock.setblocking(False)
+        sock.bind((BLOCK_IP, LISTEN_PORT))
+        await loop.create_datagram_endpoint(DnsProtocol, sock=sock)
+        print(f"DNS слушает отдельно на {BLOCK_IP}:{LISTEN_PORT} — "
+              f"ответы людям на Xray уходят с правильного адреса", flush=True)
+    except OSError as e:
+        # Не повод падать: пиры AmneziaWG работают и через общий сокет.
+        print(f"Не вышло занять {BLOCK_IP}:{LISTEN_PORT} отдельно: {e}. "
+              f"Имена у людей на Xray могут не разрешаться.", flush=True)
     server = await asyncio.start_server(handle_tcp, "0.0.0.0", LISTEN_PORT)
     try:
         await asyncio.start_server(handle_http, "0.0.0.0", 80)
