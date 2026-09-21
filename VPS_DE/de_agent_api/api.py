@@ -356,7 +356,10 @@ def xray_status():
     """Состояние моста. Берётся из файла, который пишет его контейнер."""
     st = xray_state()
     return {
-        "installed": os.path.exists(XRAY_BIN),
+        # Не про НАШУ копию Xray: она здесь только ради проверки конфига.
+        # «Мост на месте» — это когда сосед подаёт признаки жизни; иначе
+        # отсутствующий контейнер выглядел бы как «всё установлено».
+        "installed": bool(st),
         "configured": os.path.exists(XRAY_CONF),
         "running": xray_running(),
         "error": st.get("error") or "",

@@ -25,6 +25,8 @@ XRAY=/usr/local/bin/xray
 PID=""
 SEEN=""
 ERR=""
+BACKOFF=0
+RETRY_AT=0
 
 mkdir -p "$DIR"
 
@@ -33,9 +35,13 @@ now() { date +%s; }
 stamp() {   # stamp <работает 0/1> <отпечаток конфига>
     running=$1
     fp=$2
+    # Из текста ошибки вычищаем всё, что рвёт JSON: кавычки, слэши, переводы
+    # строк. Иначе агент перестал бы читать состояние целиком — и мост выглядел
+    # бы мёртвым не потому, что лёг, а потому что неудачно пожаловался.
+    safe=$(printf '%s' "$ERR" | tr -d '"\\' | tr '\n\r\t' '   ' | cut -c1-300)
     cat > "$STATUS.tmp" <<EOF
 {"running": $running, "config_stamp": "$fp", "checked_at": $(now),
- "error": "$(printf '%s' "$ERR" | tr -d '"' | tr '\n' ' ' | cut -c1-300)"}
+ "error": "$safe"}
 EOF
     mv "$STATUS.tmp" "$STATUS"
 }
@@ -82,6 +88,7 @@ while :; do
         # Конфига ещё нет — это не поломка, а «мастер пока не настроил».
         stop_xray
         ERR=""
+        SEEN=""      # забываем виденное: вернувшийся файл надо перечитать
         stamp 0 ""
         sleep "$PERIOD"
         continue
@@ -107,9 +114,27 @@ while :; do
     fi
 
     # Процесс мог упасть сам — поднимаем на последнем принятом конфиге.
+    #
+    # С отступом: падающий сразу после запуска процесс иначе поднимался бы
+    # каждые несколько секунд вечно и завалил бы журнал, похоронив под собой
+    # настоящую причину. Отступ растёт до минуты и сбрасывается, как только
+    # процесс продержался.
     if ! alive && [ -f "$GOOD" ]; then
-        echo "Процесс не работает — поднимаю заново."
-        start_xray "$GOOD" || true
+        if [ "$(now)" -ge "$RETRY_AT" ]; then
+            echo "Процесс не работает — поднимаю заново."
+            if start_xray "$GOOD"; then
+                BACKOFF=0
+                RETRY_AT=0
+            else
+                if [ "$BACKOFF" -eq 0 ]; then BACKOFF=5; else BACKOFF=$((BACKOFF * 2)); fi
+                [ "$BACKOFF" -gt 60 ] && BACKOFF=60
+                RETRY_AT=$(( $(now) + BACKOFF ))
+                echo "Не встал, следующая попытка через ${BACKOFF} с."
+            fi
+        fi
+    else
+        BACKOFF=0
+        RETRY_AT=0
     fi
 
     if alive; then stamp 1 "$fp"; else stamp 0 "$fp"; fi

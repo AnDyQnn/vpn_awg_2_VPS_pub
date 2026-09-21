@@ -385,3 +385,15 @@ if command -v systemd-run >/dev/null 2>&1; then
         echo "[Deploy]     Поправить руками: systemctl restart vpn-updater"
     fi
 fi
+
+# --- BBR: УПРАВЛЕНИЕ ПЕРЕГРУЗКОЙ TCP --------------------------------------
+# Узел, поставленный до появления этой настройки, её не имеет, а установщик на
+# нём больше не запускается. Ставим при обновлении — идемпотентно и нефатально.
+if [ ! -f /etc/sysctl.d/99-bbr.conf ] && modprobe tcp_bbr 2>/dev/null; then
+    grep -qx tcp_bbr /etc/modules-load.d/bbr.conf 2>/dev/null \
+        || echo tcp_bbr > /etc/modules-load.d/bbr.conf
+    printf 'net.core.default_qdisc = fq\nnet.ipv4.tcp_congestion_control = bbr\n' \
+        > /etc/sysctl.d/99-bbr.conf
+    sysctl -q -p /etc/sysctl.d/99-bbr.conf 2>/dev/null || true
+    echo "[Deploy] Управление перегрузкой TCP: $(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)"
+fi
