@@ -436,6 +436,25 @@ def setup_network():
     # Доступ к панели немецкого агента разрешён только с адреса мастера.
     run_cmd("iptables -A FORWARD -i wg0 -o wg0 -p tcp --dport 8000 ! -s 10.13.13.1 -j DROP")
 
+    # --- УПРАВЛЕНИЕ ПЕРЕГРУЗКОЙ TCP ВНУТРИ КОНТЕЙНЕРА ---------------------
+    # Настройка на хосте сюда НЕ доходит: у контейнера своё сетевое
+    # пространство, и способ управления перегрузкой у него свой. Проверено на
+    # боевом узле: на хосте bbr, внутри cubic.
+    #
+    # А Xray живёт именно здесь, и его соединения терминируются с обеих сторон:
+    # от человека и наружу. Значит ставить надо тут, иначе включение на хосте
+    # не даёт ничего тем, ради кого затевалось.
+    #
+    # Нефатально: нет модуля в ядре хоста — остаёмся на прежнем способе.
+    subprocess.run("sysctl -w net.ipv4.tcp_congestion_control=bbr",
+                   shell=True, stdout=subprocess.DEVNULL,
+                   stderr=subprocess.DEVNULL)
+    try:
+        with open("/proc/sys/net/ipv4/tcp_congestion_control") as f:
+            print(f"Управление перегрузкой TCP: {f.read().strip()}", flush=True)
+    except Exception:
+        pass
+
     restore_peers()
     mig_restore()
     # Xray переживает перезапуск контейнера так же, как всё остальное:
