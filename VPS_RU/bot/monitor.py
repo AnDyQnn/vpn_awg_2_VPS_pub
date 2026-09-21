@@ -2022,3 +2022,50 @@ async def cascade_healing_loop(app):
         except Exception as e:
             # Сторож не имеет права умереть: без него откат не вернётся.
             print(f"Сторож своего канала споткнулся: {e}", flush=True)
+
+
+async def xray_metrics_loop(app):
+    """Раз в пять минут записывает снимок состояния Xray.
+
+    Зачем это отдельно от трафика. Трафик по людям и так копится в часовых
+    срезах. А вот число соединений, живость процесса и состояние моста видны
+    только «прямо сейчас»: посмотрел — увидел, не посмотрел — не увидел.
+
+    Разбирать по ним приходится задним числом. «Вчера вечером всё тормозило»
+    без цифр не разобрать никак, а по снимкам видно, был ли всплеск соединений
+    и не отваливался ли мост.
+
+    Пишем только то, чего нет в других таблицах: вторая копия трафика однажды
+    разошлась бы с первой, и доверять было бы нечему."""
+    from xray import status as xray_status
+    import cascade
+
+    # Первый снимок — не сразу: узел после старта ещё поднимается, и снимок
+    # «процесс не работает» был бы враньём о нём, а не о состоянии дел.
+    await asyncio.sleep(120)
+    tick = 0
+    while True:
+        try:
+            st = await xray_status()
+            xr = (st or {}).get("xray") or {}
+            if xr.get("enabled"):
+                bridge = None
+                ch = await cascade.settings()
+                if ch.get("uuid") and ch.get("on"):
+                    bridge = await cascade.bridge_present()
+                await db.add_xray_metric(
+                    users=await db.count_xray_users(),
+                    connections=int(xr.get("connections") or 0),
+                    process_up=bool(xr.get("up")),
+                    bridge_up=bridge)
+
+            tick += 1
+            # Раз в сутки подчищаем: снимок раз в пять минут — это почти девять
+            # тысяч строк в месяц, и прошлогодние не нужны никому.
+            if tick % 288 == 0:
+                await db.trim_xray_metrics(30)
+        except Exception as e:
+            # Сбор метрик не имеет права уронить автоматику: его дело —
+            # наблюдать, а не вмешиваться.
+            print(f"Снимок состояния Xray: {e}", flush=True)
+        await asyncio.sleep(300)

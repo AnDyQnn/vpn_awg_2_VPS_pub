@@ -289,6 +289,28 @@ async def xray_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
              ""]
     lines.append(f"Подписки: `{escape_md(base)}`" if base
                  else "Подписки: _адрес не задан, автообновление выключено_")
+
+    # Сводка за сутки. Одно число «соединений сейчас» не говорит ничего:
+    # посмотрел в тихий час — увидел ноль, посмотрел в пик — испугался. Здесь
+    # видно и то, и другое, и не отваливался ли процесс между делом.
+    try:
+        s = await db.xray_metrics_summary(24)
+        if s and s.get("n"):
+            n = int(s["n"])
+            proc = int(s.get("proc_ok") or 0) * 100 // n
+            part = [f"соединений в пике {int(s.get('peak') or 0)}, "
+                    f"в среднем {int(s.get('avg_conn') or 0)}"]
+            if proc < 100:
+                part.append(f"процесс был на связи {proc}% времени")
+            seen = int(s.get("bridge_seen") or 0)
+            if seen:
+                br = int(s.get("bridge_ok") or 0) * 100 // seen
+                part.append(f"мост {br}%" if br < 100 else "мост всё время")
+            lines.append("За сутки: " + " · ".join(part))
+    except Exception:
+        # Метрики — дело наблюдательное. Их отсутствие не повод не показать
+        # экран: человек пришёл сюда не за ними.
+        pass
     lines.append("Приложение: Happ, ссылки на все системы")
 
     # Готовность — прямо здесь, а не в отдельном углу. Недостающее у Xray

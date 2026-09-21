@@ -87,6 +87,25 @@ class Database:
                 await self.execute("ALTER TABLE user_tg_links ADD COLUMN username TEXT;")
 
             await self.execute("""
+                -- Метрики второго протокола. Трафик по людям уже копится в
+                -- часовых срезах; здесь то, чего там нет и что иначе видно
+                -- только «прямо сейчас»: сколько соединений держится, сколько
+                -- людей выдано и был ли на связи мост.
+                --
+                -- Нужно это для разбора задним числом. «Вчера вечером всё
+                -- тормозило» без цифр не разобрать никак, а по снимкам видно,
+                -- был ли всплеск соединений и не отваливался ли мост.
+                CREATE TABLE IF NOT EXISTS xray_metrics (
+                    id SERIAL PRIMARY KEY,
+                    taken_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                    users INT NOT NULL DEFAULT 0,
+                    connections INT NOT NULL DEFAULT 0,
+                    process_up BOOLEAN NOT NULL DEFAULT FALSE,
+                    bridge_up BOOLEAN
+                );
+                CREATE INDEX IF NOT EXISTS idx_xray_metrics_at
+                    ON xray_metrics (taken_at DESC);
+
                 CREATE TABLE IF NOT EXISTS events_log (
                     id SERIAL PRIMARY KEY,
                     timestamp TIMESTAMP DEFAULT NOW(),
@@ -645,6 +664,41 @@ class Database:
     async def revoke_xray(self, user_uuid):
         await self.execute(
             "UPDATE xray_users SET revoked_at=NOW() WHERE user_uuid=$1", user_uuid)
+
+    # --- метрики Xray -----------------------------------------------------
+    async def add_xray_metric(self, users, connections, process_up, bridge_up):
+        """Снимок состояния. Байты сюда не пишем: трафик по людям уже копится в
+        часовых срезах, и вторая копия однажды разойдётся с первой."""
+        await self.execute(
+            "INSERT INTO xray_metrics (users, connections, process_up, "
+            "bridge_up) VALUES ($1,$2,$3,$4)",
+            int(users), int(connections), bool(process_up), bridge_up)
+
+    async def xray_metrics_summary(self, hours=24):
+        """Сводка за последние часы: пик и среднее число соединений, доля
+        времени с живым процессом и мостом.
+
+        Доля, а не «да/нет»: мост может отваливаться на минуты, и по одному
+        снимку этого не видно вовсе."""
+        rows = await self.fetch_all(
+            "SELECT COUNT(*) AS n, "
+            "MAX(connections) AS peak, "
+            "AVG(connections)::int AS avg_conn, "
+            "COUNT(*) FILTER (WHERE process_up) AS proc_ok, "
+            "COUNT(*) FILTER (WHERE bridge_up) AS bridge_ok, "
+            "COUNT(*) FILTER (WHERE bridge_up IS NOT NULL) AS bridge_seen "
+            "FROM xray_metrics "
+            "WHERE taken_at > NOW() - ($1 || ' hours')::interval",
+            str(int(hours)))
+        return dict(rows[0]) if rows else {}
+
+    async def trim_xray_metrics(self, keep_days=30):
+        """Старое не храним: снимок раз в пять минут — это почти девять тысяч
+        строк в месяц, и смысла в прошлогодних нет никакого."""
+        await self.execute(
+            "DELETE FROM xray_metrics "
+            "WHERE taken_at < NOW() - ($1 || ' days')::interval",
+            str(int(keep_days)))
 
     async def get_traffic_totals(self, uuid):
         """Сколько человек прокачал за всё время: (принято, отдано) в байтах.
