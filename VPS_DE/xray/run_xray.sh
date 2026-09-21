@@ -41,7 +41,7 @@ stamp() {   # stamp <работает 0/1> <отпечаток конфига>
     safe=$(printf '%s' "$ERR" | tr -d '"\\' | tr '\n\r\t' '   ' | cut -c1-300)
     cat > "$STATUS.tmp" <<EOF
 {"running": $running, "config_stamp": "$fp", "checked_at": $(now),
- "error": "$safe"}
+ "error": "$safe", "congestion": "$CC"}
 EOF
     mv "$STATUS.tmp" "$STATUS"
 }
@@ -79,6 +79,15 @@ start_xray() {   # start_xray <файл>
     return 1
 }
 
+# Каким способом управления перегрузкой мы пользуемся. Задать его отсюда
+# нельзя — контейнер непривилегированный, и /proc/sys только на чтение. Он
+# достаётся по наследству от хоста в момент СОЗДАНИЯ контейнера: поменяли на
+# хосте потом — сюда это не попадёт до пересоздания.
+#
+# Поэтому просто показываем. Иначе выяснять, почему у моста cubic при bbr на
+# хосте, придётся раскопками.
+CC=$(cat /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null || echo "?")
+echo "Мост Xray: управление перегрузкой — $CC"
 echo "Мост Xray: жду конфиг в $CONF"
 
 while :; do

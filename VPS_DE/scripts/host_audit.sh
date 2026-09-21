@@ -156,7 +156,11 @@ if docker inspect de_vpn_xray >/dev/null 2>&1; then
         # стоять где угодно, и маска однажды промахнётся молча.
         BR_RUN=$(grep -o '"running": *[01]' "$APP_DIR/volumes/xray/status.json" 2>/dev/null | tr -dc '01' | head -c1)
         if [ "${BR_RUN:-0}" = "1" ]; then
-            add_check CAT_DOCKER "Мост Xray" "ok" "работает"
+            # Способ управления перегрузкой мост получает по наследству от
+            # хоста в момент создания контейнера. Показываем его здесь: иначе
+            # «на хосте bbr, а у моста cubic» выяснялось бы раскопками.
+            BR_CC=$(grep -o '"congestion": *"[^"]*"' "$APP_DIR/volumes/xray/status.json" 2>/dev/null | sed 's/.*: *"//; s/"//')
+            add_check CAT_DOCKER "Мост Xray" "ok" "работает, перегрузка: ${BR_CC:-?}"
         else
             add_check CAT_DOCKER "Мост Xray" "warning" "контейнер поднят, процесс не работает"
         fi
