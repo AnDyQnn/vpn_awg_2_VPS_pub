@@ -55,8 +55,14 @@ async def main():
     print("=== свой запрос проходит ===")
     r = await run(Req(token=GOOD))
     check("отдан ответ", r.status == 200, "код %d" % r.status)
-    check("имя сервера не называется", r.headers.get("Server") == "-",
-          "по нему сканер выбирает, чем бить")
+    # Имя одно на все ответы всех портов. Своего движка не называем — по нему
+    # сканер выбирает, чем бить. Но и разнобой не годится: пока на разных
+    # ответах стояло то "nginx", то "-", то имя питона с версией, по трём
+    # разным именам с одного адреса было видно ровно то, что мы прячем.
+    check("имя сервера — одно и то же", r.headers.get("Server") == sub.SERVER_NAME,
+          "стоит %r" % r.headers.get("Server"))
+    check("и это не наш движок", "aiohttp" not in sub.SERVER_NAME.lower()
+          and "python" not in sub.SERVER_NAME.lower())
 
     print()
     print("=== чужие методы ===")

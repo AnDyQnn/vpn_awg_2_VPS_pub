@@ -146,6 +146,85 @@ def blocked_now():
     return sum(1 for v in _miss.values() if v[1] > now)
 
 
+# --- ЧЕМ МЫ ПРЕДСТАВЛЯЕМСЯ -------------------------------------------------
+# Имя одно на все ответы всех портов. Разнобой тут хуже любого отдельно взятого
+# имени: на живом узле один и тот же адрес отвечал то "nginx", то "-", то
+# "Python/3.11 aiohttp/3.14.3" — по трём разным именам с одного сайта видно
+# ровно то, что мы прячем.
+SERVER_NAME = "nginx"
+
+# Страница отказа в том виде, в каком её отдаёт nginx. Нужна там, где отвечаем
+# не мы, а движок: кривой запрос, слишком длинный заголовок, обрыв протокола.
+_ERROR_PAGE = ("<html>\r\n<head><title>{0}</title></head>\r\n<body>\r\n"
+               "<center><h1>{0}</h1></center>\r\n"
+               "<hr><center>" + SERVER_NAME + "</center>\r\n"
+               "</body>\r\n</html>\r\n")
+
+
+def error_body(status):
+    """Тело страницы отказа для кода ответа."""
+    try:
+        from http import HTTPStatus
+        title = "%d %s" % (status, HTTPStatus(status).phrase)
+    except Exception:
+        title = str(status)
+    return _ERROR_PAGE.format(title).encode("utf-8")
+
+
+def _mask_engine():
+    """Убирает имя движка из ответов, которые aiohttp формирует сам.
+
+    Своими ответами мы распоряжаемся и так. Но есть целый класс ответов мимо
+    наших рук: запрос, который не разобрался, заголовок длиннее предела, чужой
+    протокол на нашем порту. Их aiohttp собирает сам, до всякого обработчика и
+    мимо рубежа, и вкладывает туда и своё имя с версией, и текст собственной
+    внутренней ошибки — вплоть до куска присланного запроса.
+
+    Для входа-маски это провал всей затеи: страница представляется веб-сервером,
+    а первый же мусорный запрос отвечает питоном. Проверено на живом узле —
+    именно так оно и было.
+
+    Чинится в двух местах. Имя движка aiohttp держит одной строкой, но
+    импортирует её по значению, поэтому чинить нужно и исходное место, и копию.
+    А текст ошибки приходит из самого исключения, поэтому у сборщика ответа
+    подменяется тело — на обычную страницу отказа.
+
+    Исходный сборщик при этом всё равно вызывается: он пишет причину в журнал и
+    сам решает, можно ли ещё что-то отправить в это соединение. Наружу уходит
+    наше тело, в журнал — его причина.
+    """
+    try:
+        import aiohttp.http
+        import aiohttp.web_response
+        aiohttp.http.SERVER_SOFTWARE = SERVER_NAME
+        aiohttp.web_response.SERVER_SOFTWARE = SERVER_NAME
+    except Exception as e:
+        print(f"Подписка: имя движка подменить не вышло ({e})")
+
+    try:
+        from aiohttp import web_protocol
+    except Exception:
+        return
+    orig = web_protocol.RequestHandler.handle_error
+    if getattr(orig, "_masked", False):
+        return
+
+    def handle_error(self, request, status=500, exc=None, message=None):
+        # Журнал и проверка «не ушло ли уже» остаются за исходным сборщиком.
+        orig(self, request, status, exc, message)
+        resp = web.Response(status=status, body=error_body(status),
+                            content_type="text/html",
+                            headers={"Server": SERVER_NAME})
+        resp.force_close()
+        return resp
+
+    handle_error._masked = True
+    web_protocol.RequestHandler.handle_error = handle_error
+
+
+_mask_engine()
+
+
 # Пути, которые вход-маска обслуживает по-настоящему. Всё остальное на нём —
 # страница-заглушка, одна и та же.
 _SUB_PATHS = ("/sub/", "/routing/", "/geo/")
@@ -166,23 +245,98 @@ def on_decoy(request) -> bool:
 
 
 _DECOY_STARTED = time.time()
-_DECOY_ETAG = None
+_DECOY_ETAGS = {}
 
 
-def _decoy_etag():
-    """Метка версии страницы. Считается один раз: страница не меняется."""
-    global _DECOY_ETAG
-    if _DECOY_ETAG is None:
+def _decoy_etag(body):
+    """Метка версии куска страницы. Считается один раз на тело.
+
+    Именно на тело, а не одна на всё: главная и «не найдено» — разные страницы
+    разной длины, и общая метка на двоих была бы видна сразу. Живой сайт так не
+    отвечает, а мы тут только тем и заняты, что отвечаем как живой сайт.
+    """
+    e = _DECOY_ETAGS.get(body)
+    if e is None:
         import hashlib
-        import decoy
-        _DECOY_ETAG = '"%s"' % hashlib.sha256(decoy.BODY).hexdigest()[:16]
-    return _DECOY_ETAG
+        e = '"%s"' % hashlib.sha256(body).hexdigest()[:16]
+        _DECOY_ETAGS[body] = e
+    return e
 
 
 def _http_date(ts):
     """Дата в том виде, в каком её пишут веб-серверы."""
     from email.utils import formatdate
     return formatdate(ts, usegmt=True)
+
+
+def _byte_range(spec, total):
+    """Разбирает заголовок Range. Возвращает пару границ, "bad" или None.
+
+    Диапазон поддерживаем ровно один. Списком их просят редко, а отвечать на
+    список нужно составным телом — лишний разбор на виду у всего интернета нам
+    не нужен, поэтому на список отвечаем целым файлом, как и на запрос без
+    Range вовсе.
+    """
+    if not spec or not spec.startswith("bytes=") or "," in spec:
+        return None
+    lo, _, hi = spec[6:].strip().partition("-")
+    try:
+        if not lo:
+            # bytes=-500 — «последние 500 байт».
+            n = int(hi)
+            if n <= 0:
+                return "bad"
+            return (max(0, total - n), total - 1)
+        start = int(lo)
+        end = int(hi) if hi else total - 1
+    except ValueError:
+        return None
+    if start >= total or end < start:
+        return "bad"
+    return (start, min(end, total - 1))
+
+
+def _static_reply(request, body, ctype, headers, status=200, charset=None):
+    """Отдаёт готовое тело так, как это делает веб-сервер.
+
+    Собрано в одном месте намеренно. Раньше страница и картинки отвечали каждая
+    по-своему, и разошлись они ровно там, где это заметно: обе объявляли
+    Accept-Ranges, а на просьбу прислать сто байт обе присылали четыре с
+    половиной мегабайта целиком. Для того, кто щупает сайт, это несоответствие
+    между обещанием и поведением — примета; а для нас ещё и рычаг, которым из
+    узла с одним ядром выкачивают трафик коротким запросом.
+
+    Поэтому диапазон байтов здесь настоящий: просят сто байт — уходит сто.
+    """
+    headers = dict(headers)
+    etag = _decoy_etag(body)
+    headers["ETag"] = etag
+    total = len(body)
+
+    if status == 200:
+        if etag in (request.headers.get("If-None-Match") or ""):
+            return web.Response(status=304, headers=headers)
+        rng = _byte_range(request.headers.get("Range"), total)
+        if rng == "bad":
+            headers["Content-Range"] = "bytes */%d" % total
+            return web.Response(status=416, headers=headers)
+        if rng:
+            start, end = rng
+            headers["Content-Range"] = "bytes %d-%d/%d" % (start, end, total)
+            if request.method == "HEAD":
+                headers["Content-Length"] = str(end - start + 1)
+                return web.Response(status=206, headers=headers,
+                                    content_type=ctype, charset=charset)
+            return web.Response(body=body[start:end + 1], status=206,
+                                content_type=ctype, charset=charset,
+                                headers=headers)
+
+    if request.method == "HEAD":
+        headers["Content-Length"] = str(total)
+        return web.Response(status=status, headers=headers, content_type=ctype,
+                            charset=charset)
+    return web.Response(body=body, status=status, content_type=ctype,
+                        charset=charset, headers=headers)
 
 
 def decoy_page(request=None, status=200):
@@ -197,32 +351,24 @@ def decoy_page(request=None, status=200):
     применить.
     """
     import decoy
-    etag = _decoy_etag()
+    body = decoy.BODY if status == 200 else decoy.NOT_FOUND
     headers = {
         "Date": _http_date(time.time()),
         "Last-Modified": _http_date(_DECOY_STARTED),
-        "ETag": etag,
         "Cache-Control": "public, max-age=3600",
         "Accept-Ranges": "bytes",
         # Ни версии, ни имени движка: это бесплатная подсказка тому, кто ищет,
         # чем нас пробовать.
-        "Server": "nginx",
+        "Server": SERVER_NAME,
         "X-Content-Type-Options": "nosniff",
         "Referrer-Policy": "no-referrer",
     }
-
-    # «У меня уже есть эта версия» — обычный разговор живого сайта с браузером.
-    if request is not None and status == 200:
-        if (request.headers.get("If-None-Match") or "").find(etag) >= 0:
-            return web.Response(status=304, headers=headers)
-
-    body = decoy.BODY if status == 200 else decoy.NOT_FOUND
-    if request is not None and request.method == "HEAD":
-        headers["Content-Length"] = str(len(body))
-        return web.Response(status=status, headers=headers,
-                            content_type="text/html", charset="utf-8")
-    return web.Response(body=body, status=status, content_type="text/html",
-                        charset="utf-8", headers=headers)
+    if request is None:
+        headers["ETag"] = _decoy_etag(body)
+        return web.Response(body=body, status=status, content_type="text/html",
+                            charset="utf-8", headers=headers)
+    return _static_reply(request, body, "text/html", headers, status,
+                         charset="utf-8")
 
 
 def decoy_asset(request, rec):
@@ -236,24 +382,16 @@ def decoy_asset(request, rec):
     Файл уже в памяти — по просьбе гостя мы на диск не ходим.
     """
     body, ctype, mtime = rec
-    etag = '"a%x-%x"' % (mtime, len(body))
     headers = {
         "Date": _http_date(time.time()),
         "Last-Modified": _http_date(mtime),
-        "ETag": etag,
         # Картинки у сайтов живут в кэше долго: они не меняются.
         "Cache-Control": "public, max-age=604800",
         "Accept-Ranges": "bytes",
-        "Server": "nginx",
+        "Server": SERVER_NAME,
         "X-Content-Type-Options": "nosniff",
     }
-    if (request.headers.get("If-None-Match") or "").find(etag) >= 0:
-        return web.Response(status=304, headers=headers)
-    if request.method == "HEAD":
-        headers["Content-Length"] = str(len(body))
-        return web.Response(status=200, headers=headers, content_type=ctype)
-    return web.Response(body=body, status=200, content_type=ctype,
-                        headers=headers)
+    return _static_reply(request, body, ctype, headers)
 
 
 def decoy_reply(request):
@@ -267,10 +405,11 @@ def decoy_reply(request):
     # Метод разбираем здесь же: рубеж ниже сюда уже не доберётся, а живой сайт
     # на POST отвечает «метод не поддержан», а не выдачей главной страницы.
     if request.method not in ("GET", "HEAD"):
-        return web.Response(status=405,
+        return web.Response(status=405, body=error_body(405),
+                            content_type="text/html",
                             headers={"Allow": "GET, HEAD",
                                      "Date": _http_date(time.time()),
-                                     "Server": "nginx"})
+                                     "Server": SERVER_NAME})
     path = request.path
     if path in ("/", "/index.html"):
         return decoy_page(request, 200)
@@ -288,9 +427,23 @@ def decoy_reply(request):
     if path == "/favicon.ico":
         return web.Response(
             body=decoy.FAVICON, content_type="image/svg+xml",
-            headers={"Date": _http_date(time.time()), "Server": "nginx",
+            headers={"Date": _http_date(time.time()), "Server": SERVER_NAME,
                      "Cache-Control": "public, max-age=86400"})
     return decoy_page(request, 404)
+
+
+def refuse(request):
+    """Отказ. На входе-маске — той же страницей, что и любая другая чепуха.
+
+    Три пути подписки живут на том же порту, что и страница, и рубеж отказывает
+    по ним коротким «not found» в простом тексте. Со стороны это щель: весь
+    сайт отвечает размеченной страницей, а три адреса — девятью байтами текста.
+    Достаточно наткнуться на один, чтобы понять, что за страницей стоит не
+    веб-сервер. Поэтому на этом порту отказ выглядит как отказ сайта.
+    """
+    if on_decoy(request):
+        return decoy_page(request, 404)
+    return web.Response(status=404, text="not found")
 
 
 @web.middleware
@@ -318,16 +471,16 @@ async def guard(request, handler):
     # Метод. Ничего, кроме чтения, здесь не бывает, и знать о существовании
     # других методов чужому незачем.
     if request.method not in ("GET", "HEAD"):
-        return web.Response(status=404, text="not found")
+        return refuse(request)
 
     if _banned(ip, now) or _too_fast(ip, now):
-        return web.Response(status=404, text="not found")
+        return refuse(request)
 
     token = request.match_info.get("token", "")
     if token and not TOKEN_RE.match(token):
         # Форма не та — в базу не идём вовсе.
         _note_miss(ip, now)
-        return web.Response(status=404, text="not found")
+        return refuse(request)
 
     global _inflight
     if _inflight is None:
@@ -335,12 +488,15 @@ async def guard(request, handler):
     if _inflight.locked():
         # Очередь занята. Ждать нельзя: ожидание — это и есть то, чем кладут
         # процесс. Отказываем сразу, свой клиент придёт снова.
-        return web.Response(status=503, text="busy")
+        return web.Response(status=503, body=error_body(503),
+                            content_type="text/html",
+                            headers={"Server": SERVER_NAME})
     async with _inflight:
         resp = await handler(request)
 
-    # Своё имя не называем: сканер по нему выбирает, чем бить.
-    resp.headers["Server"] = "-"
+    # Своё имя не называем: сканер по нему выбирает, чем бить. Имя одно на все
+    # ответы всех портов — разнобой выдаёт больше, чем любое из имён.
+    resp.headers["Server"] = SERVER_NAME
     return resp
 
 # Как часто клиенту предлагается перечитывать подписку (часы).
@@ -757,6 +913,14 @@ def build_ssl():
     # Старые версии протокола держать незачем: приложения-клиенты все умеют
     # TLS 1.2, а старьё нужно только тем, кто ищет слабое место.
     ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+    # Какой протокол мы готовы говорить поверх TLS. Без этого на вопрос браузера
+    # мы не отвечаем вовсе, а так себя не ведёт ни один сайт: молчание в ответ
+    # на ALPN — это отдельная примета, причём ровно у того рукопожатия, которое
+    # видно снаружи.
+    try:
+        ctx.set_alpn_protocols(["http/1.1"])
+    except NotImplementedError:
+        pass
     _ssl_ctx, _cert_seen = ctx, cert_stamp()
     return ctx
 

@@ -91,7 +91,7 @@ async def main():
     print("как положено: ок")
 
     print("\n=== «у меня уже есть эта версия» ===")
-    etag = S._decoy_etag()
+    etag = S._decoy_etag(decoy.BODY)
     r = S.decoy_reply(FakeReq(S.DECOY_PORT, "/", headers={"If-None-Match": etag}))
     print("  повторный визит:", r.status)
     assert r.status == 304, "живой сайт отвечает 304, а не шлёт страницу снова"

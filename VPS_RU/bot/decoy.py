@@ -52,6 +52,7 @@ HEAD — заголовки без тела, есть дата, метка ве�
 """
 
 import os
+import math
 import struct
 import zlib
 from pathlib import Path
@@ -59,12 +60,24 @@ from pathlib import Path
 # Страница. Ровно один экран, без внешних ссылок, без скриптов, без форм.
 # Формы тут особенно неуместны: любое поле ввода — это приглашение его
 # попробовать, а нам нечего с ним делать.
+#
+# О чём она. Про подборку обложек, и это выбрано намеренно. Во-первых, тут нет
+# ни одного слова из той области, за которую блокируют: ни доступа, ни
+# подключения, ни ссылок, выданных кому-то при регистрации. Прежний текст про
+# «доступ по прямой ссылке, выданной при подключении» описывал ровно то, чем мы
+# на самом деле заняты, — такую подсказку давать не стоит. Во-вторых, подборка
+# картинок объясняет, почему у сайта есть вес: у страницы «в разработке»
+# десять мегабайт изображений выглядели бы странно, у подборки — нет.
+#
+# Комментариев в разметке нет сознательно: первое, что делает любопытный, —
+# открывает исходный код страницы, и там не должно быть ничего, кроме самой
+# страницы.
 PAGE = """<!doctype html>
 <html lang="ru"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
-<title>Сервис обслуживания клиентов</title>
+<title>Избранные работы</title>
 <style>
 :root{color-scheme:light}
 *{box-sizing:border-box}
@@ -81,16 +94,16 @@ p{margin:0 0 12px;color:#4a5261}
 .shots img{width:50%;height:auto;border-radius:8px;display:block}
 </style></head><body>
 <main class="card">
-<img class="hero" src="/assets/img/hero.png" alt="" width="1600" height="1000">
-<h1>Сервис обслуживания клиентов</h1>
-<p>Раздел находится в разработке. Доступ к личному кабинету и документам
-осуществляется по прямой ссылке, выданной при подключении.</p>
-<p>По вопросам обслуживания обращайтесь к вашему менеджеру.</p>
+<img class="hero" src="/assets/img/hero.png" alt="" width="1800" height="1150">
+<h1>Избранные работы</h1>
+<p>Здесь собраны обложки из архива за прошлые годы. Полная подборка готовится
+к публикации.</p>
+<p>Новые материалы появляются по мере подготовки.</p>
 <div class="shots">
-<img src="/assets/img/gallery-1.png" alt="" width="1400" height="900" loading="lazy">
-<img src="/assets/img/gallery-2.png" alt="" width="1200" height="800" loading="lazy">
+<img src="/assets/img/gallery-1.png" alt="" width="1600" height="1030" loading="lazy">
+<img src="/assets/img/gallery-2.png" alt="" width="1400" height="900" loading="lazy">
 </div>
-<p class="small">© Служба технической поддержки</p>
+<p class="small">© Все материалы защищены авторским правом</p>
 </main></body></html>
 """
 BODY = PAGE.encode("utf-8")
@@ -98,12 +111,12 @@ BODY = PAGE.encode("utf-8")
 # Страница «не найдено». Живой сайт отвечает на чепуху именно так, а не той же
 # самой главной и не пустотой: и то и другое заметнее, чем обычный отказ.
 NOT_FOUND_PAGE = PAGE.replace(
-    "<h1>Сервис обслуживания клиентов</h1>",
+    "<h1>Избранные работы</h1>",
     "<h1>Страница не найдена</h1>").replace(
-    "<p>Раздел находится в разработке. Доступ к личному кабинету и документам\n"
-    "осуществляется по прямой ссылке, выданной при подключении.</p>",
+    "<p>Здесь собраны обложки из архива за прошлые годы. Полная подборка готовится\n"
+    "к публикации.</p>",
     "<p>Запрошенной страницы не существует или она была перемещена.</p>").replace(
-    "<title>Сервис обслуживания клиентов</title>",
+    "<title>Избранные работы</title>",
     "<title>Страница не найдена</title>")
 NOT_FOUND = NOT_FOUND_PAGE.encode("utf-8")
 
@@ -132,33 +145,92 @@ ASSET_DIR = Path(os.getenv("DECOY_ASSET_DIR", "/volumes/decoy"))
 # спором: на слабом узле уместно меньше, на просторном больше.
 WEIGHT_MB = max(0, int(os.getenv("DECOY_WEIGHT_MB", "10")))
 
-# Размеры подобраны так, чтобы в сумме выходило около заданного веса. Шум почти
-# не сжимается, поэтому размер файла близок к размеру пикселей.
-_SHAPE = ((1600, 1000), (1400, 900), (1200, 800))
+# Номер рецепта картинок. Меняется, когда меняется способ их рисовать: старые
+# файлы лежат на диске и сами бы не обновились, а картинки от прошлого рецепта
+# на странице от нового — это ровно та несуразица, которую мы и убираем.
+RECIPE = 2
+
+# Размеры подобраны под заданный вес — замером в том самом образе, где они и
+# будут собираться: мягкий переход с зерном сжимается примерно на треть, и на
+# глаз тут не угадаешь.
+_SHAPE = ((1800, 1150), (1600, 1030), (1400, 900))
 _NAMES = ("/assets/img/hero.png", "/assets/img/gallery-1.png",
           "/assets/img/gallery-2.png")
+# Три разные пары цветов: одинаковые картинки в подборке выглядели бы подделкой
+# сильнее, чем их отсутствие.
+_PALETTE = (((0x33, 0x4d, 0x63), (0xd6, 0xc6, 0xa6)),
+            ((0x4a, 0x3f, 0x55), (0xc9, 0xb8, 0xc4)),
+            ((0x2f, 0x55, 0x50), (0xd2, 0xcb, 0xa4)))
+
+# Сколько младших бит каждого байта отдать зерну.
+#
+# Зерно здесь не для красоты. Вес сайта должен лежать в картинках, а гладкая
+# заливка сжимается в тридцать раз — от десяти мегабайт осталась бы треть
+# мегабайта. Зерну же сжатию зацепиться не за что, и вес остаётся.
+#
+# Три бита — это разброс примерно на четыре уровня яркости: глазом читается как
+# зерно плёнки, а не как рябь. Прежний вариант, сплошной шум, вес давал, но
+# человек, открывший страницу, видел три квадрата помех.
+_GRAIN_BITS = 3
 
 
-def _png(width, height):
-    """Валидный PNG заданного размера.
+def _chunk(tag, data):
+    return (struct.pack(">I", len(data)) + tag + data
+            + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF))
 
-    Шум берём одним блоком, а не по пикселю: построчный цикл на питоне стоил
-    почти пять секунд, а это старт бота на узле с одним ядром."""
-    raw = os.urandom(width * height * 3)
-    step = width * 3
-    rows = bytearray()
+
+def _png(width, height, c0, c1, bits=_GRAIN_BITS):
+    """Валидный PNG: мягкий переход от c0 к c1 с зерном поверх.
+
+    Всё быстро — и это здесь требование, а не удобство: картинки собираются при
+    первом старте бота на узле с одним ядром, и цикл по пикселям стоил бы
+    секунд пять на штуку.
+
+    Поэтому заливка берётся срезами. Цвет пикселя зависит от x+y, так что вся
+    лента оттенков считается один раз, а каждая строка — это срез из неё;
+    присваивание срезом с шагом раскладывает ленту по каналам. Обе операции
+    уровня C, цикла по пикселям нет.
+
+    Зерно накладывается одной операцией на всё изображение сразу: младшие биты
+    каждого байта заменяются случайными через побитовую арифметику длинных
+    чисел. Побайтовый цикл здесь и был бы тем самым тормозом.
+    """
+    span = width + height
+    ramps = []
+    for ch in range(3):
+        a, b = c0[ch], c1[ch]
+        lane = bytearray(span)
+        for i in range(span):
+            t = i / (span - 1.0)
+            # Лёгкая волна поперёк перехода — иначе он читается линейкой.
+            v = a + (b - a) * t + 14.0 * math.sin(t * 3.1 * math.pi)
+            lane[i] = max(0, min(255, int(v)))
+        ramps.append(bytes(lane))
+
+    row = bytearray(width * 3)
+    raw = bytearray()
     for y in range(height):
-        rows.append(0)                      # признак «строка без фильтра»
-        rows += raw[y * step:(y + 1) * step]
+        for ch in range(3):
+            row[ch::3] = ramps[ch][y:y + width]
+        raw.append(0)                       # признак «строка без фильтра»
+        raw += row
 
-    def chunk(tag, data):
-        return (struct.pack(">I", len(data)) + tag + data
-                + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF))
+    if bits:
+        keep = 0xFF ^ ((1 << bits) - 1)
+        n = len(raw)
+        mixed = ((int.from_bytes(raw, "big") & int.from_bytes(bytes([keep]) * n, "big"))
+                 | (int.from_bytes(os.urandom(n), "big")
+                    & int.from_bytes(bytes([0xFF ^ keep]) * n, "big")))
+        raw = bytearray(mixed.to_bytes(n, "big"))
+        # Признак фильтра в начале каждой строки зерно тоже задело — вернём.
+        step = width * 3 + 1
+        for y in range(height):
+            raw[y * step] = 0
 
     head = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
-    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", head)
-            + chunk(b"IDAT", zlib.compress(bytes(rows), 1))
-            + chunk(b"IEND", b""))
+    return (b"\x89PNG\r\n\x1a\n" + _chunk(b"IHDR", head)
+            + _chunk(b"IDAT", zlib.compress(bytes(raw), 1))
+            + _chunk(b"IEND", b""))
 
 
 def _load_assets():
@@ -178,14 +250,34 @@ def _load_assets():
         print(f"Заглушка: папку для картинок не создать ({e}), останусь лёгкой")
         return out
 
-    for name, (w, h) in zip(_NAMES, _SHAPE):
+    # Сменился рецепт — старые картинки убираем. Иначе обновление дорисовало бы
+    # новую страницу поверх картинок прошлого поколения, и они остались бы
+    # лежать навсегда: тот самый мусор, за которым никто не следит.
+    stamp = ASSET_DIR / "recipe"
+    try:
+        was = stamp.read_text().strip()
+    except OSError:
+        was = ""
+    if was != str(RECIPE):
+        for old in ASSET_DIR.glob("*.png"):
+            try:
+                old.unlink()
+            except OSError:
+                pass
+
+    for name, (w, h), pal in zip(_NAMES, _SHAPE, _PALETTE):
         f = ASSET_DIR / name.rsplit("/", 1)[1]
         try:
             if not f.exists() or f.stat().st_size < 1024:
-                f.write_bytes(_png(int(w * scale), int(h * scale)))
+                f.write_bytes(_png(int(w * scale), int(h * scale), pal[0], pal[1]))
             out[name] = (f.read_bytes(), "image/png", int(f.stat().st_mtime))
         except OSError as e:
             print(f"Заглушка: {f.name} не вышел ({e})")
+    if out and was != str(RECIPE):
+        try:
+            stamp.write_text(str(RECIPE))
+        except OSError:
+            pass
     if out:
         total = sum(len(v[0]) for v in out.values())
         print(f"Заглушка: вес сайта {total / 1048576:.1f} МБ, файлов {len(out)}")
