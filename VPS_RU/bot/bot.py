@@ -32,7 +32,7 @@ from monitor import (
     expiration_loop, inactivity_loop, weekly_report_loop, log_cleanup_loop,
     auto_reboot_loop, scheduled_update_loop, auto_update_check_loop, resource_monitor_loop,
     routing_upgrade_loop, bypass_reresolve_loop, run_bypass_check_handler, bypass_notify_now_handler,
-    load_collector_loop, retire_watch_loop, notify_admin, migration_watch_loop, weekly_health_loop,
+    load_collector_loop, retire_watch_loop, notify_admin, weekly_health_loop,
     bypass_list_handler, bypass_happ_handler,
     bypass_del_handler, bypass_add_manual_handler, bypass_add_request_handler,
     reconcile_routing_versions, repair_traffic_directions, geo_files_loop,
@@ -118,11 +118,6 @@ from handlers_dnsnames import (
     name_screen as dnm_open, rename_request as dnm_rename,
     rename_entered as dnm_rename_entered, retarget_request as dnm_retarget,
     delete_name as dnm_delete, apply_now as dnm_apply,
-)
-from handlers_migration import (
-    migration_menu, migration_start, migration_issue, migration_send,
-    migration_finish_confirm, migration_finish, migration_abort_confirm,
-    migration_abort, migration_de
 )
 from filters import (
     common_screen as flt_common, common_toggle as flt_ctoggle,
@@ -1152,17 +1147,6 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # --- Переезд на новый ключ сервера ---
     # Необратимое здесь только одно — остановка старого интерфейса, и она
     # спрятана за отдельным экраном со списком тех, кто ещё не переехал.
-    if data == "mig_menu": await migration_menu(update, context); return
-    if data == "mig_start": await migration_start(update, context); return
-    if data == "mig_de": await migration_de(update, context); return
-    if data.startswith("mig_issue_"):
-        await migration_issue(update, context, int(data.split("_")[-1])); return
-    if data.startswith("mig_send_"):
-        await migration_send(update, context, data.split("_", 2)[2]); return
-    if data == "mig_finish": await migration_finish_confirm(update, context); return
-    if data == "mig_finish_ok": await migration_finish(update, context); return
-    if data == "mig_abort": await migration_abort_confirm(update, context); return
-    if data == "mig_abort_ok": await migration_abort(update, context); return
 
     # --- Протоколы: AmneziaWG и Xray ---
     if data == "proto_menu": await protocols_menu(update, context); return
@@ -1756,7 +1740,6 @@ async def post_init(application):
         asyncio.create_task(chat_cleanup.loop(application, ADMIN_ID)),
         asyncio.create_task(load_collector_loop(application)),
         asyncio.create_task(retire_watch_loop(application)),
-        asyncio.create_task(migration_watch_loop(application)),
         # Недельный разбор обслуживания: что убралось, что разошлось с базой,
         # и чем это отличается от прошлой недели. Воскресенье 07:00 МСК —
         # после планового ребута и уборки на обеих нодах.

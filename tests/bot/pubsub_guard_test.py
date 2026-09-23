@@ -234,7 +234,6 @@ async def main():
         8080: "подписка внутри туннеля",
         8443: "страница отказа, https",
         51820: "AmneziaWG",
-        51821: "AmneziaWG, второй интерфейс",
     }
     check("внешний порт ничем не занят", sub.PUBLIC_PORT not in TAKEN,
           "%d — %s" % (sub.PUBLIC_PORT, TAKEN.get(sub.PUBLIC_PORT, "свободен")))

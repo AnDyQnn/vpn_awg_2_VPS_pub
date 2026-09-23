@@ -259,7 +259,7 @@ async def awg_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
              + (f" · на связи: {online}" if online >= 0 else ""),
              f"Обфускация: `{escape_md(obf_line)}`"]
 
-    kb = [[InlineKeyboardButton("🔑 Переезд на новый ключ", callback_data="mig_menu")]]
+    kb = []
     if awg.get("enabled"):
         kb.append([InlineKeyboardButton("⏹ Выключить протокол", callback_data="proto_off_awg")])
     else:
