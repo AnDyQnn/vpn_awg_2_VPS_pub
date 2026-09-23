@@ -43,13 +43,13 @@ async def main():
     assert p2["DomesticDNSIP"] == "1.1.1.1", p2["DomesticDNSIP"]
     print("каждому свой резолвер: ок")
 
-    print("\n=== туннельный DNS при этом всегда наш ===")
-    # Иначе узел не видит запросов, и человек на Xray остаётся без фильтров и
-    # без внутренних имён — хотя у него всё «включено».
+    print("\n=== туннельный DNS — публичный, не внутренний адрес ===")
+    # Телефон на Xray внутри туннеля не сидит: 10.13.13.1 для него не адрес.
     for p in (p1, p2):
-        assert p["RemoteDNSIP"] == hr.TUNNEL_DNS, p["RemoteDNSIP"]
+        assert p["RemoteDNSIP"] == hr.REMOTE_DNS_IP, p["RemoteDNSIP"]
+        assert not p["RemoteDNSIP"].startswith("10."), p["RemoteDNSIP"]
     print("  ", p1["RemoteDNSIP"])
-    print("фильтры и внутренние имена продолжают работать: ок")
+    print("DNS через туннель — публичный: ок")
 
     print("\n=== нет конфига — берём обычный, а не падаем ===")
     async def nothing():
@@ -69,7 +69,8 @@ async def main():
     print("\n=== без ключа (общий профиль) тоже собирается ===")
     p5 = await hr.profile(None)
     assert p5["DomesticDNSIP"] == hr.DIRECT_DNS_DEFAULT
-    assert p5["DirectIp"], "общие исключения обязаны быть на месте"
+    assert "DirectSites" in p5, "общие исключения обязаны быть на месте"
+    assert p5.get("DirectIp") == [], "адресов, которых никто не вписывал, быть не должно"
     print("ок")
 
     await db.execute("DELETE FROM users WHERE uuid LIKE 'dp-%'")

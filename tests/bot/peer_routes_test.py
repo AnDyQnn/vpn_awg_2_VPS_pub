@@ -104,23 +104,15 @@ async def main():
     print()
     print("=== чужой ключ этого не видит ===")
     prof2 = await happ_routing.profile("rt-2")
-    check("на телефоне записи нет", "10.50.0.0/16" not in prof2["DirectIp"],
+    check("на телефоне записи нет", "10.50.0.0/16" not in (prof2.get("DirectIp") or []),
           "это исключение про компьютер, а не про всех")
-    check("общий список у него на месте",
-          all(n in prof2["DirectIp"] for n in happ_routing.ALWAYS_DIRECT))
-    # ProxySites в чистом профиле быть не должно — его читает человек, и
-    # пустой список имён там только мешает. А вот ProxyIp есть ВСЕГДА, и это
-    # не мусор, а само правило «всё остальное в туннель»: приложение в режиме
-    # TUN не применяет флаг «выход по умолчанию — прокси», и без этой строки
-    # напрямую уходит вообще всё.
+    # Правило владельца: в профиле только сайты и то, что он вписал сам. У
+    # ключа без личных записей адресов в профиле нет вовсе.
     check("списка имён в чистом профиле нет",
-          "ProxySites" not in prof2, "профиль читает человек")
-    check("но «всё остальное в туннель» сказано правилом",
-          prof2.get("ProxyIp", [])[-1:] == ["0.0.0.0/0"],
-          "без него приложение в режиме TUN отправит всё напрямую")
-    check("и сеть туннеля идёт первой",
-          prof2.get("ProxyIp", [])[:1] == [happ_routing.TUNNEL_NET],
-          "иначе наш резолвер окажется недостижим")
+          prof2.get("ProxySites") == [], "пустой, но явный")
+    check("адресов в чистом профиле нет",
+          prof2.get("DirectIp") == [] and prof2.get("ProxyIp") == [],
+          "%s / %s" % (prof2.get("DirectIp"), prof2.get("ProxyIp")))
 
     print()
     print("=== «через VPN» — отдельно от «мимо» ===")
@@ -131,7 +123,7 @@ async def main():
     check("сеть попала в «через VPN»", "10.13.13.36/32" in prof1.get("ProxyIp", []))
     check("домен тоже", "only-vpn.example" in prof1.get("ProxySites", []))
     check("и не перепутались с «мимо»",
-          "10.13.13.36/32" not in prof1["DirectIp"]
+          "10.13.13.36/32" not in (prof1.get("DirectIp") or [])
           and "only-vpn.example" not in prof1["DirectSites"])
 
     print()
@@ -165,7 +157,7 @@ async def main():
     check("в подписке компа есть его сеть",
           "10.50.0.0/16" in prof_from(h1)["DirectIp"])
     check("в подписке телефона её нет",
-          "10.50.0.0/16" not in prof_from(h2)["DirectIp"],
+          "10.50.0.0/16" not in (prof_from(h2).get("DirectIp") or []),
           "иначе личное уехало бы всем")
 
     print()

@@ -104,7 +104,8 @@ async def main():
     print("=== что уходит человеку ===")
     links = await xray.profile_links("se-1")
     check("ссылка одна", len(links) == 1, "%d" % len(links))
-    name = links[0].split("#", 1)[1] if links and "#" in links[0] else ""
+    from urllib.parse import unquote
+    name = unquote(links[0].split("#", 1)[1]) if links and "#" in links[0] else ""
     check("имя — просто имя человека", name == "Одновход", name)
     check("приписки «запасной» нет", "запасной" not in name)
     check("запасных портов в ссылке нет",

@@ -497,6 +497,12 @@ async def build_config():
                     "shortIds": [cfg["short_id"]],
                 },
             },
+            # Как в эталонном примере авторов Xray (Xray-examples,
+            # VLESS-TCP-XTLS-Vision-REALITY). routeOnly: распознанное имя идёт
+            # только в маршрутизацию, адрес назначения не подменяется.
+            "sniffing": {"enabled": True,
+                         "destOverride": ["http", "tls", "quic"],
+                         "routeOnly": True},
         } for port, dest in ways] + [{
             # Служебный вход для счётчиков. Слушает только петлю: ни снаружи,
             # ни из туннеля до него не добраться. Стоит последним — первым
@@ -693,10 +699,17 @@ async def profile_link(user_uuid, port=None, dest=None, index=0) -> str:
     #
     # Пишем просто имя человека. Когда входов было несколько, к остальным
     # дописывалось «запасной N»; вход теперь один, и подписывать нечего.
+    # Форма ссылки — по стандарту авторов Xray (XTLS/Xray-core, обсуждение 716)
+    # и по примеру из документации приложения: `encryption=none` сказано явно,
+    # значения и имя после `#` закодированы. Раньше имя шло как есть: кириллица
+    # и пробелы в имени человека давали ссылку вне стандарта.
+    from urllib.parse import quote
+    q = lambda v: quote(str(v), safe="")
     return (f"vless://{rec['xray_uuid']}@{host}:{port}"
-            f"?type=tcp&security=reality&sni={mask_for(dest, user_uuid)}"
-            f"&fp=chrome&pbk={cfg['public_key']}&sid={cfg['short_id']}"
-            f"&flow=xtls-rprx-vision#{name}")
+            f"?encryption=none&type=tcp&security=reality"
+            f"&sni={q(mask_for(dest, user_uuid))}"
+            f"&fp=chrome&pbk={q(cfg['public_key'])}&sid={q(cfg['short_id'])}"
+            f"&flow=xtls-rprx-vision#{q(name)}")
 
 
 # Адрес узла внутри туннеля. По нему живут и DNS, и страница отказа, и сервер

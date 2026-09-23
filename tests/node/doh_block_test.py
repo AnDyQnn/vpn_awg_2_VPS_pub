@@ -76,9 +76,23 @@ print("\n=== отказ мгновенный, а не молчаливый ===")
 # Молчание заставило бы приложение ждать таймаут, и человек увидел бы «интернет
 # тупит». Мгновенный отказ возвращает его к обычному DNS, то есть к нам.
 assert not [l for l in body if "-j DROP" in l], "молчаливый DROP — будет таймаут"
-assert all("REJECT" in l for l in body if l.startswith("-A ")), \
+# Первым стоит пропуск для людей на Xray — он единственный не отказ.
+rules_only = [l for l in body if l.startswith("-A ")]
+assert all("REJECT" in l for l in rules_only[1:]), \
     "не все правила отвечают отказом"
 print("  везде мгновенный отказ: ок")
+
+print("\n=== люди на Xray из запрета выведены, люди на AmneziaWG — нет ===")
+# Профиль Xray шлёт DNS на публичный резолвер через прокси: телефон на Xray
+# внутри туннеля не сидит, и внутренний 10.13.13.1 для него не адрес. Трафик
+# этих людей рождается на узле с адресов-двойников, верхней половины сети.
+import ipaddress as _ip
+twins = str(list(_ip.ip_network(ns["TUNNEL_NET"], strict=False).subnets(new_prefix=25))[1])
+assert rules_only and f"-s {twins}" in rules_only[0] and "RETURN" in rules_only[0], (
+    "первым правилом должен стоять пропуск для двойников Xray: " + (rules_only[:1] or ["-"])[0])
+assert _ip.ip_network(twins).prefixlen == 25 and not _ip.ip_address(
+    "10.13.13.5") in _ip.ip_network(twins), "пропуск задел бы людей на AmneziaWG"
+print("  пропуск только для", twins, ": ок")
 
 print("\n=== наш собственный резолвер не задет ===")
 own = [l for l in body if "--dport 53" in l]

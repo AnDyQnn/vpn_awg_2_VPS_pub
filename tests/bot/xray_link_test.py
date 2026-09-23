@@ -77,7 +77,9 @@ async def main():
         for part in ("vless://", "x-uuid-1", "vpn.example.ru",
                      "security=reality", "pbk=PUB", "sid=abcd"):
             check("в ссылке есть %s" % part, part in link)
-        check("имя человека в хвосте", link.rstrip().endswith("Ссылкин"),
+        # Имя после # закодировано по стандарту ссылок — сверяем раскодированное.
+        from urllib.parse import unquote
+        check("имя человека в хвосте", unquote(link.rstrip().split("#", 1)[-1]) == "Ссылкин",
               link[-20:])
 
     print()

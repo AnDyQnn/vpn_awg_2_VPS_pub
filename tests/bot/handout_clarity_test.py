@@ -56,7 +56,9 @@ async def main():
 
     print("=== имена входов в приложении ===")
     links = await xray.profile_links("hc-1")
-    names = [l.split("#", 1)[1] for l in links if "#" in l]
+    from urllib.parse import unquote
+    # Имя после # закодировано по стандарту ссылок — сравниваем раскодированное.
+    names = [unquote(l.split("#", 1)[1]) for l in links if "#" in l]
     # Вход один: запасные на чужих масках убраны по решению владельца.
     check("вход один", len(names) == 1, str(len(names)))
     check("имя — просто имя человека", names and names[0] == "Петя",

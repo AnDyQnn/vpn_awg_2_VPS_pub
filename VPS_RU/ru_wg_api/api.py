@@ -646,7 +646,16 @@ def doh_block_apply(enabled=True):
     if not enabled:
         return 0
 
+    # Люди на Xray из запрета выведены. Их трафик рождается на узле с адресов-
+    # двойников (верхняя половина сети туннеля), и профиль Xray отправляет DNS
+    # на обычный публичный резолвер через прокси: телефон на Xray внутри
+    # туннеля не сидит, и внутренний 10.13.13.1 для него не адрес. Под этим
+    # запретом у человека на Xray не было бы DNS вовсе. У людей на AmneziaWG
+    # (нижняя половина) всё по-прежнему.
+    import ipaddress as _ip
+    twins = str(list(_ip.ip_network(TUNNEL_NET, strict=False).subnets(new_prefix=25))[1])
     rules = [
+        f"-s {twins} -j RETURN",
         # DNS поверх TLS: «Приватный DNS» в телефоне.
         f"-p tcp --dport 853 -j REJECT --reject-with tcp-reset",
         f"-p udp --dport 853 -j REJECT --reject-with icmp-port-unreachable",

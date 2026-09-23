@@ -54,27 +54,26 @@ async def main():
     prof = await happ_routing.profile()
     check("домен попал доменом", "sp-banк.example" in prof["DirectSites"],
           "прибитый адрес умрёт при первом переезде сайта")
-    check("его сети попали сетями", "203.0.113.0/24" in prof["DirectIp"])
-    check("домашние сети мимо туннеля всегда",
-          all(n in prof["DirectIp"] for n in happ_routing.ALWAYS_DIRECT),
-          "иначе человек теряет свой роутер и принтер")
+    # Правило владельца: в профиле Xray только сайты. Подсети, которые бот
+    # вывел из домена, туда не идут — нужные адреса владелец заводит сам.
+    check("его подсетей в профиле нет", prof.get("DirectIp") == [],
+          str(prof.get("DirectIp"))[:60])
     check("имя профиля постоянное",
           prof["Name"] == happ_routing.PROFILE_NAME, prof["Name"])
     check("всё, что не в списке, идёт через туннель",
           prof["GlobalProxy"] == "true")
-    check("имя проверяется и по адресу тоже",
-          prof["DomainStrategy"] == "IPIfNonMatch",
-          "иначе домен из списка, открытый по адресу, ушёл бы в туннель")
-    # Фильтры и внутренние имена работают ровно потому, что запросы видит наш
-    # узел. Через DoH к чужому резолверу он их не видит: запрос уходит внутри
-    # HTTPS, и человек остаётся без фильтров, хотя у него всё «включено».
-    check("DNS туннеля ведёт на наш резолвер",
-          prof["RemoteDNSIP"] == happ_routing.TUNNEL_DNS
-          and prof["RemoteDNSType"] == "DoU",
+    check("правил по адресам нет — имя не разрешается заранее",
+          prof["DomainStrategy"] == "AsIs", prof["DomainStrategy"])
+    # Телефон на Xray внутри туннеля не сидит: внутренний 10.13.13.1 для него
+    # не адрес. DNS через туннель — обычный публичный, запрос уходит через прокси.
+    check("DNS туннеля — публичный DoH, не внутренний адрес",
+          prof["RemoteDNSType"] == "DoH"
+          and prof["RemoteDNSIP"] == happ_routing.REMOTE_DNS_IP
+          and not prof["RemoteDNSIP"].startswith("10."),
           "%s/%s" % (prof["RemoteDNSType"], prof["RemoteDNSIP"]))
-    check("мимо туннеля — чужой резолвер",
-          prof["DomesticDNSIP"] != happ_routing.TUNNEL_DNS,
-          "наш недостижим, когда VPN выключен")
+    check("мимо туннеля — не внутренний адрес",
+          not prof["DomesticDNSIP"].startswith("10."),
+          "до внутреннего адреса без туннеля не достать")
 
     print()
     print("=== ссылка для приложения ===")
@@ -94,7 +93,7 @@ async def main():
         "ON CONFLICT (domain) DO NOTHING")
     after = decode(await happ_routing.link())
     check("новая запись в профиле", "sp-новый.example" in after["DirectSites"])
-    check("её сети тоже", "198.51.100.0/24" in after["DirectIp"])
+    check("а её подсетей нет", after.get("DirectIp") == [])
     check("имя не изменилось", after["Name"] == prof["Name"],
           "сменится имя — у людей повиснут два профиля рядом")
 
