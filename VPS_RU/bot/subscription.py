@@ -225,6 +225,37 @@ def decoy_page(request=None, status=200):
                         charset="utf-8", headers=headers)
 
 
+def decoy_asset(request, rec):
+    """Отдаёт файл сайта — как это делает обычный веб-сервер.
+
+    Отдельно от страницы, потому что и ведут себя они по-разному: у файла своя
+    метка версии от времени на диске, а не от запуска сервера, и кэшируется он
+    надолго. Живой сайт именно так и отвечает: разметка свежая, картинки из
+    кэша.
+
+    Файл уже в памяти — по просьбе гостя мы на диск не ходим.
+    """
+    body, ctype, mtime = rec
+    etag = '"a%x-%x"' % (mtime, len(body))
+    headers = {
+        "Date": _http_date(time.time()),
+        "Last-Modified": _http_date(mtime),
+        "ETag": etag,
+        # Картинки у сайтов живут в кэше долго: они не меняются.
+        "Cache-Control": "public, max-age=604800",
+        "Accept-Ranges": "bytes",
+        "Server": "nginx",
+        "X-Content-Type-Options": "nosniff",
+    }
+    if (request.headers.get("If-None-Match") or "").find(etag) >= 0:
+        return web.Response(status=304, headers=headers)
+    if request.method == "HEAD":
+        headers["Content-Length"] = str(len(body))
+        return web.Response(status=200, headers=headers, content_type=ctype)
+    return web.Response(body=body, status=200, content_type=ctype,
+                        headers=headers)
+
+
 def decoy_reply(request):
     """Что ответить гостю, пришедшему не за подпиской.
 
@@ -243,6 +274,12 @@ def decoy_reply(request):
     path = request.path
     if path in ("/", "/index.html"):
         return decoy_page(request, 200)
+    # Файлы сайта. Список закрытый и собран заранее — разбора пути по частям
+    # здесь нет, а значит нет и выхода за пределы: гость может получить ровно
+    # то, что мы положили, и ничего кроме.
+    rec = decoy.ASSETS.get(path)
+    if rec:
+        return decoy_asset(request, rec)
     if path == "/robots.txt":
         return web.Response(
             text=decoy.ROBOTS, content_type="text/plain", charset="utf-8",
