@@ -643,7 +643,7 @@ async def handle_sub(request):
             except Exception:
                 pass
             _miss_count = 0
-        return web.Response(status=404, text="not found")
+        return refuse(request)
 
     # Сплит едет вместе с подпиской. Профиль с тем же именем приложение
     # обновляет, а не добавляет рядом, — поэтому изменившийся список исключений
@@ -671,7 +671,7 @@ async def handle_sub(request):
 
     body = await xray.subscription_body(token, extra=in_body)
     if not body:
-        return web.Response(status=404, text="not found")
+        return refuse(request)
 
     name = base64.b64encode((rec.get("name") or "VPN").encode()).decode()
     headers = {
@@ -724,7 +724,7 @@ async def handle_routing(request):
     rec = await db.get_xray_by_token(token) if token else None
     if not rec or not rec["is_active"]:
         _note_miss(request.remote or "?", time.time())
-        return web.Response(status=404, text="not found")
+        return refuse(request)
     try:
         import happ_routing
         profile = await happ_routing.profile(rec["user_uuid"])
@@ -797,7 +797,7 @@ async def handle_geo(request):
     """
     path = geo_path(request.match_info.get("name", ""))
     if not path:
-        return web.Response(status=404, text="not found")
+        return refuse(request)
     # Отдаём кусками руками, а не FileResponse.
     #
     # FileResponse зовёт `loop.sendfile`, а поверх TLS ядерного sendfile нет —
@@ -841,7 +841,7 @@ async def handle_geo(request):
 async def handle_root(request):
     """Корень молчит. На сервере с открытым портом это важнее вежливости:
     страница-приветствие сразу говорит сканеру, что тут есть что искать."""
-    return web.Response(status=404, text="not found")
+    return refuse(request)
 
 
 # --- Сертификат и вход снаружи ----------------------------------------------

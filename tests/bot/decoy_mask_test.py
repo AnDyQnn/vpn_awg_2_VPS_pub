@@ -77,6 +77,19 @@ check("и представляется как сайт", r.headers.get("Server")
 r = S.refuse(FakeReq("/sub/zzzz", port=S.SUB_PORT))
 check("на внутреннем порту — как было", r.status == 404 and r.body == b"not found")
 
+print("\n=== отказ собран в одном месте, а не рассыпан по обработчикам ===")
+# Живая проверка нашла две щели уже после первой починки: рубеж я поправил, а
+# отказы внутри обработчиков — «/sub/» без токена, «/geo/» с чужим именем —
+# остались простым текстом. Поэтому проверяем не поведение, а устройство: в
+# файле не должно быть второго места, умеющего отказывать.
+src = io.open("/app/subscription.py", encoding="utf-8").read()
+spots = src.count('web.Response(status=404, text="not found")')
+check("отказ ровно один", spots == 1,
+      "мест с отказом: %d — новое место однажды разойдётся со старым" % spots)
+check("и он внутри refuse()",
+      'def refuse(' in src and
+      src.index('def refuse(') < src.index('web.Response(status=404, text="not found")'))
+
 print("\n=== у главной и у «не найдено» разные метки ===")
 # Одна метка на две разные страницы — несуразица, видная одним сравнением.
 a = S.decoy_reply(FakeReq("/"))
