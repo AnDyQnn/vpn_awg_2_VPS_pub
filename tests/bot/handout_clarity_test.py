@@ -57,11 +57,12 @@ async def main():
     print("=== имена входов в приложении ===")
     links = await xray.profile_links("hc-1")
     names = [l.split("#", 1)[1] for l in links if "#" in l]
-    check("входов столько, сколько заведено", len(names) == 3, str(len(names)))
-    check("первый — просто имя человека", names and names[0] == "Петя",
+    # Вход один: запасные на чужих масках убраны по решению владельца.
+    check("вход один", len(names) == 1, str(len(names)))
+    check("имя — просто имя человека", names and names[0] == "Петя",
           names[0] if names else "-")
-    check("остальные названы запасными",
-          all("запасной" in n for n in names[1:]), " | ".join(names[1:]))
+    check("приписки «запасной» нет", not any("запасной" in n for n in names),
+          " | ".join(names))
     masks = ("sberbank", "wildberries", "avito", "ozon", "vk.com", "kinopoisk")
     check("маска наружу не показывается",
           not any(m in n.lower() for n in names for m in masks),

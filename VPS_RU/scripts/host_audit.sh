@@ -280,12 +280,12 @@ if [ -n "$XRAY_ON" ]; then
         && add_check CAT_VPN "Процесс Xray" "ok" "Работает" \
         || add_check CAT_VPN "Процесс Xray" "error" "Не работает — люди на нём без связи"
 
-    # Входы: сколько портов реально слушается. Их несколько, и падают они
-    # поодиночке — приложение само переходит на живой, но знать надо.
-    XR_PORTS=$(docker exec vpn_wireguard sh -c 'ss -tln 2>/dev/null | grep -cE ":(443|2053|2083) "' 2>/dev/null)
+    # Вход: слушается ли 443. Он один — запасных больше нет, — так что его
+    # падение значит, что все люди на Xray без связи.
+    XR_PORTS=$(docker exec vpn_wireguard sh -c 'ss -tln 2>/dev/null | grep -cE ":443 "' 2>/dev/null)
     [ "${XR_PORTS:-0}" -ge 1 ] \
-        && add_check CAT_VPN "Входы Xray" "ok" "${XR_PORTS} слушается" \
-        || add_check CAT_VPN "Входы Xray" "error" "Ни один вход не слушается"
+        && add_check CAT_VPN "Вход Xray" "ok" "443 слушается" \
+        || add_check CAT_VPN "Вход Xray" "error" "443 не слушается — люди на Xray без связи"
 
     # Адреса-двойники: на них держится весь учёт людей на Xray. Пропали —
     # человек перестаёт считаться, а лимиты и роли его не видят.
