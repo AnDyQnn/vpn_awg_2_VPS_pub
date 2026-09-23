@@ -201,25 +201,30 @@ def _mask_engine():
     except Exception as e:
         print(f"Подписка: имя движка подменить не вышло ({e})")
 
+    # Дальше мы залезаем во внутренности чужой библиотеки, и при её обновлении
+    # они могут оказаться другими. Делается это при импорте, то есть падение
+    # здесь — это не открытая маска, а не поднявшийся бот. Поэтому обёрнуто
+    # целиком: маска без подмены хуже, чем маска с подменой, но несравнимо
+    # лучше, чем узел без бота.
     try:
         from aiohttp import web_protocol
-    except Exception:
-        return
-    orig = web_protocol.RequestHandler.handle_error
-    if getattr(orig, "_masked", False):
-        return
+        orig = web_protocol.RequestHandler.handle_error
+        if getattr(orig, "_masked", False):
+            return
 
-    def handle_error(self, request, status=500, exc=None, message=None):
-        # Журнал и проверка «не ушло ли уже» остаются за исходным сборщиком.
-        orig(self, request, status, exc, message)
-        resp = web.Response(status=status, body=error_body(status),
-                            content_type="text/html",
-                            headers={"Server": SERVER_NAME})
-        resp.force_close()
-        return resp
+        def handle_error(self, request, status=500, exc=None, message=None):
+            # Журнал и проверка «не ушло ли уже» остаются за исходным сборщиком.
+            orig(self, request, status, exc, message)
+            resp = web.Response(status=status, body=error_body(status),
+                                content_type="text/html",
+                                headers={"Server": SERVER_NAME})
+            resp.force_close()
+            return resp
 
-    handle_error._masked = True
-    web_protocol.RequestHandler.handle_error = handle_error
+        handle_error._masked = True
+        web_protocol.RequestHandler.handle_error = handle_error
+    except Exception as e:
+        print(f"Подписка: ответы движка подменить не вышло ({e})")
 
 
 _mask_engine()
