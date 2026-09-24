@@ -107,4 +107,52 @@ assert bare.count("_") % 2 == 0, "непарное подчёркивание"
 assert len(last.splitlines()) >= 3, last
 print("  последнее для людей показывается всегда: ок")
 
+print("\n=== разметка разбирается так, как её разберёт Telegram ===")
+# Счёт звёздочек на чётность не ловит главного: звёздочка внутри пути вроде
+# `/api/migration/*` после снятия кавычек открывала жирный, а закрывала его
+# уже следующая — через полэкрана, посреди чужого пункта. На 8.63.0 так не
+# дошло «Что нового» тринадцати людям: Telegram отвергает сообщение целиком.
+#
+# Здесь — разбор по правилам Markdown v1: экранированный знак пропускается,
+# внутри сущности ищется только её закрывающий знак, вложенности нет.
+
+
+def markdown_v1_error(text):
+    """Пусто, если Telegram примет разметку; иначе — что и где сломано."""
+    i, opened, at = 0, None, 0
+    while i < len(text):
+        ch = text[i]
+        if ch == "\\" and i + 1 < len(text) and text[i + 1] in "_*`[":
+            i += 2
+            continue
+        if opened:
+            if ch == opened:
+                opened = None
+        elif ch in "_*`":
+            opened, at = ch, i
+        elif ch == "[":
+            return "голая «[» на %d: %r" % (i, text[max(0, i - 40):i + 20])
+        i += 1
+    if opened:
+        return "не закрыт «%s» с %d: %r" % (opened, at, text[max(0, at - 40):at + 40])
+    return ""
+
+
+versions = [r[0] for r in changelog.parse_releases(limit=200)]
+bad = []
+for since in [None] + versions:
+    body = changelog.user_text(since_version=since)
+    if not body:
+        continue
+    err = markdown_v1_error(changelog.fit(body, 3500))
+    if err:
+        bad.append("с %s: %s" % (since, err))
+for label, body in (("владельцу", changelog.admin_text()),
+                    ("последнее для людей", changelog.last_user_text())):
+    err = markdown_v1_error(body or "")
+    if err:
+        bad.append("%s: %s" % (label, err))
+assert not bad, "\n".join(bad[:5])
+print("  проверено текстов:", len(versions) + 3, "— все разбираются: ок")
+
 print("\nВСЁ ПРОШЛО")
