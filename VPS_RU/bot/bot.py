@@ -34,7 +34,6 @@ from monitor import (
     bypass_list_handler,
     bypass_del_handler, bypass_add_manual_handler, bypass_add_request_handler,
     reconcile_routing_versions, repair_traffic_directions,
-    xui_activity_loop, xui_routing_soon,
 )
 from billing import reminder_loop as billing_reminder_loop
 import chat_cleanup
@@ -85,9 +84,7 @@ from handlers_keylife import (
     delete_confirm, do_delete
 )
 from delivery import delivery_screen
-import handlers_protocols as hp
-import xui
-import handlers_channels as hch
+from handlers_protocols import protocols_menu, awg_up as proto_awg_up
 from handlers_hits import (
     hits_screen, hit_open, hits_seen_all, hits_loop,
     hit_find_request, hit_find_entered,
@@ -825,7 +822,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=InlineKeyboardMarkup(kb))
             return
         new_v = await db.add_bypass_exclusion(res["domain"], safe_cidrs, note="добавлено вручную", source="manual")
-        xui_routing_soon()
         await db.log_event("Routing", f"Bypass exclusion added manually: {res['domain']} -> v{new_v}.")
         skipped_line = (f"\n⚠️ Пропущены небезопасные: `{escape_md('; '.join(rejected))}`" if rejected else "")
         kb = [[InlineKeyboardButton("🌐 К списку исключений", callback_data="bypass_list")]]
@@ -899,14 +895,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if state == "awaiting_dns_ip":
         await dnm_ip_entered(update, context, update.message.text)
-        return
-
-    # Токен бота панели — только от владельца: это ключ от чужого бота.
-    if state == "awaiting_xui_tg_token":
-        if not check_admin(update.effective_user.id):
-            context.user_data["state"] = None
-            return
-        await hp.bot_token_entered(update, context, update.message.text)
         return
 
     if state == "awaiting_dns_rename":
@@ -1018,10 +1006,6 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "client_notify_toggle": await client_notify_toggle_handler(update, context); return
     if data == "client_notify_off": await client_notify_off_handler(update, context); return
     if data.startswith("client_download_"): await client_download_handler(update, context, data.split("client_download_")[1]); return
-    # Подписка Xray своего ключа — клиентская кнопка, до проверки на владельца.
-    # Чужой ключ отсекает сам обработчик: сверяет Telegram нажавшего с ключом.
-    if data.startswith("client_xray_"):
-        await hch.client_xray(update, context, data[len("client_xray_"):]); return
     
     if data.startswith("client_plat_"):
         parts = data.split("_", 3)          # client | plat | система | uuid
@@ -1143,30 +1127,8 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # спрятана за отдельным экраном со списком тех, кто ещё не переехал.
 
     # --- Протоколы ---
-    if data == "proto_menu": await hp.protocols_menu(update, context); return
-    if data == "proto_on_awg": await hp.awg_up(update, context); return
-    # --- Xray: панель 3X-UI ---
-    if data == "xr_on": await hp.xray_on_confirm(update, context); return
-    if data == "xr_on_ok": await hp.xray_on(update, context); return
-    if data == "xr_off": await hp.xray_off_confirm(update, context); return
-    if data == "xr_off_ok": await hp.xray_off(update, context); return
-    if data == "xr_panel": await hp.panel_screen(update, context); return
-    if data == "xr_panel_acl": await hp.panel_acl(update, context); return
-    if data == "xr_bot": await hp.bot_screen(update, context); return
-    if data == "xr_bot_set": await hp.bot_ask(update, context); return
-    if data == "xr_bot_off": await hp.bot_off(update, context); return
-    if data == "xr_mask": await hp.mask_screen(update, context); return
-    if data.startswith("xr_mask_"):
-        await hp.mask_set(update, context, data[len("xr_mask_"):]); return
-    if data == "xr_move": await hp.move_screen(update, context); return
-    if data == "xr_move_all": await hp.move_all(update, context); return
-    # Каналы человека. Длинные префиксы раньше короткого «ch_».
-    if data.startswith("ch_xi_"): await hch.issue_xray(update, context, data[6:]); return
-    if data.startswith("ch_xs_"): await hch.send_sub(update, context, data[6:]); return
-    if data.startswith("ch_xr_"): await hch.revoke_xray(update, context, data[6:]); return
-    if data.startswith("ch_ad_"): await hch.drop_awg(update, context, data[6:]); return
-    if data.startswith("ch_ar_"): await hch.restore_awg(update, context, data[6:]); return
-    if data.startswith("ch_"): await hch.channels_screen(update, context, data[3:]); return
+    if data == "proto_menu": await protocols_menu(update, context); return
+    if data == "proto_on_awg": await proto_awg_up(update, context); return
     # --- Имена внутри туннеля ---
     # Порядок важен: длинные префиксы проверяются раньше коротких, иначе
     # короткий перехватит чужое нажатие.
@@ -1458,8 +1420,6 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("Заморозка...")
         await pause_peer(uuid_val)
         await db.execute("UPDATE users SET is_active=FALSE WHERE uuid=$1", uuid_val)
-        # Пауза действует сразу на оба канала.
-        await xui.sync_person(uuid_val, "пауза")
         await db.log_event("Pause", f"Manually paused key {uuid_val}")
         await user_detail_menu(update, context, uuid_val)
         return
@@ -1472,7 +1432,6 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # вырублен inactivity_loop в течение суток. Реальный handshake обновит поле
         # заново в течение 5 мин, если клиент действительно подключится.
         await db.execute("UPDATE users SET is_active=TRUE, last_active_at=NOW() WHERE uuid=$1", uuid_val)
-        await xui.sync_person(uuid_val, "разморозка")
         await db.log_event("Resume", f"Manually resumed key {uuid_val}")
         await user_detail_menu(update, context, uuid_val)
         return
@@ -1680,12 +1639,6 @@ async def post_init(application):
         asyncio.create_task(watch_api_token(application)),
         # Смена токена по расписанию — если владелец её включил.
         asyncio.create_task(rotate_loop(application)),
-        # Стек Xray: ворота узла по состоянию и первичная настройка панели.
-        # Отдельной задачей: панель после включения поднимается минутами, и
-        # ждать её здесь значило бы держать бота без меню.
-        asyncio.create_task(hp.on_startup(application)),
-        # Кто вышел на связь по Xray: отметка активности и первое подключение.
-        asyncio.create_task(xui_activity_loop(application)),
     ]
     state_data["bg_tasks"].update(tasks)
 

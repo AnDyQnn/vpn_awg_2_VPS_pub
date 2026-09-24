@@ -547,13 +547,6 @@ async def client_key_manage_handler(update: Update, context: ContextTypes.DEFAUL
     ]
     keyboard.append([InlineKeyboardButton("❓ Как подключить",
                                           callback_data=f"client_how_{uuid_val}")])
-    # Второй канал — если он выдан этому ключу.
-    try:
-        if await db.get_xui_client(uuid_val):
-            keyboard.append([InlineKeyboardButton("🔶 Подписка Xray",
-                                                  callback_data=f"client_xray_{uuid_val}")])
-    except Exception:
-        pass
     keyboard.append([InlineKeyboardButton("🔙 К списку ключей", callback_data="client_my_keys")])
 
     await query.edit_message_text(text="\n".join(lines),

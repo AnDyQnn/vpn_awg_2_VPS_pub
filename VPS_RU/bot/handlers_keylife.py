@@ -149,12 +149,6 @@ async def do_extend(update: Update, context: ContextTypes.DEFAULT_TYPE,
 
     await db.execute("UPDATE users SET is_active=TRUE, expires_at=$2 WHERE uuid=$1",
                      uuid_val, expires)
-    # Вернуть право пользоваться — на обоих каналах.
-    try:
-        import xui
-        await xui.sync_person(uuid_val, "продление")
-    except Exception as e:
-        print(f"Xray: продление не дошло до панели: {e}")
     await db.resolve_decision(uuid_val, f"extended:{days}")
     await db.log_event("KeyLife",
                        f"Ключ {user['name']} продлён на "
@@ -258,13 +252,6 @@ async def do_delete(update: Update, context: ContextTypes.DEFAULT_TYPE, uuid_val
         await query.answer(f"Узел не отдал пир: {e}", show_alert=True)
         return
 
-    # Доступ по Xray — до удаления записи: после неё не останется, по какому
-    # имени искать клиента в панели.
-    try:
-        import xui
-        await xui.revoke(uuid_val)
-    except Exception as e:
-        print(f"Xray: доступ не отозван при удалении: {e}")
     # Запись в users уходит с каскадом: роли, лимиты, статистика, вопрос по ключу.
     await db.execute("DELETE FROM users WHERE uuid=$1", uuid_val)
     await db.log_event("KeyLife", f"Ключ {user['name']} удалён по решению владельца")

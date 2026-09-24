@@ -113,15 +113,7 @@ async def main_menu_view(context=None, chat_id=None):
     mode_word = "только наблюдение" if mode != "enforce" else "ограничение включено"
 
     lines = ["🛡 **Панель управления** · мастер-сервер и клиент-сервер", ""]
-    # Xray считается отдельно: рукопожатий у него нет, и узел его людей не видит.
-    xray_tail = ""
-    try:
-        import xui
-        if xui.stack_enabled():
-            xray_tail = f"  ·  Xray {len(await xui.online_uuids())}"
-    except Exception:
-        pass
-    lines.append(f"🟢 На связи: **{active_count}** из {total_keys}{xray_tail}")
+    lines.append(f"🟢 На связи: **{active_count}** из {total_keys}")
     # Режим нагрузки — отдельной строкой. Раньше он дописывался в хвост к
     # числам на связи, и строка набирала четыре разных смысла: сколько людей,
     # как они разложены по протоколам и что с ограничением. На телефоне её

@@ -160,14 +160,8 @@ while true; do
         #
         # timeout: даже правильная команда может встать (докер, сеть, диск), и
         # демон не имеет права висеть из-за неё вечно — он один на все просьбы.
-        # Стек Xray включают и выключают этой же переменной (профиль compose):
-        # образ панели качаем заранее, со своим запасом по времени, а после
-        # пересоздания убираем контейнер, если стек выключили, — сам compose
-        # запущенный контейнер снятого профиля не останавливает.
-        bash "$SCRIPT_DIR/xray_stack.sh" prepare "$NODE_DIR"
         if (cd "$NODE_DIR" && timeout 300 docker compose up -d --no-build \
                 >/dev/null 2>&1); then
-            bash "$SCRIPT_DIR/xray_stack.sh" settle "$NODE_DIR"
             echo "[Updater] .env обновлён, контейнеры пересозданы ($APP_VERSION)."
         else
             echo "[Updater] ⚠️  .env обновлён, но пересоздать контейнеры не вышло."

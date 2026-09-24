@@ -224,13 +224,24 @@ fi
 #    --remove-orphans: снести контейнеры сервисов, которых больше нет в compose
 #    (например, удалённые control_plane/caddy) — чтобы не висели и не жрали ресурсы.
 echo "[Deploy] Шаг 4: Применение новых образов (краткий перезапуск)..."
-# Образ панели 3X-UI, если стек Xray включён, — заранее и со своим запасом:
-# весит он почти полгигабайта.
-[ -f "$NODE_DIR/scripts/xray_stack.sh" ] && bash "$NODE_DIR/scripts/xray_stack.sh" prepare "$NODE_DIR"
 docker compose up -d --remove-orphans
-# Стек выключен — контейнер панели убираем: снятый профиль compose сам не
-# останавливает.
-[ -f "$NODE_DIR/scripts/xray_stack.sh" ] && bash "$NODE_DIR/scripts/xray_stack.sh" settle "$NODE_DIR"
+
+# Следы панели 3X-UI (8.64). Сервиса больше нет — контейнер `vpn_xui` снят
+# строкой выше как сирота. Здесь остальное: её база, доступы бота к ней, образ
+# на полгигабайта и профиль compose в .env. Шаг разовый: на узле, где панели
+# не было, ему нечего делать.
+if [ -d "$NODE_DIR/volumes/xui" ] || [ -f "$NODE_DIR/volumes/secrets/xui.json" ]; then
+    rm -rf "$NODE_DIR/volumes/xui" "$NODE_DIR/volumes/secrets/xui.json"
+    echo "[Deploy] Данные панели 3X-UI убраны."
+fi
+if [ -f "$NODE_DIR/.env" ] && grep -q '^COMPOSE_PROFILES=' "$NODE_DIR/.env"; then
+    grep -v '^COMPOSE_PROFILES=' "$NODE_DIR/.env" > "$NODE_DIR/.env.tmp" &&
+        mv "$NODE_DIR/.env.tmp" "$NODE_DIR/.env" && chmod 600 "$NODE_DIR/.env"
+    echo "[Deploy] Профиль стека Xray убран из .env."
+fi
+for IMG in $(docker images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null | grep '^ghcr.io/mhsanaei/3x-ui:'); do
+    docker rmi "$IMG" >/dev/null 2>&1 && echo "[Deploy] Образ $IMG удалён."
+done
 
 # 6. HEALTH-CHECK новой версии. Если контейнер крашится/рестартит — ОТКАТ на предыдущую
 #    версию (даунгрейд): возвращаем код, пересобираем, поднимаем. VPN/данные защищены.
