@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
-"""Ссылка копируется касанием, а в карточке видно, кто это.
+"""Текст копируется касанием, а в карточке видно, кто это.
 
 Две вещи, которые проверяются здесь, объединяет одно: и то и другое человек
 делает руками десятки раз, и каждый раз есть чему пойти не так.
 
-  • Ссылка `vless://` уходит помеченной как код — по ней достаточно нажать.
-    Разметкой этого делать нельзя: в ссылке есть подчёркивания, и разметка
+  • Текст для копирования (пароль зоны и подобное) уходит помеченным как код —
+    по нему достаточно нажать. Разметкой этого делать нельзя: в тексте бывают
+    подчёркивания, и разметка
     роняет сообщение целиком. Поэтому сущность, и поэтому же проверяем, что
     длина посчитана так, как её считает Telegram, — в единицах UTF-16.
 
@@ -59,23 +60,22 @@ class FakeContext:
 async def main():
     await db.connect()
 
-    print("=== ссылка уходит копируемой ===")
+    print("=== текст уходит копируемым ===")
     ctx = FakeContext()
-    link = ("vless://11111111-2222-3333-4444-555555555555@1.2.3.4:443"
-            "?type=tcp&security=reality&flow=xtls-rprx-vision#Ника")
+    link = "Pa_ss-word_42*for_zone#Ника"
     await send_copyable(ctx.bot, 1, link)
     msg = ctx.bot.msgs[-1]
     ent = (msg["entities"] or [None])[0]
-    check("текст — сама ссылка", msg["text"] == link)
+    check("текст — как есть", msg["text"] == link)
     check("помечена как код", ent is not None and ent.type == "code",
           getattr(ent, "type", "нет пометки"))
     check("разметка не применяется", "parse_mode" not in msg["kw"],
           "одно непарное подчёркивание роняет сообщение целиком")
-    check("пометка накрывает ссылку целиком",
+    check("пометка накрывает текст целиком",
           ent and ent.offset == 0 and ent.length == len(link),
           "%s знаков" % (ent.length if ent else "—"))
 
-    # Имя в ссылке бывает с эмодзи: Telegram считает такой символ за две
+    # Текст бывает с эмодзи: Telegram считает такой символ за две
     # единицы, а обычный len() — за одну, и пометка обрезалась бы.
     ctx2 = FakeContext()
     emoji_link = link.replace("#Ника", "#Ника 🚀")
@@ -86,26 +86,11 @@ async def main():
           "%d, а не %d" % (ent2.length, len(emoji_link)))
 
     print()
-    print("=== выдача человеку шлёт ссылку так же ===")
-    await db.execute("DELETE FROM xray_users WHERE user_uuid LIKE 'cp-%'")
     await db.execute("DELETE FROM user_tg_links WHERE tg_id=$1", TG)
     await db.execute("DELETE FROM users WHERE uuid LIKE 'cp-%'")
     await db.execute("INSERT INTO users (name, uuid, is_active) VALUES ('Ника','cp-1',TRUE)")
     await db.execute("INSERT INTO user_tg_links (uuid, tg_id) VALUES ('cp-1',$1)", TG)
-    await db.execute("INSERT INTO xray_users (user_uuid, xray_uuid, sub_token) "
-                     "VALUES ('cp-1','x-cp','tok-cp')")
-    for key, val in (("xray_public_key", "PUB"), ("xray_short_id", "ab"),
-                     ("server_host", "1.2.3.4")):
-        await db.set_setting(key, val)
-
     import handlers_client as hc
-    ctx3 = FakeContext()
-    await hc.send_xray_profile(ctx3, TG, "cp-1")
-    coded = [m for m in ctx3.bot.msgs if m.get("entities")]
-    check("ровно одно сообщение помечено кодом", len(coded) == 1,
-          "их %d" % len(coded))
-    check("это ссылка", coded and coded[0]["text"].startswith("vless://"),
-          coded[0]["text"][:24] if coded else "—")
 
     print()
     print("=== логин в карточке ===")
@@ -150,10 +135,8 @@ async def main():
     print("=== привязки нет ===")
     check("так и написано", await _tg_line(FakeContext(), []) == "Не привязан")
 
-    await db.execute("DELETE FROM xray_users WHERE user_uuid LIKE 'cp-%'")
     await db.execute("DELETE FROM user_tg_links WHERE tg_id=$1", TG)
     await db.execute("DELETE FROM users WHERE uuid LIKE 'cp-%'")
-    await db.set_setting("server_host", "")
 
 
 asyncio.get_event_loop().run_until_complete(main())

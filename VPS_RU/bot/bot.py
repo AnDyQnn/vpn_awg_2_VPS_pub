@@ -19,7 +19,7 @@ from utils import (
     BOT_TOKEN, ADMIN_ID, WG_API_URL, DE_AGENT_URL, escape_md, state_data, stop_bg_tasks, deregister_menu,
     safe_delete, drop_screen, get_current_version, broadcast_message, extract_tg_id, check_admin, sanitize_name,
     env_change_applied,
-    analyze_resource, CONFIGS_DIR
+    analyze_resource, CONFIGS_DIR, show_screen
 )
 from database import db
 from backup_manager import fetch_de_backup, test_restore
@@ -27,16 +27,13 @@ from ui import main_menu
 from monitor import (
     alert_loop, cleanup_peers, stats_collector_loop, self_healing_loop,
     de_self_healing_loop,
-    cascade_healing_loop,
-    xray_metrics_loop,
     expiration_loop, inactivity_loop, weekly_report_loop, log_cleanup_loop,
     auto_reboot_loop, scheduled_update_loop, auto_update_check_loop, resource_monitor_loop,
     routing_upgrade_loop, bypass_reresolve_loop, run_bypass_check_handler, bypass_notify_now_handler,
     load_collector_loop, retire_watch_loop, notify_admin, weekly_health_loop,
-    bypass_list_handler, bypass_happ_handler,
+    bypass_list_handler,
     bypass_del_handler, bypass_add_manual_handler, bypass_add_request_handler,
-    reconcile_routing_versions, repair_traffic_directions, geo_files_loop,
-    xray_connect_watch_loop
+    reconcile_routing_versions, repair_traffic_directions,
 )
 from billing import reminder_loop as billing_reminder_loop
 import chat_cleanup
@@ -71,7 +68,7 @@ from handlers_admin import (
 )
 from handlers_users import (
     users_list_menu, user_detail_menu, confirm_delete_menu, action_delete_user, action_resend_config,
-    new_key_screen, default_proto, new_key_role_screen, new_key_role_set,
+    new_key_screen, new_key_role_screen, new_key_role_set,
     generate_key_request, finish_key_creation, render_user_detail, clear_user_ips
 )
 from handlers_roles import (
@@ -87,13 +84,7 @@ from handlers_keylife import (
     delete_confirm, do_delete
 )
 from delivery import delivery_screen
-from xray import sync_person as xray_sync
-from handlers_xray import (
-    protocols_menu, awg_screen, xray_screen, switch_confirm, switch_do,
-    apply_now as xray_apply_now, apps_screen, move_screen,
-    connections_screen, issue_xray, send_link, drop_awg, why_locked,
-    mask_screen, mask_set,
-    chain_screen, chain_ask, chain_go, chain_off)
+from handlers_protocols import protocols_menu, awg_up as proto_awg_up
 from handlers_hits import (
     hits_screen, hit_open, hits_seen_all, hits_loop,
     hit_find_request, hit_find_entered,
@@ -101,9 +92,6 @@ from handlers_hits import (
     keep_now as hits_keep_now,
     notify_screen as hits_notify_screen, notify_set as hits_notify_set,
     notify_toggle as hits_notify_toggle, drop_seen as hits_drop_seen,
-)
-from handlers_routes import (
-    routes_menu, routes_ask, routes_delete, routes_show, handle_route_input,
 )
 from handlers_donate import (
     donate_menu, donate_toggle, donate_reminder_toggle, donate_preview,
@@ -481,14 +469,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if await flt_allow_entered(update, context):
             return
 
-    # Свои исключения меняют маршрутизацию на чужом устройстве — только владелец.
-    if state == "awaiting_route_add":
-        if not check_admin(update.effective_user.id):
-            context.user_data["state"] = None
-            return
-        if await handle_route_input(update, context):
-            return
-
     # Реквизиты и текст обращения — только от владельца: это его деньги и его
     # слова, и подменить их не должен никто.
     if state and state.startswith("awaiting_donate_"):
@@ -555,7 +535,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             chat_id=chat_id, text="🌐 Имя передано на сервер. Жду, пока применится…")
         if await env_change_applied(flag):
             text = ("🌐 Имя `%s` записано — бот сейчас перезапустится.\n\n"
-                    "Дальше нажмите «Обновить сертификат» в разделе подписки: "
+                    "Дальше нажмите «Обновить сертификат» в разделе «Домен и сертификаты»: "
                     "он выпустится уже на имя, на девяносто дней вместо "
                     "ста шестидесяти часов.\n\n"
                     "_Имена внутри туннеля переедут в эту же зону сами: "
@@ -927,8 +907,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["name"] = name
         menu_id = context.user_data.get("menu_msg_id")
         
-        if "proto" not in context.user_data:
-            context.user_data["proto"] = await default_proto()
         if menu_id:
             text, keyboard = await new_key_screen(context, name)
             await context.bot.edit_message_text(chat_id=chat_id, message_id=menu_id,
@@ -1148,56 +1126,9 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Необратимое здесь только одно — остановка старого интерфейса, и она
     # спрятана за отдельным экраном со списком тех, кто ещё не переехал.
 
-    # --- Протоколы: AmneziaWG и Xray ---
+    # --- Протоколы ---
     if data == "proto_menu": await protocols_menu(update, context); return
-    if data == "proto_awg": await awg_screen(update, context); return
-    if data == "proto_xray": await xray_screen(update, context); return
-    if data == "proto_on_awg": await switch_do(update, context, "awg", True); return
-    if data == "proto_on_xray": await switch_do(update, context, "xray", True); return
-    if data == "proto_onok_xray":
-        # «Включить всё равно» — владелец прочитал список недостающего.
-        context.user_data["xr_force_on"] = True
-        await switch_do(update, context, "xray", True); return
-    # offok проверяется раньше off_: короткий префикс перехватил бы длинный
-    if data.startswith("proto_offok_"):
-        await switch_do(update, context, data.split("_")[-1], False); return
-    if data.startswith("proto_off_"):
-        await switch_confirm(update, context, data.split("_")[-1]); return
-
-    if data == "xr_apply": await xray_apply_now(update, context); return
-    if data == "xr_apps": await apps_screen(update, context); return
-    if data == "xr_mask": await mask_screen(update, context); return
-    if data == "xr_chain": await chain_screen(update, context); return
-    if data == "xr_chain_set": await chain_ask(update, context); return
-    if data == "xr_chain_go": await chain_go(update, context); return
-    if data == "xr_chain_off": await chain_off(update, context); return
-    if data.startswith("xr_mask_"):
-        await mask_set(update, context, data[len("xr_mask_"):]); return
-    if data == "xr_move": await move_screen(update, context); return
-    # Свои исключения на ключ. Длинные префиксы раньше коротких: иначе
-    # короткий перехватит чужое нажатие.
-    if data.startswith("rt_menu_"):
-        await routes_menu(update, context, data.split("rt_menu_")[1]); return
-    if data.startswith("rt_show_"):
-        await routes_show(update, context, data.split("rt_show_")[1]); return
-    if data.startswith("rt_add_d_"):
-        await routes_ask(update, context, "direct", data.split("rt_add_d_")[1]); return
-    if data.startswith("rt_add_p_"):
-        await routes_ask(update, context, "proxy", data.split("rt_add_p_")[1]); return
-    if data.startswith("rt_del_"):
-        rid, _, uid = data.split("rt_del_")[1].partition("_")
-        await routes_delete(update, context, rid, uid); return
-
-    if data.startswith("xr_conn_"):
-        await connections_screen(update, context, data.split("_", 2)[2]); return
-    if data.startswith("xr_issue_"):
-        await issue_xray(update, context, data.split("_", 2)[2]); return
-    if data.startswith("xr_send_"):
-        await send_link(update, context, data.split("_", 2)[2]); return
-    if data.startswith("xr_dropawg_"):
-        await drop_awg(update, context, data.split("_", 2)[2]); return
-    if data.startswith("xr_why_"):
-        await why_locked(update, context, data.split("_", 2)[2]); return
+    if data == "proto_on_awg": await proto_awg_up(update, context); return
     # --- Имена внутри туннеля ---
     # Порядок важен: длинные префиксы проверяются раньше коротких, иначе
     # короткий перехватит чужое нажатие.
@@ -1415,7 +1346,6 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
         
     if data == "bypass_list": await bypass_list_handler(update, context); return
-    if data == "bypass_happ": await bypass_happ_handler(update, context); return
     if data == "bypass_add_manual": await bypass_add_manual_handler(update, context); return
     if data.startswith("bypass_del_"): await bypass_del_handler(update, context, data.split("bypass_del_")[1]); return
     if data.startswith("bypass_addreq_"): await bypass_add_request_handler(update, context, data.split("bypass_addreq_")[1], approve=True); return
@@ -1435,31 +1365,10 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await user_detail_menu(update, context, uuid_val)
         return
     
-    if data == "new_proto":
-        # Переключатель протокола прямо на экране срока: один шаг вместо
-        # лишнего вопроса, и по умолчанию всё равно Xray.
-        now = context.user_data.get("proto", "xray")
-        context.user_data["proto"] = "awg" if now == "xray" else "xray"
-        text, keyboard = await new_key_screen(context, context.user_data.get("name", ""))
-        await query.edit_message_text(text, reply_markup=keyboard,
-                                      parse_mode=ParseMode.MARKDOWN)
-        return
-
     if data.startswith("set_exp_"):
         context.user_data["expiry_days"] = int(data.split("_")[2])
-        if context.user_data.get("proto", "xray") == "awg":
-            keyboard = [[InlineKeyboardButton("🌍 Классический DNS (1.1.1.1)", callback_data="set_dns_classic")],[InlineKeyboardButton("🛡 AdBlock DNS (Без рекламы)", callback_data="set_dns_adblock")],[InlineKeyboardButton("🔙 Отмена", callback_data="back_to_main")]]
-            await query.edit_message_text("Выберите DNS-сервер:", reply_markup=InlineKeyboardMarkup(keyboard))
-            return
-        # У Xray выбор DNS ни на что не влияет: имена резолвит узел, и фильтрация
-        # живёт там же. Спрашивать не о чем — сразу к привязке Telegram.
-        context.user_data["dns_type"] = "classic"
-        keyboard = [[InlineKeyboardButton("⏩ Пропустить", callback_data="skip_tg_link")]]
-        await query.edit_message_text(
-            "🔗 **Привязка Telegram**\n\nОтправьте:\n1️⃣ **Контакт** 📎 (Рекомендуется)\n"
-            "2️⃣ @username\n3️⃣ ID",
-            reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
-        context.user_data["state"] = "awaiting_tg_link_new_key"
+        keyboard = [[InlineKeyboardButton("🌍 Классический DNS (1.1.1.1)", callback_data="set_dns_classic")],[InlineKeyboardButton("🛡 AdBlock DNS (Без рекламы)", callback_data="set_dns_adblock")],[InlineKeyboardButton("🔙 Отмена", callback_data="back_to_main")]]
+        await query.edit_message_text("Выберите DNS-сервер:", reply_markup=InlineKeyboardMarkup(keyboard))
         return
     if data.startswith("set_dns_"):
         context.user_data["dns_type"] = data.split("_")[2]
@@ -1511,8 +1420,6 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("Заморозка...")
         await pause_peer(uuid_val)
         await db.execute("UPDATE users SET is_active=FALSE WHERE uuid=$1", uuid_val)
-        # Пауза должна действовать сразу на обоих протоколах.
-        await xray_sync("пауза")
         await db.log_event("Pause", f"Manually paused key {uuid_val}")
         await user_detail_menu(update, context, uuid_val)
         return
@@ -1525,7 +1432,6 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # вырублен inactivity_loop в течение суток. Реальный handshake обновит поле
         # заново в течение 5 мин, если клиент действительно подключится.
         await db.execute("UPDATE users SET is_active=TRUE, last_active_at=NOW() WHERE uuid=$1", uuid_val)
-        await xray_sync("разморозка")
         await db.log_event("Resume", f"Manually resumed key {uuid_val}")
         await user_detail_menu(update, context, uuid_val)
         return
@@ -1572,22 +1478,12 @@ async def setup_bot_ui(application):
     except Exception as e:
         print(f"setup_bot_ui error: {e}")
 
-async def start_subscriptions():
-    """Поднимает сервер подписок. Ошибка здесь не должна ронять бота: без
-    подписок он работает как прежде, а вот без бота не работает ничего."""
-    try:
-        from subscription import start_server
-        await start_server()
-    except Exception as e:
-        print(f"Подписки: сервер не поднялся: {e}")
-
-
 async def wait_for_node(timeout=90):
     """Ждём, пока панель узла начнёт отвечать.
 
     Узел поднимается дольше бота: настраивает сеть, наполняет наборы адресов,
-    поднимает интерфейс. Всё восстановление состояния — роли, фильтры, имена,
-    конфиг Xray — идёт через его панель, и начинать его раньше бессмысленно:
+    поднимает интерфейс. Всё восстановление состояния — роли, фильтры, имена —
+    идёт через его панель, и начинать его раньше бессмысленно:
     первый же запрос упадёт, а второй раз никто не попробует.
 
     Возвращает True, если дождались. Не дождались — работаем дальше: бот нужен
@@ -1610,7 +1506,7 @@ async def wait_for_node(timeout=90):
             pass
         await asyncio.sleep(2)
     print("Узел не ответил за %d с — состояние восстановить не удалось. "
-          "Роли, фильтры, имена и Xray останутся прежними до следующей "
+          "Роли, фильтры и имена останутся прежними до следующей "
           "попытки." % timeout)
     return False
 
@@ -1627,7 +1523,7 @@ async def post_init(application):
 
     # Сначала дожидаемся узла: всё, что ниже, ходит через его панель, и без
     # неё просто впустую отпечатает ошибки. Так и было — после каждого
-    # обновления узел оставался без ролей, фильтров, имён и с прежним Xray.
+    # обновления узел оставался без ролей, фильтров и имён.
     await wait_for_node()
 
     await sync_wg_config()
@@ -1681,17 +1577,6 @@ async def post_init(application):
     except Exception as e:
         print(f"Фильтры: не удалось применить: {e}")
 
-    # Xray — по той же причине, что фильтры и роли: контейнер узла при
-    # перезапуске теряет и адреса людей, и правила учёта. Пока конфиг не
-    # применён заново, человек на Xray просто не выйдет в сеть.
-    try:
-        import xray
-        state = await xray.status()
-        if state.get("xray", {}).get("enabled"):
-            ok, msg = await xray.apply_config("старт бота")
-            print(f"Xray: {msg}" if ok else f"Xray: {msg}")
-    except Exception as e:
-        print(f"Xray: не удалось применить конфиг при старте: {e}")
     # Имена: адреса людей могли смениться, пока бот лежал, — раскладку стоит
     # пересобрать при старте, как это делается с ролями и фильтрами.
     try:
@@ -1720,8 +1605,6 @@ async def post_init(application):
         asyncio.create_task(check_update_completion(application)),
         asyncio.create_task(self_healing_loop(application)),
         asyncio.create_task(de_self_healing_loop(application)),
-        asyncio.create_task(cascade_healing_loop(application)),
-        asyncio.create_task(xray_metrics_loop(application)),
         asyncio.create_task(expiration_loop(application)),
         asyncio.create_task(inactivity_loop(application)),
         asyncio.create_task(weekly_report_loop(application)),
@@ -1744,23 +1627,13 @@ async def post_init(application):
         # и чем это отличается от прошлой недели. Воскресенье 07:00 МСК —
         # после планового ребута и уборки на обеих нодах.
         asyncio.create_task(weekly_health_loop(application)),
-        # Раздача подписок Xray: клиенты сами перечитывают профиль, поэтому
-        # сервер должен подняться до того, как кто-то попытается обновиться.
-        asyncio.create_task(start_subscriptions()),
         # токен панелей выдаётся сам, если его нет — вводить ничего не нужно
         asyncio.create_task(ensure_api_token(application)),
         # Попытки на закрытое забираем с узла и складываем как заявки.
         asyncio.create_task(hits_loop(application)),
-        # Гео-файлы для приложения: без них профиль маршрутизации не применяется.
-        asyncio.create_task(geo_files_loop(application)),
-        # Сайт-заглушку отдельной задачей больше не поднимаем: её отдаёт
-        # сервер подписок тем же входом и тем же сертификатом — см. decoy.py.
         # Биллинг: напомнить об оплате заранее. Забытый платёж —
         # это выключенный узел и тридцать человек без связи.
         asyncio.create_task(billing_reminder_loop(application)),
-        # Кто вышел на связь по Xray. У AmneziaWG это ловит рукопожатие, у
-        # Xray его нет — и о включении ключа не сообщал никто.
-        asyncio.create_task(xray_connect_watch_loop(application)),
         # И дальше раз в час: клиент-сервер мог подняться позже мастера, и
         # догонять его иначе было бы нечем.
         asyncio.create_task(watch_api_token(application)),

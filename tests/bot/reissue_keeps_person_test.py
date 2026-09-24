@@ -11,7 +11,7 @@
 
 Проверяется то, что должно пережить перевыпуск:
   • сам человек — та же строка, тот же uuid;
-  • роли, фильтрация сайтов, персональный лимит, подключение по Xray;
+  • роли, фильтрация сайтов, персональный лимит;
   • имя в туннеле, указывающее на него;
   • история трафика;
   • и что старый пир не убит, а помечен — он держит связь, пока человек не
@@ -77,9 +77,6 @@ async def main():
     await db.execute(
         "INSERT INTO user_filters (user_uuid, category) VALUES ('ri-1','ads')")
     await db.execute(
-        "INSERT INTO xray_users (user_uuid, xray_uuid, sub_token) "
-        "VALUES ('ri-1','x-1','tok-1')")
-    await db.execute(
         "INSERT INTO dns_names (name, target_uuid) VALUES ('стойкий.vpn','ri-1')")
 
     async def state():
@@ -90,8 +87,6 @@ async def main():
                 "SELECT COUNT(*) FROM user_roles WHERE uuid='ri-1'"),
             "фильтров": await db.fetch_val(
                 "SELECT COUNT(*) FROM user_filters WHERE user_uuid='ri-1'"),
-            "Xray": await db.fetch_val(
-                "SELECT COUNT(*) FROM xray_users WHERE user_uuid='ri-1'"),
             "имён": await db.fetch_val(
                 "SELECT COUNT(*) FROM dns_names WHERE target_uuid='ri-1'"),
         }
@@ -134,7 +129,6 @@ async def main():
     check("человек на месте", final["человек"] == 1,
           "раньше здесь стоял DELETE из таблицы людей")
     check("роли на месте", final["ролей"] == before["ролей"])
-    check("Xray на месте", final["Xray"] == before["Xray"])
 
     await db.execute("DELETE FROM users WHERE uuid LIKE 'ri-%'")
     await db.execute("DELETE FROM roles WHERE name LIKE 'ПЕРЕ-%'")

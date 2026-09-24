@@ -130,7 +130,7 @@ async def main():
     check("личное ушло по ОБОИМ адресам человека",
           allowed.get("10.13.13.21") == ["work.example"]
           and allowed.get("10.13.13.149") == ["work.example"],
-          "у него и AmneziaWG, и Xray — фильтр должен работать на обоих")
+          "адресов у него два — фильтр должен работать на обоих")
     check("чужому адресу ничего не досталось",
           "10.13.13.22" not in allowed, str(list(allowed)))
 

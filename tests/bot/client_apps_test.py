@@ -18,7 +18,6 @@ import sys
 sys.path.insert(0, "/app")
 
 from database import db                            # noqa: E402
-import handlers_xray as hx                         # noqa: E402
 
 ok = True
 shown = {}
@@ -82,7 +81,7 @@ async def main():
 
     check("ссылки есть прямо здесь", "http" in text,
           "раньше их не было вовсе")
-    check("приложение названо", "Happ" in text)
+    check("приложение названо", "AmneziaWG" in text)
 
     for system in ("iPhone", "Android", "Windows", "macOS", "Linux"):
         check("есть %s" % system, system in text)
@@ -132,23 +131,14 @@ async def main():
     shown.clear()
     await hc.client_apps_handler(MenuUpdate(), MenuContext())
     text = shown.get("text") or ""
-    check("ключ по AmneziaWG — своё приложение", "AmneziaWG" in text)
-    check("чужого приложения нет", "Happ" not in text,
-          "у человека нет ссылки vless://")
-
-    await db.execute(
-        "INSERT INTO xray_users (user_uuid, xray_uuid, sub_token) "
-        "VALUES ('ap-1','x-ap','tok-ap')")
-    shown.clear()
-    await hc.client_apps_handler(MenuUpdate(), MenuContext())
-    text = shown.get("text") or ""
-    check("ключ по Xray — Happ", "Happ" in text)
+    check("приложение AmneziaWG", "AmneziaWG" in text)
+    check("Happ больше не предлагается", "Happ" not in text,
+          "свой Xray убран — ставить нечего")
     for system in ("iPhone", "Android", "Windows", "macOS", "Linux"):
         check("есть %s" % system, system in text)
     check("есть выход в кабинет",
           "client_menu" in (shown.get("buttons") or []))
 
-    await db.execute("DELETE FROM xray_users WHERE user_uuid LIKE 'ap-%'")
     await db.execute("DELETE FROM user_tg_links WHERE tg_id=$1", TG)
     await db.execute("DELETE FROM users WHERE uuid LIKE 'ap-%'")
 

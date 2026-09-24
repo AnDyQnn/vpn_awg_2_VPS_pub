@@ -77,7 +77,7 @@ def parse_site(raw: str):
 
 
 async def peer_addr_map():
-    """uuid → все адреса человека: пир AmneziaWG и двойник Xray, если он есть.
+    """uuid → все адреса человека в туннеле.
     Живёт здесь же, рядом с `peer_ip_map`, чтобы точка подмены была одна."""
     from acl import peer_addr_map as _map
     return await _map()
@@ -124,7 +124,7 @@ async def apply_filters(reason: str = ""):
     for uuid_val, cats in by_uuid.items():
         if not cats:
             continue
-        # Оба адреса человека: фильтр должен работать и по AmneziaWG, и по Xray.
+        # Все адреса человека: фильтр должен работать на каждом.
         for ip in ips.get(uuid_val, []):
             clients[ip] = cats
 

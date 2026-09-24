@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Разворот перевёрнутой истории трафика и профиль по адресу для скрипта.
+"""Разворот перевёрнутой истории трафика.
 
 До исправления направлений сборщик писал отдачу в колонку приёма и наоборот:
 любой качающий выглядел раздающим. Свежие часы пишутся верно, старые остались
@@ -10,11 +10,8 @@
   • меняет и байты, и пакеты — иначе доля отдачи считалась бы по мусору;
   • обратима: второй запуск возвращает как было.
 
-Заодно проверяется ручка профиля: скрипту нужен JSON, а не ссылка для
-приложения, и ходит он по тому же личному токену, что и подписка.
 """
 import asyncio
-import json
 import sys
 from datetime import datetime, timedelta
 
@@ -83,38 +80,6 @@ async def main():
           "поэтому действие и кнопкой, а не само при обновлении")
     await db.swap_hourly_directions(border)
 
-    print()
-    print("=== профиль по адресу для скрипта ===")
-    await db.execute("DELETE FROM xray_users WHERE user_uuid LIKE 'tf-%'")
-    await db.execute("INSERT INTO xray_users (user_uuid, xray_uuid, sub_token) "
-                     "VALUES ('tf-1','x-tf','tok-tf')")
-    await db.add_peer_route("tf-1", "10.77.0.0/16", "direct")
-
-    import subscription as S
-
-    class Req:
-        match_info = {"token": "tok-tf"}
-
-    resp = await S.handle_routing(Req())
-    check("отдаётся", resp.status == 200, str(resp.status))
-    check("это JSON", "json" in resp.content_type, resp.content_type)
-    profile = json.loads(resp.body.decode())
-    check("личная сеть ключа внутри", "10.77.0.0/16" in profile["DirectIp"],
-          "скрипту нужен профиль именно этого ключа")
-    # Адресов, которых владелец не вписывал, в профиле нет: ни домашних
-    # диапазонов, ни сети туннеля — только его личная запись.
-    check("в прямых адресах только вписанное вручную",
-          profile["DirectIp"] == ["10.77.0.0/16"], str(profile["DirectIp"])[:120])
-
-    class Bad:
-        match_info = {"token": "нет-такого"}
-        # Промахи считаются по адресу: с него берут, кого закрывать на час.
-        remote = "198.51.100.5"
-
-    check("чужой токен не обслуживается",
-          (await S.handle_routing(Bad())).status == 404)
-
-    await db.execute("DELETE FROM xray_users WHERE user_uuid LIKE 'tf-%'")
     await db.execute("DELETE FROM users WHERE uuid LIKE 'tf-%'")
 
 

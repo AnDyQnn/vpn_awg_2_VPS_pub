@@ -213,15 +213,8 @@ async def service_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Протоколы — про способ подключения, а не про людей, поэтому отдельной
     # строкой и отдельным разделом.
     try:
-        import xray
-        on_xray = await db.count_xray_users()
-        st = await xray.status()
-        awg_on = st.get("awg", {}).get("enabled", True)
-        xr_on = st.get("xray", {}).get("enabled", False)
-        lines.append("🔀 *Протоколы:* AmneziaWG "
-                     + ("включён" if awg_on else "выключен")
-                     + ", Xray " + ("включён" if xr_on else "выключен")
-                     + (f", на Xray {on_xray} чел." if on_xray else ""))
+        import handlers_protocols
+        lines.append(handlers_protocols.status_line(await handlers_protocols.status()))
     except Exception:
         lines.append("🔀 *Протоколы:* узел не ответил")
 

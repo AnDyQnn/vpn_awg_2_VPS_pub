@@ -113,20 +113,7 @@ async def main_menu_view(context=None, chat_id=None):
     mode_word = "только наблюдение" if mode != "enforce" else "ограничение включено"
 
     lines = ["🛡 **Панель управления** · мастер-сервер и клиент-сервер", ""]
-    # Разбивка по протоколам: пока люди переезжают, «на связи 11 из 32» само по
-    # себе ничего не говорит — важно, сколько из них уже на новом протоколе.
-    split = ""
-    try:
-        import xray
-        on_xray = len(await xray.online_uuids())
-        if await db.count_xray_users():
-            # Узел считает только пиров AmneziaWG: человек на Xray пиром не
-            # выглядит, и без слагаемого он бы просто пропал из сводки.
-            split = f"  ·  AWG {active_count}, Xray {on_xray}"
-            active_count += on_xray
-    except Exception:
-        pass
-    lines.append(f"🟢 На связи: **{active_count}** из {total_keys}{split}")
+    lines.append(f"🟢 На связи: **{active_count}** из {total_keys}")
     # Режим нагрузки — отдельной строкой. Раньше он дописывался в хвост к
     # числам на связи, и строка набирала четыре разных смысла: сколько людей,
     # как они разложены по протоколам и что с ограничением. На телефоне её

@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
-"""443 должен достаться Xray, страница отказа — уехать на 8443.
+"""Страница отказа живёт на 8443, а 443 на узле остаётся свободным.
 
-Проверка живая: поднимаем настоящий DNS-фильтр со страницей отказа, а затем
-настоящий Xray с входом на 443. Если они снова подерутся за порт, второй
-просто не встанет — и это увидит тест, а не человек, оставшийся без VPN.
+Проверка живая: поднимаем настоящий DNS-фильтр со страницей отказа и смотрим,
+какие порты он занял. 443 держим свободным под вход, который встанет на узле
+(панель Xray), — если страница снова займёт его, вход просто не поднимется.
 """
 import ast
 import io
@@ -65,21 +65,6 @@ assert ":8443" in ports, "страница отказа не поднялась 
 assert ":443 " not in ports.replace(":8443", ""), "443 всё ещё занят страницей"
 print("страница на 80 и 8443, 443 свободен: ок")
 
-print("\n=== Xray занимает 443 ===")
-CONFIG = {
-    "log": {"loglevel": "warning"},
-    "inbounds": [{"tag": "in", "listen": "0.0.0.0", "port": 443,
-                  "protocol": "socks", "settings": {"auth": "noauth"}}],
-    "outbounds": [{"protocol": "freedom", "tag": "direct"}],
-}
-ns["save_proto_state"]({"awg": True, "xray": True})
-res = ns["xray_apply"](CONFIG, [])
-print(res)
-assert ns["xray_running"](), "Xray не поднялся — порт снова занят"
-time.sleep(1)
-assert ":443 " in listening(), "Xray не слушает 443"
-print("Xray слушает 443: ок")
-
 print("\n=== запрос человека к закрытому сервису уводится на страницу ===")
 ns["apply_acl_web"]([{"ip": "10.13.13.50"}])
 rules = sh("iptables -t nat -S WG_ACL_WEB")
@@ -87,6 +72,5 @@ print([r for r in rules.splitlines() if "443" in r])
 assert "--dport 443 -j DNAT --to-destination 10.13.13.1:8443" in rules, rules
 print("443 уводится на 8443, а не на занятый порт: ок")
 
-ns["xray_stop"]()
 page.terminate()
 print("\nВСЁ ПРОШЛО")

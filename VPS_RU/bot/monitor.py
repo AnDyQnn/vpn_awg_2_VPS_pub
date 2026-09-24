@@ -21,18 +21,6 @@ from utils import (
     get_update_info, state_data
 )
 
-async def _xray_sync(reason=""):
-    """Отражает изменение состояния человека в конфиге Xray.
-
-    Обёрнуто в try: автоматика не должна падать из-за второго протокола — её
-    главное дело (пауза на AmneziaWG) к этому моменту уже сделано."""
-    try:
-        from xray import sync_person
-        await sync_person(reason)
-    except Exception as e:
-        print(f"Xray: конфиг не пересобран ({reason}): {e}")
-
-
 # --- SPLIT-TUNNEL: дата-центро-враждебные РФ-сервисы (мимо VPN, через домашний канал) ---
 # Источник правды — БД (таблица bypass_exclusions, см. database.py). Здесь только
 # логика проверки дрейфа и формирования уведомлений.
@@ -96,153 +84,6 @@ def _config_is_split_tunnel(name):
             if m:
                 return "0.0.0.0/0" not in m.group(1)
     return None
-
-
-# --- Гео-файлы для приложения ------------------------------------------------
-#
-# Приложение тянет их само, и по умолчанию с GitHub — который из России не
-# открывается. Без них оно считает профиль маршрутизации испорченным целиком.
-# Поэтому качаем мы и раздаём со своего узла: сюда GitHub доступен, потому что
-# наружу бот ходит через Германию.
-GEO_DIR = "/volumes/geo"
-GEO_SOURCE = ("https://github.com/Loyalsoldier/v2ray-rules-dat/releases/"
-              "latest/download/%s")
-GEO_FILES = ("geosite.dat", "geoip.dat")
-# Раз в сутки: списки обновляются ежедневно, а весят мегабайты.
-GEO_REFRESH_HOURS = 24
-# Файл меньше этого — не файл, а страница с ошибкой или обрывок. Класть такой
-# на место целого значит сломать профиль у всех разом.
-GEO_MIN_BYTES = 100 * 1024
-
-
-async def fetch_geo_files(force=False):
-    """Скачивает гео-файлы, если пора. Возвращает, сколько обновилось.
-
-    Пишем через временный файл: оборвись загрузка на середине, приложение
-    получило бы обрубок и снова сказало бы «повреждены».
-    """
-    import os
-    import time as _t
-    import aiohttp
-
-    os.makedirs(GEO_DIR, exist_ok=True)
-    updated = 0
-    for name in GEO_FILES:
-        path = os.path.join(GEO_DIR, name)
-        try:
-            fresh = (os.path.getsize(path) >= GEO_MIN_BYTES and
-                     _t.time() - os.path.getmtime(path) < GEO_REFRESH_HOURS * 3600)
-        except OSError:
-            fresh = False
-        if fresh and not force:
-            continue
-        tmp = path + ".part"
-        try:
-            timeout = aiohttp.ClientTimeout(total=180)
-            async with aiohttp.ClientSession(timeout=timeout) as s:
-                async with s.get(GEO_SOURCE % name) as r:
-                    if r.status != 200:
-                        print(f"Гео-файлы: {name} — код {r.status}")
-                        continue
-                    data = await r.read()
-            if len(data) < GEO_MIN_BYTES:
-                print(f"Гео-файлы: {name} пришёл слишком мал ({len(data)} б)")
-                continue
-            with open(tmp, "wb") as f:
-                f.write(data)
-            os.replace(tmp, path)
-            updated += 1
-            print(f"Гео-файлы: {name} обновлён, {len(data) // 1024} КБ")
-        except Exception as e:
-            print(f"Гео-файлы: {name} не скачался: {e}")
-            try:
-                os.remove(tmp)
-            except OSError:
-                pass
-    return updated
-
-
-async def geo_files_loop(app):
-    """Держит гео-файлы свежими. Первый заход — сразу после старта.
-
-    Без них у людей на Xray не работает ничего: приложение считает профиль
-    маршрутизации испорченным и не применяет его вовсе.
-    """
-    await asyncio.sleep(60)
-    while True:
-        try:
-            await fetch_geo_files()
-        except Exception as e:
-            print(f"Гео-файлы: {e}")
-        await asyncio.sleep(3600)
-
-
-async def xray_stats_delta():
-    """Сколько байт прошло у каждого человека на Xray с прошлого опроса.
-
-    Нужно там, где трафик уходит внутрь соединения моста: пакетами с личного
-    адреса он больше не идёт, и счётчики файрвола его не видят. Xray считает
-    сам, по учётному имени — а учётное имя у нас и есть uuid человека.
-
-    Счётчики читаются со сбросом: узел отдаёт прирост, а не сумму. Так
-    перезапуск процесса не выглядит отрицательным приростом и не требует
-    помнить прошлое значение.
-
-    Байты — всё, что Xray умеет. Пакетов он не считает, поэтому лимит в
-    пакетах в секунду на этом пути не срабатывает. Записано честно."""
-    try:
-        async with api_session() as session:
-            async with session.post(f"{WG_API_URL}/xray/stats",
-                                    json={"reset": True}, timeout=15) as r:
-                if r.status != 200:
-                    return {}
-                return (await r.json()).get("users") or {}
-    except Exception:
-        return {}
-
-
-# Окно, в котором трафик по адресу считается «человек сейчас на связи». Шире
-# периода опроса (пять минут) с запасом: иначе человек, у которого трафик шёл
-# ровно между двумя опросами, выглядел бы отключившимся.
-XRAY_SEEN_WINDOW = 600
-
-
-async def mark_xray_active():
-    """Ставит отметку активности людям на Xray.
-
-    У них рукопожатия нет вовсе, и отметка им не ставилась никогда — человек,
-    сидящий только на Xray, вечно выглядел неактивным. А от этой отметки
-    зависит и «не подключался N дней», и вопросы владельцу, и снятие
-    заброшенных ключей.
-
-    Признак у них один: живой трафик по адресу-двойнику. Узел его видит и
-    складывает в отметки по адресам, остаётся перевести адрес в человека.
-
-    Возвращает, скольким поставили, — для проверок и разбора."""
-    seen = state_data.get("addr_seen") or {}
-    if not seen:
-        return 0
-    try:
-        from xray import twin_addr
-        from acl import peer_ip_map
-        now = time.time()
-        marked = 0
-        for uuid_val, ip in (await peer_ip_map()).items():
-            twin = twin_addr(ip)
-            if not twin:
-                continue
-            last = seen.get(twin)
-            if last and (now - last) < XRAY_SEEN_WINDOW:
-                await db.execute(
-                    "UPDATE users SET last_active_at=NOW() WHERE uuid=$1",
-                    uuid_val)
-                marked += 1
-        return marked
-    except Exception as e:
-        # Отметка — дело наблюдательное: её отказ не должен останавливать сбор
-        # статистики, ради которого цикл и работает.
-        print(f"Отметка активности для Xray: {e}")
-        return 0
 
 
 async def repair_traffic_directions():
@@ -649,7 +490,6 @@ async def alert_loop(app):
                                 except Exception: pass
                                 
                                 await db.execute("UPDATE users SET is_active=FALSE WHERE uuid=$1", uuid_val)
-                                await _xray_sync("ключ заморожен")
                                 await db.log_event("Security", f"KEY COMPROMISED (Flapping): {user['name']}")
                                 
                                 if ADMIN_ID:
@@ -826,7 +666,6 @@ async def _ask_owner(app, uuid_val, reason, last_handshake=None, was_expires_at=
     except Exception:
         pass
     await db.execute("UPDATE users SET is_active=FALSE WHERE uuid=$1", uuid_val)
-    await _xray_sync(f"пауза: {reason}")
     await db.add_pending_decision(uuid_val, reason, last_handshake, was_expires_at)
 
     if not ADMIN_ID:
@@ -978,100 +817,8 @@ async def stats_collector_loop():
                             if uuid_val and len(uuid_val) < 40:
                                 await db.save_stats(uuid_val, rx, tx)
                                 if hs > 0 and (now - hs) < 180: await db.execute("UPDATE users SET last_active_at=NOW() WHERE uuid=$1", uuid_val)
-
-            await mark_xray_active()
         except Exception: pass
         await asyncio.sleep(300)
-
-async def repair_xray_seen():
-    """Стирает отметки «подключился по Xray», поставленные за скачивание.
-
-    Раньше отметка ставилась в обработчике подписки — приложение забрало
-    список серверов, и человек считался переехавшим. По ней владельцу
-    открывается кнопка «Убрать AmneziaWG», то есть предлагалось снять рабочий
-    доступ тому, кто по Xray ещё ничего не передал.
-
-    Стираем один раз за всю жизнь установки: отметка поставится заново сама,
-    когда по адресу пойдут пакеты. Потерять тут нечего — хуже было держать
-    неправду, на которую опирается снятие доступа.
-    """
-    try:
-        if await db.get_setting("xray_seen_by_traffic"):
-            return 0
-        n = await db.fetch_val(
-            "SELECT COUNT(*) FROM xray_users "
-            "WHERE first_seen_at IS NOT NULL AND revoked_at IS NULL") or 0
-        await db.execute(
-            "UPDATE xray_users SET first_seen_at=NULL "
-            "WHERE first_seen_at IS NOT NULL AND revoked_at IS NULL")
-        await db.set_setting("xray_seen_by_traffic", "1")
-        if n:
-            await db.log_event(
-                "Xray",
-                "Отметки подключения сброшены (%d): раньше их ставило "
-                "скачивание подписки, теперь — живой трафик." % n)
-        return n
-    except Exception as e:
-        print("Xray: отметки подключения не сброшены: %s" % e)
-        return 0
-
-
-async def announce_xray_connects(app):
-    """Один проход: кто вышел на связь по Xray впервые. Возвращает, скольких.
-
-    У AmneziaWG есть рукопожатие, и по нему бот давно шлёт «Новое
-    подключение». У Xray рукопожатия нет, и не было ничего: человек включал
-    VPN, всё работало, а в боте — тишина. Владелец замечал это сам.
-
-    Признак связи здесь честнее рукопожатия: пакеты по адресу-двойнику. Оно
-    же и есть переезд — по нему открывается снятие AmneziaWG.
-    """
-    import xray
-    said = 0
-    for uuid_val in await xray.online_uuids():
-        rec = await db.get_xray_user(uuid_val)
-        if not rec or rec["first_seen_at"]:
-            continue
-        await db.mark_xray_seen(uuid_val)
-        user = await db.get_user_by_uuid(uuid_val)
-        if not user:
-            continue
-        safe = escape_md(user["name"])
-        await db.log_event("Connection",
-                           "Первое подключение по Xray: %s" % user["name"])
-        if ADMIN_ID:
-            await notify_admin(
-                app,
-                text=("🎉 **Новое подключение по Xray**\n\n"
-                      "👤 %s\n🆔 `%s`" % (safe, uuid_val)),
-                parse_mode="Markdown")
-        kb = InlineKeyboardMarkup(
-            [[InlineKeyboardButton("🏠 Личный кабинет",
-                                   callback_data="client_menu")]])
-        for tid in (user.get("tg_ids") or []):
-            try:
-                await app.bot.send_message(
-                    chat_id=tid,
-                    text="🟢 **VPN подключен!**\n\nКлюч: **%s**." % safe,
-                    parse_mode="Markdown", reply_markup=kb)
-            except Exception:
-                pass
-        said += 1
-    return said
-
-
-async def xray_connect_watch_loop(app):
-    """Держит сторож подключений живым. Перед первым заходом — разовая
-    починка отметок, поставленных когда-то скачиванием подписки."""
-    await asyncio.sleep(75)
-    await repair_xray_seen()
-    while True:
-        try:
-            await announce_xray_connects(app)
-        except Exception as e:
-            print("Xray: сторож подключений — %s" % e)
-        await asyncio.sleep(XRAY_WATCH_SECONDS)
-
 
 async def log_cleanup_loop(app):
     while True:
@@ -1201,15 +948,6 @@ async def load_collector_loop(app):
                     str(p.get("allowed_ips", "")).split("/")[0]: p.get("uuid")
                     for p in peers if p.get("allowed_ips")
                 }
-                # Человек на Xray ходит с адреса-двойника. Для учёта это тот же
-                # человек: оба адреса ведут на один uuid, приросты складываются
-                # сами — часовые срезы пишутся с накоплением.
-                from xray import twin_addr
-                for ip, uuid_val in list(ip_to_uuid.items()):
-                    twin = twin_addr(ip)
-                    if twin:
-                        ip_to_uuid[twin] = uuid_val
-
                 if prev_snapshot and prev_ts and ts > prev_ts:
                     dt = ts - prev_ts
                     # Клиент-сервер — не человек: он несёт трафик всех остальных
@@ -1221,36 +959,8 @@ async def load_collector_loop(app):
                     personal = await db.get_peer_limits()
                     hour = datetime.utcnow().replace(minute=0, second=0, microsecond=0)
 
-                    # Сначала складываем приросты по человеку. У него может быть
-                    # два адреса сразу — пир AmneziaWG и двойник Xray, — и
-                    # проверять их порознь нельзя: лимит обходился бы делением
-                    # трафика пополам.
-                    # Люди на своём канале считаются НЕ файрволом, а самим
-                    # Xray: их трафик уходит внутрь соединения моста, и мимо
-                    # счётчиков адреса-двойника. Складывать оба источника
-                    # нельзя — внутренний трафик посчитался бы дважды, и у
-                    # человека, ходящего к домашнему сервису, вырос бы вдвое.
-                    import cascade
-                    chain_on, _why = await cascade.ready()
-                    xray_bytes = await xray_stats_delta() if chain_on else {}
-                    # Адреса-двойники исключаем из разбора файрвола: по ним
-                    # сейчас идёт только внутритуннельное, и его посчитает Xray.
-                    # Исключаем двойников ТОЛЬКО если счётчики Xray реально
-                    # ответили. Иначе вышла бы тихая дыра: файрвол мы уже не
-                    # слушаем, а взамен не получили ничего — и трафик человека
-                    # перестал бы считаться вовсе, без единого признака.
-                    skip_twins = set()
-                    if chain_on and xray_bytes:
-                        from xray import twin_addr as _twin
-                        for _ip in list(ip_to_uuid):
-                            _t = _twin(_ip)
-                            if _t and _t in snapshot:
-                                skip_twins.add(_t)
-
                     merged = {}
                     for ip, cur in snapshot.items():
-                        if ip in skip_twins:
-                            continue
                         old = prev_snapshot.get(ip)
                         uuid_val = ip_to_uuid.get(ip)
                         if not old or not uuid_val:
@@ -1270,25 +980,6 @@ async def load_collector_loop(app):
                         rec[1] += down_pkt
                         rec[2] += max(0, cur["tx_bytes"] - old["tx_bytes"])
                         rec[3] += max(0, cur["rx_bytes"] - old["rx_bytes"])
-                        # Отметка живого трафика по адресу. У Xray нет
-                        # рукопожатия, и это единственный признак, по которому
-                        # видно, что человек сейчас на связи.
-                        if up_pkt or down_pkt:
-                            state_data["addr_seen"][ip] = time.time()
-
-                    # Приросты от Xray — тем же людям, в те же колонки.
-                    # Названия направлений у Xray с нашей стороны: uplink — то,
-                    # что человек отдал нам, downlink — то, что мы отдали ему.
-                    # В базе договорённость та же: bytes_in — отдача человека.
-                    for who, rec_x in xray_bytes.items():
-                        if who == cascade.BRIDGE_USER:
-                            # Мост — не человек: через него идёт трафик всех
-                            # остальных, и под личные лимиты он попадать не
-                            # должен, иначе «превысил» покажет на нём одном.
-                            continue
-                        rec = merged.setdefault(who, [0, 0, 0, 0])
-                        rec[2] += int(rec_x.get("up") or 0)
-                        rec[3] += int(rec_x.get("down") or 0)
 
                     # Имена — от лица человека и в том же смысле, что в базе:
                     # in — его отдача, out — его приём.
@@ -1471,33 +1162,6 @@ async def weekly_health_loop(app):
                     snap[key] = s
                 lines.append("")
 
-            # Xray отдельным блоком. Раньше отчёт говорил только про уборку и
-            # диск — а второй протокол отказывает молча и выглядит одинаково с
-            # чем угодно: «VPN не работает». Раз в неделю про него надо
-            # напомнить, даже когда всё хорошо.
-            try:
-                import cascade
-                from xray import status as xray_status
-                st = await xray_status()
-                xr = (st or {}).get("xray") or {}
-                if xr.get("enabled"):
-                    people = await db.count_xray_users()
-                    lines.append(f"🔶 **Xray**: людей {people}, "
-                                 f"процесс {'работает' if xr.get('up') else 'НЕ работает'}")
-                    ch = await cascade.settings()
-                    if ch.get("uuid") and ch.get("on"):
-                        alive = await cascade.bridge_present()
-                        if alive:
-                            lines.append("Свой канал в Германию: мост на связи")
-                        else:
-                            # Не ошибка: люди идут прежним путём, связь есть. Но
-                            # молчать нельзя — иначе канал окажется выключенным
-                            # месяцами, а владелец будет думать, что он работает.
-                            lines.append("⚠️ Свой канал в Германию: моста нет, "
-                                         "люди идут общим туннелем")
-                    lines.append("")
-            except Exception as e:
-                print(f"Недельный отчёт, блок Xray: {e}")
 
             # Сверка базы с узлом: её делает только мастер, за обе стороны.
             if contract and contract.get("answered"):
@@ -1627,49 +1291,6 @@ async def bypass_reresolve_loop(app):
             print(f"bypass_reresolve_loop error: {e}")
         await asyncio.sleep(3600)
 
-async def _send_xray_split_notice(app, key, domains):
-    """Человеку на Xray — готовый кусок, а не предложение перевыпустить ключ.
-
-    Перевыпуск его случая не касается: он выдаёт новую ссылку, а профиль
-    маршрутизации остаётся прежним. Нужен именно новый кусок — сервера плюс
-    профиль, — и вставляется он так же, как при первой выдаче.
-    """
-    import xray
-    from utils import send_copyable
-
-    blob = await xray.bundle_text(key["uuid"])
-    if not blob:
-        return 0
-
-    text = ("🔔 **Список исключений изменился**\n\n"
-            "Мимо VPN теперь идут:\n"
-            f"{domains}\n\n"
-            "Ниже — обновлённое подключение. Скопируйте текст целиком и "
-            "вставьте в приложение: оно заменит настройки само, ключ у вас "
-            "остаётся прежним.")
-    from utils import copy_button
-    kb = InlineKeyboardMarkup([
-        [copy_button(blob)],
-        [InlineKeyboardButton("🌐 Список исключений", callback_data="client_bypass_info")],
-        [InlineKeyboardButton("🔕 Не напоминать", callback_data="client_notify_off")],
-        [InlineKeyboardButton("🏠 Личный кабинет", callback_data="client_menu")],
-    ])
-
-    sent = 0
-    for tid in key.get("tg_ids", []):
-        try:
-            if not await db.get_routing_notify(tid):
-                continue
-            await app.bot.send_message(chat_id=tid, text=text,
-                                       parse_mode=ParseMode.MARKDOWN)
-            # Кусок — отдельным сообщением и кодом: копируется одним касанием.
-            await send_copyable(app.bot, tid, blob, reply_markup=kb)
-            sent += 1
-        except Exception as e:
-            print(f"Сплит для Xray: {tid} не получил: {e}")
-    return sent
-
-
 async def _send_upgrade_notices(app):
     current_version = await db.get_routing_version()
     outdated = await db.get_outdated_keys(current_version)
@@ -1677,19 +1298,6 @@ async def _send_upgrade_notices(app):
     domains = ", ".join(f"`{escape_md(r['domain'])}`" for r in rows) if rows else "—"
     sent = 0
     for k in outdated:
-        # У человека на Xray сплит живёт в профиле, а не в конфиге: ему нужен
-        # новый кусок, а не перевыпуск. Предлагать перевыпуск значит советовать
-        # действие, которое его случая не касается.
-        try:
-            if await db.get_xray_user(k["uuid"]):
-                sent += await _send_xray_split_notice(app, k, domains)
-                await db.execute(
-                    "UPDATE users SET routing_version=$1 WHERE uuid=$2",
-                    current_version, k["uuid"])
-                continue
-        except Exception as e:
-            print(f"Сплит для Xray: {k.get('name')} — {e}")
-
         name = escape_md(k['name'])
         text = (
             f"🔔 **Обновите конфиг ключа «{name}»**\n\n"
@@ -1845,59 +1453,10 @@ async def bypass_list_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     else:
         lines.append("_Список пуст._")
 
-    # Про Xray — отдельной строкой: там перевыпуск не нужен вовсе, и без этого
-    # владелец каждый раз гадает, дошёл ли до тех людей новый список.
-    try:
-        import happ_routing
-        info = await happ_routing.summary()
-        lines.append("")
-        lines.append(f"📱 *Людям на Xray* тот же список уезжает подпиской сам — "
-                     f"доменов {info['domains']}, сетей {info['nets']}. "
-                     f"Перевыпуск им не нужен.")
-    except Exception:
-        pass
-
     kb.append([InlineKeyboardButton("➕ Добавить вручную", callback_data="bypass_add_manual")])
-    kb.append([InlineKeyboardButton("📱 Профиль для Xray", callback_data="bypass_happ")])
     kb.append([InlineKeyboardButton("📨 Напомнить о перевыпуске", callback_data="bypass_notify_now")])
     kb.append([InlineKeyboardButton("🔙 Назад", callback_data="back_to_main")])
     await query.edit_message_text("\n".join(lines), parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(kb))
-
-async def bypass_happ_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Готовый профиль маршрутизации — чтобы проверить его на своём устройстве.
-
-    Людям он приезжает подпиской и сам, эта кнопка нужна для другого: увидеть
-    своими глазами, что именно уезжает, и взять профиль за основу, если хочется
-    дописать к нему что-то своё.
-    """
-    import happ_routing
-    query = update.callback_query
-    await query.answer()
-    info = await happ_routing.summary()
-    link = await happ_routing.link()
-
-    lines = [
-        "📱 **Сплит для Xray**", "",
-        f"Мимо туннеля идут: доменов **{info['domains']}**, "
-        f"сетей **{info['nets']}**, плюс {info['always']} служебных "
-        "(домашняя сеть, link-local, multicast).",
-        "",
-        "Людям это уезжает подпиской само: профиль называется одинаково, и "
-        "приложение обновляет его, а не кладёт рядом второй.",
-        "",
-        "Ссылка ниже — тот же профиль. Нажмите, чтобы скопировать, и "
-        "откройте на устройстве с приложением:",
-        f"`{link}`",
-        "",
-        "_Дописать своё можно на routing.happ.su: вставить туда эту ссылку, "
-        "добавить нужное и забрать новую._",
-    ]
-    kb = [[InlineKeyboardButton("🔙 К исключениям", callback_data="bypass_list")]]
-    await query.edit_message_text("\n".join(lines),
-                                  parse_mode=ParseMode.MARKDOWN,
-                                  reply_markup=InlineKeyboardMarkup(kb),
-                                  disable_web_page_preview=True)
-
 
 async def bypass_del_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, exid: str):
     query = update.callback_query
@@ -1952,123 +1511,3 @@ async def bypass_add_request_handler(update: Update, context: ContextTypes.DEFAU
         await db.set_bypass_request_status(req_id, "rejected")
         await query.edit_message_text(f"❌ Заявка на `{escape_md(req['domain'])}` отклонена.", parse_mode=ParseMode.MARKDOWN)
 
-
-async def cascade_healing_loop(app):
-    """Следит за мостом Германии и уводит людей на прежний путь, если он пропал.
-
-    Зачем отдельный сторож. У амнезии такой откат есть с самого начала: Германия
-    не отвечает — мир-трафик идёт напрямую через РФ и возвращается сам. Свой
-    канал Xray обязан жить по тем же правилам, иначе он выйдет каналом второго
-    сорта: его обрыв означал бы не «медленнее», а тишину у всех, кто на Xray.
-
-    Проверка смотрит на живое соединение с адреса Германии, а не спрашивает её
-    агента. Агент живёт за туннелем амнезии, и опрос через него сделал бы отказ
-    амнезии похожим на отказ второго канала — каналы снова оказались бы
-    связаны, только уже в проверке.
-
-    Цена отката — перезапуск процесса Xray: конфиг меняется, соединения
-    переустанавливаются. Это секунды, и случается только когда иначе связи не
-    будет вовсе."""
-    import cascade
-    # Лениво, как и остальная автоматика здесь: при импорте сверху модуль
-    # тянул бы за собой половину бота ещё до готовности базы.
-    from xray import apply_config
-    fails = 0
-    while True:
-        await asyncio.sleep(60)
-        try:
-            cfg = await cascade.settings()
-            # Не настроен или выключен вручную — сторожить нечего.
-            if not cfg.get("uuid") or not cfg.get("on"):
-                fails = 0
-                continue
-
-            alive = await cascade.bridge_present()
-            if alive:
-                fails = 0
-                if cfg.get("fallback"):
-                    await db.set_setting(cascade.KEY_FALLBACK, "0")
-                    await apply_config("мост Германии подключился")
-                    await db.log_event(
-                        "Self-Healing",
-                        "Cascade bridge up — Xray traffic goes via Germany.")
-                    if ADMIN_ID:
-                        try:
-                            await notify_admin(app, text=(
-                                "🔼 **Свой канал в Германию поднялся** — "
-                                "трафик Xray идёт через него."),
-                                parse_mode="Markdown")
-                        except Exception:
-                            pass
-                continue
-
-            fails += 1
-            # Три проверки по минуте: одиночный обрыв не повод дёргать всех,
-            # а три минуты тишины — уже повод.
-            if fails < 3 or cfg.get("fallback"):
-                continue
-            fails = 0
-            await db.set_setting(cascade.KEY_FALLBACK, "1")
-            await apply_config("мост Германии пропал")
-            await db.log_event(
-                "Self-Healing",
-                "Cascade bridge down — Xray falls back to the shared tunnel.")
-            if ADMIN_ID:
-                try:
-                    await notify_admin(app, text=(
-                        "⚠️ **Мост Германии не подключён.**\n"
-                        "🔻 Люди на Xray временно идут прежним путём — через "
-                        "общий туннель. Вернётся автоматически."),
-                        parse_mode="Markdown")
-                except Exception:
-                    pass
-        except Exception as e:
-            # Сторож не имеет права умереть: без него откат не вернётся.
-            print(f"Сторож своего канала споткнулся: {e}", flush=True)
-
-
-async def xray_metrics_loop(app):
-    """Раз в пять минут записывает снимок состояния Xray.
-
-    Зачем это отдельно от трафика. Трафик по людям и так копится в часовых
-    срезах. А вот число соединений, живость процесса и состояние моста видны
-    только «прямо сейчас»: посмотрел — увидел, не посмотрел — не увидел.
-
-    Разбирать по ним приходится задним числом. «Вчера вечером всё тормозило»
-    без цифр не разобрать никак, а по снимкам видно, был ли всплеск соединений
-    и не отваливался ли мост.
-
-    Пишем только то, чего нет в других таблицах: вторая копия трафика однажды
-    разошлась бы с первой, и доверять было бы нечему."""
-    from xray import status as xray_status
-    import cascade
-
-    # Первый снимок — не сразу: узел после старта ещё поднимается, и снимок
-    # «процесс не работает» был бы враньём о нём, а не о состоянии дел.
-    await asyncio.sleep(120)
-    tick = 0
-    while True:
-        try:
-            st = await xray_status()
-            xr = (st or {}).get("xray") or {}
-            if xr.get("enabled"):
-                bridge = None
-                ch = await cascade.settings()
-                if ch.get("uuid") and ch.get("on"):
-                    bridge = await cascade.bridge_present()
-                await db.add_xray_metric(
-                    users=await db.count_xray_users(),
-                    connections=int(xr.get("connections") or 0),
-                    process_up=bool(xr.get("up")),
-                    bridge_up=bridge)
-
-            tick += 1
-            # Раз в сутки подчищаем: снимок раз в пять минут — это почти девять
-            # тысяч строк в месяц, и прошлогодние не нужны никому.
-            if tick % 288 == 0:
-                await db.trim_xray_metrics(30)
-        except Exception as e:
-            # Сбор метрик не имеет права уронить автоматику: его дело —
-            # наблюдать, а не вмешиваться.
-            print(f"Снимок состояния Xray: {e}", flush=True)
-        await asyncio.sleep(300)

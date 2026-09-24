@@ -72,7 +72,7 @@ for port, target in ns["ACL_WEB_PORTS"].items():
     assert any(f"--dport {port} " in r and f"{ns['BLOCK_PAGE_IP']}:{target}" in r
                for r in web), f"нет порта {port} → {target}"
 # HTTPS обязан попадать на слушатель с сертификатом, а не на обычный HTTP.
-# Порт 8443, а не 443: сам 443 на узле занят входом Xray.
+# Порт 8443, а не 443: 443 на узле держим свободным под вход.
 assert any("--dport 443 " in r and ":8443" in r for r in web), \
     "HTTPS должен уходить на слушатель с сертификатом, а не на обычный HTTP"
 print("веб-порты уводятся на страницу отказа, 443 — на TLS (8443): ок")
@@ -80,9 +80,9 @@ print("веб-порты уводятся на страницу отказа, 44
 pre = subprocess.run("iptables -t nat -S PREROUTING", shell=True,
                      capture_output=True, text=True).stdout
 # Привязки к интерфейсу тут нет намеренно: адрес назначения из туннельной сети
-# однозначно говорит, что это свои, а люди на Xray приходят не с wg0.
+# однозначно говорит, что это свои.
 assert ns["ACL_WEB_CHAIN"] in pre and "10.13.13.0/24" in pre, pre
-assert "-i wg0" not in pre, "привязка к одному интерфейсу потеряет людей на Xray"
+assert "-i wg0" not in pre, "веб-цепочка привязана к интерфейсу"
 print("веб-цепочка висит на туннельных адресах, без привязки к интерфейсу: ок")
 
 ns["apply_acl"](peers); ns["apply_acl_web"](peers)
@@ -98,7 +98,7 @@ ns["apply_acl"]([]); ns["apply_acl_web"]([])
 assert not [r for r in chain("nat", ns["ACL_WEB_CHAIN"]) if "DNAT" in r]
 # Отказы по людям — те, у которых есть «-s». Запрет панели узла адресный
 # («-d узел --dport 8000») и снятию ролей не подчиняется: он закрывает нашу же
-# панель от людей на Xray и должен стоять всегда.
+# панель вторым замком и должен стоять всегда.
 assert not [r for r in chain("", ns["ACL_CHAIN"])
             if "REJECT" in r and "-s " in r]
 assert [r for r in chain("", ns["ACL_CHAIN"])

@@ -146,29 +146,6 @@ RESTARTS=$(docker inspect -f '{{.RestartCount}}' "$CONT" 2>/dev/null || echo "?"
 [ "${RESTARTS:-0}" -le 3 ] 2>/dev/null && add_check CAT_DOCKER "Перезапуски контейнера" "ok" "${RESTARTS}" || add_check CAT_DOCKER "Перезапуски контейнера" "warning" "Часто: ${RESTARTS} (нестабильность)"
 
 EXITED=$(docker ps -aq -f status=exited | wc -l)
-# Мост Xray — отдельный контейнер, и лежащий мост означает, что люди на Xray
-# идут прежним путём через общий туннель. Связь у них есть, поэтому это
-# предупреждение, а не ошибка, — но молчать о нём нельзя.
-if docker inspect de_vpn_xray >/dev/null 2>&1; then
-    BR_STAT=$(docker inspect -f '{{.State.Status}}' de_vpn_xray 2>/dev/null)
-    if [ "$BR_STAT" = "running" ]; then
-        # Путь берём от самого скрипта, а не маской по /root: узел может
-        # стоять где угодно, и маска однажды промахнётся молча.
-        BR_RUN=$(grep -o '"running": *[01]' "$APP_DIR/volumes/xray/status.json" 2>/dev/null | tr -dc '01' | head -c1)
-        if [ "${BR_RUN:-0}" = "1" ]; then
-            # Способ управления перегрузкой мост получает по наследству от
-            # хоста в момент создания контейнера. Показываем его здесь: иначе
-            # «на хосте bbr, а у моста cubic» выяснялось бы раскопками.
-            BR_CC=$(grep -o '"congestion": *"[^"]*"' "$APP_DIR/volumes/xray/status.json" 2>/dev/null | sed 's/.*: *"//; s/"//')
-            add_check CAT_DOCKER "Мост Xray" "ok" "работает, перегрузка: ${BR_CC:-?}"
-        else
-            add_check CAT_DOCKER "Мост Xray" "warning" "контейнер поднят, процесс не работает"
-        fi
-    else
-        add_check CAT_DOCKER "Мост Xray" "warning" "контейнер ${BR_STAT:-отсутствует}"
-    fi
-fi
-
 [ "$EXITED" -eq 0 ] && add_check CAT_DOCKER "Остановленные контейнеры" "ok" "0" || add_check CAT_DOCKER "Остановленные контейнеры" "warning" "$EXITED шт. (тратят место)"
 
 D_SPACE=$(docker system df --format '{{.Size}}' | head -n 1)

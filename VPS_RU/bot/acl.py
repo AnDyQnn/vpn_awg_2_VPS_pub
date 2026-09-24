@@ -46,29 +46,12 @@ async def peer_ip_map():
 
 
 async def peer_addr_map():
-    """uuid → ВСЕ адреса человека в туннеле.
+    """uuid → все адреса человека в туннеле.
 
-    Их может быть два: адрес пира AmneziaWG и адрес-двойник, с которого ходит
-    Xray. Правила пишутся на адрес, поэтому человеку, у которого есть оба
-    подключения, нужны оба — иначе запрет перестанет действовать сразу после
-    переключения протокола."""
-    ips = await peer_ip_map()
-    try:
-        from database import db
-        from xray import twin_addr
-        with_xray = {r["user_uuid"] for r in await db.list_xray_users()}
-    except Exception:
-        with_xray = set()
-
-    out = {}
-    for uuid_val, ip in ips.items():
-        addrs = [ip]
-        if uuid_val in with_xray:
-            twin = twin_addr(ip)
-            if twin:
-                addrs.append(twin)
-        out[uuid_val] = addrs
-    return out
+    Сейчас адрес у человека один — его пир AmneziaWG. Списком, а не строкой,
+    потому что правила и фильтры по-прежнему пишутся на каждый адрес, и если
+    способов подключения снова станет больше, менять придётся только здесь."""
+    return {uuid_val: [ip] for uuid_val, ip in (await peer_ip_map()).items()}
 
 
 def _dedupe(grants):

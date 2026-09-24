@@ -15,7 +15,7 @@ NEED = {"_dns_ensure_chain", "apply_dns_filters", "save_dns_state",
 CONSTS = {"DNS_CHAIN", "DNS_STATE_FILE", "DNS_LOCAL_IP", "CONF_DIR",
           "DNS_NAMES_FILE", "VPN_SUBNET",
           # Адрес страницы отказа: на него заворачивается 443, иначе запрос
-          # уходит во вход Xray.
+          # упирается в пустой порт.
           "BLOCK_PAGE_IP"}
 
 tree = ast.parse(io.open(SRC, encoding="utf-8").read())
@@ -88,8 +88,8 @@ print("снятие всех фильтров убирает заворот: о�
 
 print("\n=== страница отказа достижима по HTTPS ===")
 # Резолвер отвечает адресом узла. По 80 браузер попадает на страницу, а
-# 443 на узле занят входом Xray: без заворота человек получает ошибку
-# сертификата вместо объяснения, почему сайт закрыт.
+# HTTPS-страница слушает 8443: без заворота человек получает ошибку
+# соединения вместо объяснения, почему сайт закрыт.
 ns["ensure_block_page_reachable"]()
 nat = subprocess.run("iptables -t nat -S", shell=True,
                      capture_output=True, text=True).stdout

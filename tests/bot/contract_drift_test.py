@@ -48,13 +48,11 @@ def fake_get(path):
 nc.node_get = fake_get
 
 
-def node_state(peers=(), names=None, acct=None, xray=None, acl=None):
+def node_state(peers=(), names=None, acct=None, acl=None):
     NODE.clear()
     NODE["/peers"] = list(peers)
     NODE["/dns/names"] = {"names": names or {}}
     NODE["/accounting"] = {"ts": 0, "peers": acct if acct is not None else {}}
-    NODE["/xray/status"] = {"xray": xray or {"enabled": False, "up": False,
-                                             "has_config": False}}
     NODE["/acl"] = acl or {"saved_at": "2026-09-14", "peers": [], "chain": ""}
 
 
@@ -66,9 +64,8 @@ SAVED = {}
 
 async def seed():
     await db.connect()
-    for table in ("users", "xray_users", "dns_names"):
+    for table in ("users", "dns_names"):
         SAVED[table] = await db.fetch_all("SELECT * FROM %s" % table)
-    await db.execute("DELETE FROM xray_users")
     await db.execute("DELETE FROM dns_names")
     await db.execute("DELETE FROM users")
     await db.execute(
@@ -78,10 +75,9 @@ async def seed():
 
 async def restore():
     """Возвращаем как было. Порядок обратный: сначала то, что ссылается."""
-    await db.execute("DELETE FROM xray_users")
     await db.execute("DELETE FROM dns_names")
     await db.execute("DELETE FROM users")
-    for table in ("users", "xray_users", "dns_names"):
+    for table in ("users", "dns_names"):
         for row in SAVED.get(table) or []:
             cols = list(row.keys())
             marks = ", ".join("$%d" % (i + 1) for i in range(len(cols)))
@@ -120,30 +116,6 @@ node_state(peers=[{"uuid": "uuid-a", "allowed_ips": "10.13.13.2/32"},
 expect("Учёт трафика по адресам", "error", "10.13.13.3")
 
 
-async def add_xray():
-    await db.execute(
-        "INSERT INTO xray_users (user_uuid, xray_uuid, sub_token) "
-        "VALUES ('uuid-a','x-1','tok-1')")
-
-
-asyncio.get_event_loop().run_until_complete(add_xray())
-
-print()
-print("=== ключи Xray выданы, а на узле конфига нет ===")
-node_state(peers=[{"uuid": "uuid-a", "allowed_ips": "10.13.13.2/32"},
-                  {"uuid": "uuid-b", "allowed_ips": "10.13.13.3/32"}],
-           acct={"10.13.13.2": {}, "10.13.13.3": {}})
-expect("Xray: ключи и узел", "error", "конфига на узле нет")
-
-print()
-print("=== конфиг есть, но процесс не работает ===")
-node_state(peers=[{"uuid": "uuid-a", "allowed_ips": "10.13.13.2/32"},
-                  {"uuid": "uuid-b", "allowed_ips": "10.13.13.3/32"}],
-           acct={"10.13.13.2": {}, "10.13.13.3": {}},
-           xray={"has_config": True, "up": False})
-expect("Xray: ключи и узел", "error", "процесс не работает")
-
-
 async def add_name():
     await db.execute(
         "INSERT INTO dns_names (name, target_uuid) VALUES ('дом', 'uuid-a')")
@@ -155,8 +127,7 @@ print()
 print("=== имя заведено, но на узел не разложено ===")
 node_state(peers=[{"uuid": "uuid-a", "allowed_ips": "10.13.13.2/32"},
                   {"uuid": "uuid-b", "allowed_ips": "10.13.13.3/32"}],
-           acct={"10.13.13.2": {}, "10.13.13.3": {}},
-           xray={"has_config": True, "up": True})
+           acct={"10.13.13.2": {}, "10.13.13.3": {}})
 expect("Имена внутри туннеля", "error", "дом")
 
 print()
@@ -167,8 +138,7 @@ node_state(peers=[{"uuid": "uuid-a", "allowed_ips": "10.13.13.2/32"},
                   {"uuid": "uuid-b", "allowed_ips": "10.13.13.3/32"},
                   {"uuid": "DE_AGENT", "allowed_ips": "0.0.0.0/0",
                    "latest_handshake": int(__import__("time").time()) - 58}],
-           acct={"10.13.13.2": {}, "10.13.13.3": {}},
-           xray={"has_config": True, "up": True})
+           acct={"10.13.13.2": {}, "10.13.13.3": {}})
 NODE["/health"] = {"status": "ok"}
 NODE["/host/deploy_status"] = {"ts": 1, "hash": "abcdef1"}
 nc.de_get = lambda path: NODE[path]

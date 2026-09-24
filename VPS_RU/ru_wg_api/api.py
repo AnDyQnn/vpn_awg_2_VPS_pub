@@ -223,12 +223,6 @@ class DnsNames(BaseModel):
     upstreams: dict = {}
 
 
-class XrayConfig(BaseModel):
-    config: dict
-    # Адреса людей на Xray: узел поднимает их у себя, иначе отправлять
-    # с них нечем — адрес должен принадлежать отправителю.
-    addresses: List[str] = []
-
 class ProtocolSwitch(BaseModel):
     name: str
     enabled: bool = True
@@ -363,7 +357,7 @@ def setup_network():
     #
     # Правила ниже отправляют в Германию всё, что идёт не на российский адрес.
     # Задумано это про исходящий трафик — но под него попадали и ОТВЕТЫ на
-    # входящие соединения. Человек с зарубежного адреса стучится на 443, Xray
+    # входящие соединения. Человек с зарубежного адреса стучится на узел, сервис
     # отвечает, ответ видит «адрес не российский» и уходит в туннель. Клиент
     # не получает ничего: рукопожатие не складывается никогда.
     #
@@ -413,13 +407,9 @@ def setup_network():
     # опубликованы, но закрываем явно: заглушка — вещь внутренняя, в интернете
     # ей делать нечего.
     run_cmd("iptables -A INPUT -i eth0 -p tcp --dport 80 -j DROP")
-    # А вот 443 закрывать нельзя, когда включён Xray: это его вход, и люди
-    # обязаны достучаться до него из интернета. Правило осталось с тех пор,
-    # когда на 443 стояла страница отказа; после переезда страницы на 8443 оно
-    # молча рубило подключения — на боевом узле 2881 пакет. Изнутри контейнера
-    # при этом всё работало, поэтому выглядело как «конфиг не тот».
-    if not proto_state().get("xray"):
-        run_cmd("iptables -A INPUT -i eth0 -p tcp --dport 443 -j DROP")
+    # 443 снаружи слушать некому: страница отказа живёт на 8443 внутри
+    # туннеля, а своего входа на 443 у узла нет. Закрываем явно.
+    run_cmd("iptables -A INPUT -i eth0 -p tcp --dport 443 -j DROP")
     # Раньше закрывался только eth0, а клиенты приходят по wg0 — и любой пир мог забрать
     # приватный ключ сервера через /api/backup_config. Это и есть та самая дыра.
     run_cmd("iptables -A INPUT -i wg0 -p tcp --dport 8000 -j DROP")
@@ -431,9 +421,8 @@ def setup_network():
     # пространство, и способ управления перегрузкой у него свой. Проверено на
     # боевом узле: на хосте bbr, внутри cubic.
     #
-    # А Xray живёт именно здесь, и его соединения терминируются с обеих сторон:
-    # от человека и наружу. Значит ставить надо тут, иначе включение на хосте
-    # не даёт ничего тем, ради кого затевалось.
+    # Соединения, которые рождаются здесь же (бот, страница отказа, резолвер),
+    # идут по правилам этого пространства, а не хоста.
     #
     # Нефатально: нет модуля в ядре хоста — остаёмся на прежнем способе.
     subprocess.run("sysctl -w net.ipv4.tcp_congestion_control=bbr",
@@ -446,10 +435,6 @@ def setup_network():
         pass
 
     restore_peers()
-    # Xray переживает перезапуск контейнера так же, как всё остальное:
-    # состояние на диске, поднимаем по нему.
-    if proto_state()["xray"]:
-        xray_start()
     rebuild_accounting()
     rebuild_acl()
     rebuild_dns_filters()
@@ -479,8 +464,8 @@ def _acct_ensure_chain(flush=True):
     Первой — потому что ниже стоят правила ACCEPT, после которых до нас не дошло бы.
 
     Трёх точек не бывает много: пакет проходит ЛИБО через FORWARD (трафик пира
-    AmneziaWG идёт транзитом), ЛИБО через OUTPUT/INPUT (трафик человека на Xray
-    рождается и умирает на самом узле). Дважды один пакет не посчитается.
+    идёт транзитом), ЛИБО через OUTPUT/INPUT (обращения к самому узлу и его
+    ответы). Дважды один пакет не посчитается.
 
     В цепочке нет действий — только счёт, поэтому её появление в INPUT и OUTPUT
     ничего не решает и ничего не рвёт."""
@@ -566,12 +551,9 @@ ACL_CHAIN = "WG_ACL"
 ACL_STATE_FILE = f"{CONF_DIR}/acl.json"
 TUNNEL_NET = f"{VPN_SUBNET}/24"
 DE_AGENT_IP = "10.13.13.254"
-# Сам узел. Роль не имеет права его закрывать: на нём живут резолвер, страница
-# отказа и подписка, и в профиле Xray наш резолвер прописан как DNS туннеля.
-# Для пиров AmneziaWG это и так работало — их обращения к узлу идут через INPUT,
-# который мы намеренно не трогаем. А вот пакеты людей на Xray рождаются на узле
-# и идут через OUTPUT, то есть под правила ролей попадали. Человек с ролью
-# терял разрешение имён целиком: подключение вставало, но ничего не грузилось.
+# Сам узел. Роль не имеет права его закрывать: на нём живут резолвер и страница
+# отказа. Человек с ролью, которому закрыли узел, терял бы разрешение имён
+# целиком: подключение вставало, но ничего не грузилось.
 NODE_IP = f"{VPN_SUBNET.rsplit('.', 1)[0]}.1"
 
 
@@ -611,7 +593,7 @@ def doh_block_apply(enabled=True):
     """Собирает цепочку запрета обходных путей к чужому DNS.
 
     Вешается на те же две точки, что и правила ролей: транзит пиров и трафик,
-    рождающийся на узле, — потому что люди на Xray ходят вторым путём."""
+    рождающийся на узле."""
     subprocess.run(f"ipset create {DOH_SET} hash:net family inet -exist",
                    shell=True, stderr=subprocess.DEVNULL)
     subprocess.run(f"ipset flush {DOH_SET}", shell=True, stderr=subprocess.DEVNULL)
@@ -635,16 +617,7 @@ def doh_block_apply(enabled=True):
     if not enabled:
         return 0
 
-    # Люди на Xray из запрета выведены. Их трафик рождается на узле с адресов-
-    # двойников (верхняя половина сети туннеля), и профиль Xray отправляет DNS
-    # на обычный публичный резолвер через прокси: телефон на Xray внутри
-    # туннеля не сидит, и внутренний 10.13.13.1 для него не адрес. Под этим
-    # запретом у человека на Xray не было бы DNS вовсе. У людей на AmneziaWG
-    # (нижняя половина) всё по-прежнему.
-    import ipaddress as _ip
-    twins = str(list(_ip.ip_network(TUNNEL_NET, strict=False).subnets(new_prefix=25))[1])
     rules = [
-        f"-s {twins} -j RETURN",
         # DNS поверх TLS: «Приватный DNS» в телефоне.
         f"-p tcp --dport 853 -j REJECT --reject-with tcp-reset",
         f"-p udp --dport 853 -j REJECT --reject-with icmp-port-unreachable",
@@ -684,15 +657,13 @@ def _acl_ensure_chain():
     subprocess.run(f"iptables -N {ACL_CHAIN}", shell=True, stderr=subprocess.DEVNULL)
     subprocess.run(f"iptables -F {ACL_CHAIN}", shell=True, stderr=subprocess.DEVNULL)
     # Без привязки к интерфейсу: адрес назначения из туннельной сети однозначно
-    # говорит, что это свои, — и так ловятся и пиры AmneziaWG, и люди на Xray.
+    # говорит, что это свои.
     hook = f"-d {TUNNEL_NET} -j {ACL_CHAIN}"
-    # FORWARD — транзит пиров AmneziaWG. OUTPUT — люди на Xray: их пакеты
-    # рождаются на узле, через FORWARD не проходят вовсе, и без второй точки
-    # роли на них просто не действовали бы.
+    # FORWARD — транзит пиров. OUTPUT — пакеты, рождённые на узле.
     #
-    # INPUT намеренно не трогаем: на адресах Xray никто ничего не слушает, зато
-    # в INPUT приходят обращения пиров к самому узлу — к странице отказа, DNS и
-    # панели. Правила ролей отрезали бы их человеку, у которого роль есть.
+    # INPUT намеренно не трогаем: в него приходят обращения пиров к самому
+    # узлу — к странице отказа, DNS и панели. Правила ролей отрезали бы их
+    # человеку, у которого роль есть.
     for chain in ("FORWARD", "OUTPUT"):
         check = subprocess.run(f"iptables -C {chain} {hook}", shell=True,
                                stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
@@ -721,13 +692,12 @@ def apply_acl(peers):
     subprocess.run(f"iptables -A {ACL_CHAIN} -d {DE_AGENT_IP} -j RETURN",
                    shell=True, stderr=subprocess.DEVNULL)
     # Панель узла — закрыть до того, как разрешим узел целиком. В INPUT она
-    # закрыта правилом с «-i wg0», но пакет человека на Xray приходит к узлу по
-    # локальной петле, а не с wg0, и под то правило не попадает. Без этой строки
-    # разрешение узла открыло бы панель через Xray.
+    # закрыта правилом с «-i wg0»; здесь — второй замок на случай, если пакет
+    # придёт к узлу не с wg0.
     subprocess.run(f"iptables -A {ACL_CHAIN} -d {NODE_IP} -p tcp --dport 8000 "
                    f"-j REJECT --reject-with tcp-reset",
                    shell=True, stderr=subprocess.DEVNULL)
-    # Сам узел — раньше любой роли: резолвер, страница отказа, подписка.
+    # Сам узел — раньше любой роли: резолвер и страница отказа.
     subprocess.run(f"iptables -A {ACL_CHAIN} -d {NODE_IP} -j RETURN",
                    shell=True, stderr=subprocess.DEVNULL)
     subprocess.run(f"iptables -A {ACL_CHAIN} -m conntrack "
@@ -762,8 +732,7 @@ ACL_WEB_CHAIN = "WG_ACL_WEB"
 # 443 отдельно, потому что там нужен TLS, и отвечать по нему должен слушатель
 # с сертификатом, а не обычный HTTP.
 # Слева — порт, на который стучится человек, справа — порт страницы отказа.
-# 443 уводится на 8443: сам 443 на узле занят входом Xray, и это не прихоть —
-# трафик к нему неотличим от обычного HTTPS.
+# 443 уводится на 8443: там слушает страница отказа с сертификатом.
 ACL_WEB_PORTS = {80: 80, 8080: 80, 8096: 80, 3000: 80, 443: 8443}
 BLOCK_PAGE_IP = "10.13.13.1"            # страница отказа живёт на самом узле
 
@@ -774,8 +743,7 @@ def _acl_web_ensure_chain():
     subprocess.run(f"iptables -t nat -F {ACL_WEB_CHAIN}", shell=True,
                    stderr=subprocess.DEVNULL)
     hook = f"-d {TUNNEL_NET} -j {ACL_WEB_CHAIN}"
-    # PREROUTING — для пиров, OUTPUT — для людей на Xray (их запрос рождается
-    # на узле и в PREROUTING не попадает вовсе).
+    # PREROUTING — для пиров, OUTPUT — для запросов, рождённых на узле.
     for chain in ("PREROUTING", "OUTPUT"):
         check = subprocess.run(f"iptables -t nat -C {chain} {hook}", shell=True,
                                stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
@@ -849,16 +817,13 @@ def ensure_block_page_reachable():
     """Заворот 443 → 8443 для самого узла.
 
     Резолвер отвечает на закрытый домен адресом узла. По 80 браузер попадает на
-    страницу отказа, а по 443 — во вход Xray: 443 на узле занят им, и это не
-    прихоть, трафик Xray должен быть неотличим от обычного HTTPS.
+    страницу отказа, а по 443 — сюда: HTTPS-страница отказа слушает 8443.
 
     Раньше этот заворот жил в цепочке доступов и строился по людям с ролями.
-    У остальных — то есть у всех, кому включены только фильтры, — запрос уходил
-    в Xray, тот пересылал рукопожатие на маскировочный сайт, и человек получал
-    ошибку сертификата вместо объяснения, почему сайт закрыт.
+    У остальных — то есть у всех, кому включены только фильтры, — человек
+    получал ошибку соединения вместо объяснения, почему сайт закрыт.
 
     Правило безопасно: на 10.13.13.1:443 нет ничего, кроме страницы отказа.
-    Клиенты Xray приходят на внешний адрес, а не на туннельный.
     """
     for chain in ("PREROUTING", "OUTPUT"):
         rule = (f"-d {BLOCK_PAGE_IP} -p tcp --dport 443 "
@@ -1060,304 +1025,33 @@ def rebuild_dns_filters():
     # и переживает перезапуск вместе с раскладкой.
 
 
-# --- XRAY: ВТОРОЙ ПРОТОКОЛ ------------------------------------------------
-# Xray живёт процессом рядом с панелью, как и фильтр DNS, и по той же причине:
-# у контейнера нет доступа к докеру, а значит перезапускать себя он должен сам.
-#
-# Почему это не ломает всё, что построено вокруг адресов: каждому человеку в
-# конфиге Xray прописывается свой исходящий канал с его туннельным адресом
-# (sendThrough). Поэтому наружу его трафик уходит с того же 10.13.13.x, что и
-# по AmneziaWG — счётчики пакетов, лимиты, роли и фильтры продолжают узнавать
-# человека, не зная и не интересуясь, каким протоколом он подключился.
-#
-# Узел намеренно НЕ знает, как устроен конфиг: его целиком собирает бот, у
-# которого есть база. Здесь только записать, запустить и доложить состояние.
-XRAY_BIN = "/usr/local/bin/xray"
-XRAY_CONF = f"{CONF_DIR}/xray.json"
-XRAY_STATE = f"{CONF_DIR}/protocols.json"
-XRAY_PID = "/tmp/xray.pid"
-XRAY_LOG = "/tmp/xray.log"
-
-# Потолок памяти процессу Xray — мягкий, средствами самого рантайма Go.
-#
-# Жёсткий потолок через RLIMIT_AS здесь не работает, и это проверено на живом
-# двоичном файле: Xray ЗАНИМАЕТ 29 МБ, а РЕЗЕРВИРУЕТ 1331 МБ адресного
-# пространства. RLIMIT_AS считает второе, поэтому потолок в 256 МБ не страховал
-# от утечки, а просто не давал процессу запуститься — при 512 МБ тоже.
-#
-# GOMEMLIMIT — мягкий потолок кучи: при подходе к нему сборщик мусора работает
-# чаще. Процесс замедляется, но живёт и обслуживает людей, а утечка становится
-# заметной постепенно, а не падением среди ночи. Жёсткую границу держит
-# mem_limit контейнера в compose — он считает реально занятую память.
-XRAY_MEM_LIMIT = "192MiB"
-# Журнал писался дописыванием без предела, а лежит в записываемом слое
-# контейнера — то есть рос на диске хоста. Норма та же, что у контейнеров в
-# compose: три файла по 10 МБ, дальше старое вытесняется.
-XRAY_LOG_LIMIT = 10 * 1024 * 1024
-XRAY_LOG_KEEP = 3
-
-
-def xray_ports():
-    """Порты входов из применённого конфига — источник правды один.
-
-    Вписывать их список в узел вторым экземпляром нельзя: мастер поменяет порт
-    на экране, а узел продолжит открывать прежний, и вход окажется за
-    закрытой дверью. Молча — ровно так уже было с 443.
-    """
-    try:
-        with open(XRAY_CONF) as f:
-            conf = json.load(f)
-        found = [int(i["port"]) for i in conf.get("inbounds", []) if i.get("port")]
-        return found or [443]
-    except (OSError, ValueError, KeyError, TypeError):
-        return [443]
-
-
-def xray_port_gate(open_it: bool, ports=None):
-    """Двери для Xray: порты входов снаружи.
-
-    Открыты ровно пока Xray включён. Правила одинаковые, поэтому перед
-    добавлением всегда сначала снимаем — иначе при повторных переключениях
-    накопится десяток одинаковых строк.
-    """
-    for port in (ports if ports is not None else xray_ports()):
-        rule = f"INPUT -i eth0 -p tcp --dport {port} -j DROP"
-        while subprocess.run(f"iptables -C {rule}", shell=True,
-                             stdout=subprocess.DEVNULL,
-                             stderr=subprocess.DEVNULL).returncode == 0:
-            subprocess.run(f"iptables -D {rule}", shell=True,
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        if not open_it:
-            run_cmd(f"iptables -A {rule}")
+# --- ПРОТОКОЛЫ -----------------------------------------------------------
+# Свой вход у узла один — AmneziaWG. Состояние выключателя лежит на диске,
+# чтобы решение владельца переживало перезапуск контейнера.
+PROTO_STATE = f"{CONF_DIR}/protocols.json"
 
 
 def proto_state():
-    """Какие протоколы включены. Нет файла — значит как было раньше:
-    AmneziaWG работает, Xray ещё не поднимали."""
+    """Включён ли AmneziaWG. Нет файла — включён.
+
+    В старом файле мог остаться ключ второго протокола — он больше ничего не
+    значит и не читается."""
     try:
-        if os.path.exists(XRAY_STATE):
-            with open(XRAY_STATE) as f:
+        if os.path.exists(PROTO_STATE):
+            with open(PROTO_STATE) as f:
                 s = json.load(f) or {}
-                return {"awg": bool(s.get("awg", True)), "xray": bool(s.get("xray", False))}
+                return {"awg": bool(s.get("awg", True))}
     except Exception as e:
         print(f"Состояние протоколов не читается: {e}")
-    return {"awg": True, "xray": False}
+    return {"awg": True}
 
 
 def save_proto_state(state):
     try:
-        with open(XRAY_STATE, "w") as f:
+        with open(PROTO_STATE, "w") as f:
             json.dump(state, f)
     except Exception as e:
         print(f"Состояние протоколов не сохранилось: {e}")
-
-
-# Служебный интерфейс, на котором живут адреса людей, подключённых по Xray.
-# Отдельный — чтобы их было видно одной командой и чтобы удаление интерфейса
-# снимало разом все адреса, не задевая ничего чужого.
-XRAY_IFACE = "xray0"
-# Смещение адреса-двойника: 10.13.13.6 → 10.13.13.134. Отсюда предел в 126
-# пиров AmneziaWG (адреса выше .127 заняты двойниками) — при тридцати людях
-# запас десятикратный, но знать об этом надо.
-XRAY_ADDR_OFFSET = 128
-
-
-def xray_iface_ensure():
-    subprocess.run(f"ip link add {XRAY_IFACE} type dummy", shell=True,
-                   stderr=subprocess.DEVNULL)
-    subprocess.run(f"ip link set up dev {XRAY_IFACE}", shell=True,
-                   stderr=subprocess.DEVNULL)
-
-
-def xray_addresses():
-    """Какие адреса-двойники сейчас подняты на узле."""
-    out = subprocess.run(f"ip -4 -o addr show dev {XRAY_IFACE}", shell=True,
-                         capture_output=True, text=True).stdout
-    return {m.group(1) for m in re.finditer(r"inet ([0-9.]+)/", out)}
-
-
-def xray_sync_addresses(addrs):
-    """Приводит адреса на узле в соответствие со списком от бота.
-
-    Лишние снимаются: адрес, оставшийся после удаления человека, продолжал бы
-    принимать ответы и считаться в статистике неизвестно за кого."""
-    xray_iface_ensure()
-    # Цепочка учёта может быть ещё не создана (первый запуск) — проверяем без
-    # очистки, иначе обнулили бы счётчики всех пиров.
-    _acct_ensure_chain(flush=False)
-    want = {a for a in (addrs or []) if a}
-    have = xray_addresses()
-    for ip in want - have:
-        subprocess.run(f"ip addr add {ip}/32 dev {XRAY_IFACE}", shell=True,
-                       stderr=subprocess.DEVNULL)
-        acct_add(ip)
-    for ip in have - want:
-        subprocess.run(f"ip addr del {ip}/32 dev {XRAY_IFACE}", shell=True,
-                       stderr=subprocess.DEVNULL)
-        acct_del(ip)
-    return sorted(want)
-
-
-def xray_log_rotate():
-    """Ротация журнала по той же норме, что у контейнеров: три файла по 10 МБ.
-
-    Обрезать «оставив хвост» было бы проще, но тогда пропадает начало беды —
-    а именно оно обычно и объясняет, что случилось. Поэтому полноценная
-    ротация: свежий файл начинается с нуля, два предыдущих остаются целыми."""
-    try:
-        if os.path.getsize(XRAY_LOG) < XRAY_LOG_LIMIT:
-            return
-    except OSError:
-        return
-    try:
-        oldest = f"{XRAY_LOG}.{XRAY_LOG_KEEP - 1}"
-        if os.path.exists(oldest):
-            os.remove(oldest)
-        for n in range(XRAY_LOG_KEEP - 2, 0, -1):
-            src = f"{XRAY_LOG}.{n}"
-            if os.path.exists(src):
-                os.replace(src, f"{XRAY_LOG}.{n + 1}")
-        os.replace(XRAY_LOG, f"{XRAY_LOG}.1")
-    except OSError as e:
-        print(f"Журнал Xray не повернулся: {e}")
-
-
-def xray_running():
-    """Жив ли процесс.
-
-    Сигналом 0 проверять нельзя: он проходит и для зомби — процесса, который
-    уже умер, но ещё не прибран родителем. Упавший Xray выглядел бы живым.
-    Поэтому смотрим состояние в /proc: «Z» значит мёртв."""
-    try:
-        with open(XRAY_PID) as f:
-            pid = int(f.read().strip())
-        with open(f"/proc/{pid}/stat") as f:
-            # имя процесса в скобках может содержать пробелы, поэтому режем
-            # по последней скобке, а не по первому пробелу
-            state = f.read().rsplit(")", 1)[1].split()[0]
-        return state != "Z"
-    except Exception:
-        return False
-
-
-def xray_check(path):
-    """Проверяет конфиг силами самого Xray, ничего не запуская.
-
-    Смысл в порядке действий: ошибка генератора обнаруживается ДО того, как
-    рабочий процесс будет остановлен, — связь у людей не прерывается вовсе."""
-    try:
-        res = subprocess.run([XRAY_BIN, "run", "-test", "-c", path],
-                             capture_output=True, text=True, timeout=20)
-    except Exception as e:
-        return False, f"проверка не выполнилась: {e}"
-    if res.returncode == 0:
-        return True, "конфиг корректен"
-    lines = (res.stderr or res.stdout or "").strip().splitlines()
-    return False, (lines[-1].strip() if lines else "Xray не принял конфиг")
-
-
-def xray_stop():
-    try:
-        with open(XRAY_PID) as f:
-            pid = int(f.read().strip())
-        os.kill(pid, 15)
-        time.sleep(0.5)
-    except Exception:
-        pass
-    try:
-        os.remove(XRAY_PID)
-    except OSError:
-        pass
-
-
-def xray_start():
-    """Поднимает процесс, если есть конфиг. Без конфига запускать нечего —
-    это не ошибка, а просто «ещё никого не завели»."""
-    if not os.path.exists(XRAY_CONF):
-        return False, "конфиг ещё не создан"
-    xray_stop()
-
-    xray_log_rotate()
-
-    # Порты входов могли смениться вместе с конфигом — двери приводим в
-    # соответствие с тем, что в нём написано.
-    try:
-        xray_port_gate(True)
-    except Exception as e:
-        print(f"Двери Xray не открылись: {e}")
-
-    xray_env = dict(os.environ, GOMEMLIMIT=XRAY_MEM_LIMIT)
-    proc = subprocess.Popen([XRAY_BIN, "run", "-c", XRAY_CONF],
-                            stdout=open(XRAY_LOG, "a"),
-                            stderr=subprocess.STDOUT,
-                            env=xray_env)
-    with open(XRAY_PID, "w") as f:
-        f.write(str(proc.pid))
-    time.sleep(1)
-    if not xray_running():
-        return False, "процесс не удержался, смотри /tmp/xray.log"
-    return True, "запущен"
-
-
-def xray_apply(config, addresses=None):
-    """Записывает конфиг от бота и перезапускает процесс.
-
-    Две ступени защиты, потому что цена ошибки — связь у всех сразу:
-      1. новый конфиг проверяется во временном файле, рабочий не трогается;
-      2. если конфиг верен, а процесс всё равно не встал (занят порт, нет
-         прав) — возвращается прежний конфиг и поднимается на нём."""
-    # Адреса поднимаем ДО запуска: Xray при старте привязывается к ним, и
-    # без адреса процесс просто не поднимется.
-    xray_sync_addresses(addresses)
-
-    prev = None
-    if os.path.exists(XRAY_CONF):
-        with open(XRAY_CONF) as f:
-            prev = f.read()
-
-    # Имя временного файла обязано кончаться на .json: Xray определяет формат
-    # конфига по расширению и «.json.new» просто не понимает.
-    tmp = XRAY_CONF[:-5] + ".new.json"
-    with open(tmp, "w") as f:
-        json.dump(config, f, indent=2)
-    os.chmod(tmp, 0o600)
-
-    ok, note = xray_check(tmp)
-    if not ok:
-        os.remove(tmp)
-        raise RuntimeError(f"конфиг не принят: {note}")
-
-    os.replace(tmp, XRAY_CONF)
-
-    if not proto_state()["xray"]:
-        return {"status": "ok", "note": "конфиг записан, протокол выключен"}
-
-    ok, note = xray_start()
-    if not ok:
-        if prev is not None:
-            with open(XRAY_CONF, "w") as f:
-                f.write(prev)
-            xray_start()
-            raise RuntimeError(f"процесс не поднялся ({note}), вернул прежний конфиг")
-        raise RuntimeError(f"процесс не поднялся: {note}")
-    return {"status": "ok", "note": note}
-
-
-def xray_users_online():
-    """Сколько сейчас установлено соединений к Xray. Не число людей, а именно
-    соединений: одно устройство держит несколько."""
-    try:
-        out = subprocess.run("ss -tn state established '( sport = :443 )'",
-                             shell=True, capture_output=True, text=True).stdout
-        return max(0, len(out.strip().splitlines()) - 1)
-    except Exception:
-        return 0
-
-
-def awg_down():
-    """Гасит основной интерфейс. Люди на нём теряют связь — поэтому вызывается
-    только по явной кнопке владельца и после показа, сколько их."""
-    subprocess.run(["ip", "link", "set", "down", "dev", "wg0"], stderr=subprocess.DEVNULL)
 
 
 def awg_up():
@@ -1629,152 +1323,6 @@ def get_dns_hits(since: int = 0, limit: int = 500):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/api/xray/config")
-def api_xray_config(req: XrayConfig):
-    """Принимает готовый конфиг от бота и применяет его."""
-    try:
-        return xray_apply(req.config, req.addresses)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# --- СЧЁТЧИКИ XRAY И МОСТ ГЕРМАНИИ ----------------------------------------
-# Зачем это понадобилось. Пока трафик человека уходил наружу пакетами с его
-# адреса-двойника, весь учёт делал файрвол — и байты, и пакеты. Со своим
-# каналом до Германии трафик уезжает внутрь соединения моста, пакетами с
-# двойника он больше не идёт, и файрвол его не видит.
-#
-# Байты умеет считать сам Xray, по учётному имени. Пакеты — нет, и это честная
-# потеря: лимит в пакетах в секунду у людей на Xray не работает. Записано в
-# документации, чтобы не выяснять это через полгода.
-#
-# Служебный вход слушает только петлю: снаружи и из туннеля до него не добраться.
-XRAY_API_PORT = int(os.getenv("XRAY_API_PORT", "10085"))
-
-
-def xray_stats_parse(data):
-    """Разбирает ответ со счётчиками в «кто → сколько».
-
-    Имя счётчика у Xray составное: `user>>>кто>>>traffic>>>uplink`. Отдельной
-    функцией, потому что ломается это молча: поменяется разделитель или порядок
-    частей — и учёт тихо покажет нули, а понять это по работающему узлу нельзя.
-
-    Счётчики не по людям (входы, каналы) пропускаем: они про узел, а не про
-    человека, и попади они сюда — превратились бы в несуществующего посетителя.
-    """
-    out = {}
-    for item in (data or {}).get("stat", []) or []:
-        name = str(item.get("name") or "")
-        parts = name.split(">>>")
-        if len(parts) != 4 or parts[0] != "user":
-            continue
-        try:
-            value = int(item.get("value") or 0)
-        except (TypeError, ValueError):
-            continue
-        if value < 0:
-            continue
-        who, direction = parts[1], parts[3]
-        if not who:
-            continue
-        rec = out.setdefault(who, {"up": 0, "down": 0})
-        if direction == "uplink":
-            rec["up"] += value
-        elif direction == "downlink":
-            rec["down"] += value
-    return out
-
-
-def xray_stats(reset=False):
-    """Счётчики по людям: сколько байт пришло и ушло.
-
-    `reset` обнуляет их при чтении — так вызывающему не надо помнить прошлое
-    значение и вычитать, а перезапуск процесса не выглядит как отрицательный
-    прирост."""
-    cmd = (f"{XRAY_BIN} api statsquery --server=127.0.0.1:{XRAY_API_PORT}"
-           + (" --reset" if reset else ""))
-    res = subprocess.run(cmd, shell=True, capture_output=True, text=True,
-                         timeout=20)
-    if res.returncode != 0:
-        raise RuntimeError((res.stderr or res.stdout or "нет ответа").strip()[:200])
-    try:
-        data = json.loads(res.stdout or "{}")
-    except Exception:
-        return {}
-    return xray_stats_parse(data)
-
-
-def xray_bridge_present(peer=""):
-    """Подключён ли мост Германии.
-
-    Проверяем по живому соединению с её адреса на входы Xray. Не по счётчикам:
-    мост может молчать часами, а счётчик при этом стоит на месте — и молчащий,
-    но живой мост выглядел бы мёртвым.
-
-    Адрес передаёт бот: узлу знать его неоткуда, а держать вторую копию
-    настройки — значит однажды с ней разойтись."""
-    peer = (peer or "").strip()
-    if not peer:
-        return False
-    res = subprocess.run("ss -tn state established", shell=True,
-                         capture_output=True, text=True)
-    for line in res.stdout.splitlines():
-        if f"{peer}:" in line:
-            return True
-    return False
-
-
-class XrayStatsReq(BaseModel):
-    reset: bool = False
-
-
-@app.post("/api/xray/stats")
-def api_xray_stats(req: XrayStatsReq):
-    """Счётчики по людям. Только байты — пакетов Xray не считает."""
-    try:
-        return {"users": xray_stats(reset=req.reset)}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/api/xray/bridge")
-def api_xray_bridge(peer: str = ""):
-    """Есть ли живое соединение моста Германии."""
-    try:
-        return {"present": xray_bridge_present(peer), "peer": peer}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/api/xray/keep")
-def api_xray_keep():
-    """Поднимает Xray, если он включён, но не работает.
-
-    У амнезии присмотр был с самого начала: сторож видит пропавшее рукопожатие
-    и лечит узел по ступеням. У Xray не было ничего — процесс поднимался при
-    старте контейнера, и на этом всё. Упал через неделю — люди на нём без
-    связи, пока кто-нибудь не заметит.
-
-    Вызывается сторожем по кругу. Идемпотентна: работающий процесс не трогает,
-    поэтому дёргать её можно хоть каждую минуту."""
-    try:
-        state = proto_state()
-        if not state.get("xray"):
-            return {"enabled": False, "up": False, "action": "выключен"}
-        if xray_running():
-            # Заодно подрезаем журнал. Раньше это делалось только при
-            # перезапуске процесса, а он живёт месяцами — и журнал рос всё это
-            # время без единого присмотра.
-            xray_log_rotate()
-            return {"enabled": True, "up": True, "action": "работает"}
-        ok, note = xray_start()
-        print(f"Присмотр: Xray не работал, поднимаю — {note}", flush=True)
-        return {"enabled": True, "up": xray_running(),
-                "action": "поднят" if ok else f"не поднялся: {note}"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
 @app.get("/api/dns/bypass-status")
 def api_dns_bypass_status():
     """Сколько правил запрета обходного DNS стоит сейчас.
@@ -1793,9 +1341,9 @@ def api_dns_bypass_status():
     return {"rules": len(rules), "hooked": hooked}
 
 
-@app.get("/api/xray/status")
-def api_xray_status():
-    """Состояние обоих протоколов — для экрана администрирования."""
+@app.get("/api/awg/status")
+def api_awg_status():
+    """Состояние AmneziaWG — для экрана администрирования."""
     try:
         state = proto_state()
         awg_up_now = subprocess.run("ip link show wg0 up", shell=True,
@@ -1834,66 +1382,28 @@ def api_xray_status():
         return {
             "awg": {"enabled": state["awg"], "up": awg_up_now,
                     "peers": len(read_config_blocks()) - 1,
-                    "port": port, "obfuscation": obf, "online": online},
-            "xray": {"enabled": state["xray"], "up": xray_running(),
-                     "connections": xray_users_online(),
-                     "has_config": os.path.exists(XRAY_CONF)},
+                    "port": port, "obfuscation": obf, "online": online}
         }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/api/xray/keys")
-def api_xray_keys():
-    """Пара ключей для Reality — генерит сам Xray, нам её только передать."""
-    try:
-        out = subprocess.run([XRAY_BIN, "x25519"], capture_output=True, text=True).stdout
-        keys = {}
-        for line in out.splitlines():
-            if ":" in line:
-                k, v = line.split(":", 1)
-                keys[k.strip().lower().replace(" ", "_")] = v.strip()
-        if not keys:
-            raise RuntimeError("не удалось сгенерировать ключи")
-        return keys
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/protocols")
 def api_protocols(req: ProtocolSwitch):
-    """Включение и выключение протоколов.
+    """Включение AmneziaWG.
 
-    Выключить ОБА нельзя: это оставило бы узел без входа вообще, а вернуть его
-    можно было бы только руками по SSH."""
+    Выключить единственный вход нельзя: узел остался бы без связи, а вернуть
+    его можно было бы только руками по SSH."""
     try:
-        state = proto_state()
-        if req.name not in ("awg", "xray"):
+        if req.name != "awg":
             raise RuntimeError("неизвестный протокол")
-        other = "xray" if req.name == "awg" else "awg"
-        if not req.enabled and not state[other]:
-            raise RuntimeError("нельзя выключить оба протокола — узел останется без входа")
-
-        state[req.name] = bool(req.enabled)
+        if not req.enabled:
+            raise RuntimeError("AmneziaWG — единственный вход узла, выключать его нельзя")
+        state = proto_state()
+        state["awg"] = True
         save_proto_state(state)
-
-        if req.name == "xray":
-            # Дверь снаружи открывается вместе с протоколом: правило ставится
-            # при старте контейнера, а переключают его кнопкой, на ходу.
-            xray_port_gate(bool(req.enabled))
-            if req.enabled:
-                ok, note = xray_start()
-            else:
-                xray_stop()
-                note = "остановлен"
-        else:
-            if req.enabled:
-                awg_up()
-                note = "поднят"
-            else:
-                awg_down()
-                note = "погашен"
-        return {"status": "ok", "state": state, "note": note}
+        awg_up()
+        return {"status": "ok", "state": state, "note": "поднят"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

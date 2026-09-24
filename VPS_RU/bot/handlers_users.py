@@ -237,17 +237,6 @@ async def render_user_detail(context, chat_id, message_id, uuid):
     except Exception:
         pass
 
-    # Подключения: человек один, протоколов у него может быть два. Блок
-    # собирается там же, где экран подключений, чтобы они не разошлись.
-    conn_text, conn_state = "", None
-    try:
-        import xray
-        from handlers_xray import connections_block
-        conn_state = await xray.person_state(uuid)
-        conn_text = "\n" + connections_block(conn_state) + "\n"
-    except Exception:
-        pass
-
     # Доставка: Telegram не говорит, прочитано ли сообщение, поэтому показываем
     # цепочку действий — она точнее отвечает на вопрос «ключ дошёл», чем галочка.
     try:
@@ -268,7 +257,6 @@ async def render_user_detail(context, chat_id, message_id, uuid):
         + f"⏳ Годен до: {exp_str} (МСК)\n"
         f"📱 TG ID: {tg_status}\n"
         f"📅 Создан: {created_str}\n"
-        f"{conn_text}"
         f"{delivery_line}"
         f"{roles_text}"
         f"{ips_text}"
@@ -292,21 +280,8 @@ async def render_user_detail(context, chat_id, message_id, uuid):
     keyboard.append([
         InlineKeyboardButton("📉 История нагрузки", callback_data=f"svc_pchart_{uuid}"),
     ])
-    if conn_state is not None:
-        label = ("🔌 Подключения" if conn_state["has_xray"]
-                 else "🔌 Подключения · выдать Xray")
-        keyboard.append([InlineKeyboardButton(label, callback_data=f"xr_conn_{uuid}")])
     keyboard.append([InlineKeyboardButton("🛡 Доступы · роли", callback_data=f"role_u_{uuid}"),
                      InlineKeyboardButton("🧹 Фильтры", callback_data=f"flt_user_{uuid}")])
-    # Свои исключения — про это устройство, а не про всех. Число на кнопке,
-    # чтобы не заходить внутрь ради проверки, есть ли там что-нибудь.
-    try:
-        own_routes = await db.count_peer_routes(uuid)
-    except Exception:
-        own_routes = 0
-    keyboard.append([InlineKeyboardButton(
-        "🌐 Свои исключения" + (f" · {own_routes}" if own_routes else ""),
-        callback_data=f"rt_menu_{uuid}")])
     keyboard.append([InlineKeyboardButton("✏️ Переименовать ключ", callback_data=f"rename_user_{uuid}")])
     keyboard.append([InlineKeyboardButton("🔗 Привязать TG ID", callback_data=f"link_tg_{uuid}")])
     if tg_ids:
@@ -352,13 +327,6 @@ async def action_delete_user(update: Update, context: ContextTypes.DEFAULT_TYPE,
     try:
         await delete_peer(uuid, user['name'])
         await db.execute("DELETE FROM users WHERE uuid=$1", uuid)
-        # Вместе с человеком с узла уходит и его адрес-двойник: иначе он
-        # остался бы принимать ответы и считаться неизвестно за кого.
-        try:
-            from xray import sync_person
-            await sync_person("человек удалён")
-        except Exception as e:
-            print(f"Xray: конфиг не пересобран после удаления: {e}")
         # Адрес освободился и завтра достанется другому. Правило фильтра,
         # выданное на этот адрес, осталось бы висеть на новом хозяине — он
         # получил бы чужие запреты, не зная почему.
@@ -396,20 +364,6 @@ async def action_resend_config(update: Update, context: ContextTypes.DEFAULT_TYP
     except Exception as e:
         await update.callback_query.answer(f"Ошибка отправки: {e}", show_alert=True)
 
-async def default_proto():
-    """Какой протокол предлагать при создании ключа.
-
-    Xray — только если он включён на узле. Иначе человек получил бы ссылку на
-    протокол, которого там нет: она выглядит рабочей и молча не работает.
-    Узел молчит — тоже AmneziaWG: он работал всегда и точно поднят."""
-    try:
-        import xray
-        state = await xray.status()
-        return "xray" if state.get("xray", {}).get("enabled") else "awg"
-    except Exception:
-        return "awg"
-
-
 async def key_role_name(context):
     """Какой доступ достанется этому ключу и как это назвать словами."""
     rid = context.user_data.get("new_key_role_id")
@@ -427,21 +381,12 @@ async def key_role_name(context):
 
 
 async def new_key_screen(context, name):
-    """Экран срока. Протокол здесь же строкой: по умолчанию Xray, AmneziaWG —
-    для тех, кому нужен туннель на уровне IP (роутеры, шлюзы, домашний сервер).
+    """Экран срока. Выдаётся AmneziaWG — файлом конфига и QR.
 
     И доступ. Роли только сужают: у кого ролей нет — тот ходит по туннелю куда
     угодно. Значит, спрашивать надо здесь, когда человека заводят, а не
     надеяться, что владелец вспомнит потом."""
-    proto = context.user_data.get("proto", "xray")
-    if proto == "xray":
-        note = ("🔶 Будет выдан **Xray** — ссылкой. Профиль обновляется сам, "
-                "перевыпускать при изменениях не придётся.")
-        switch = "🔧 Нужен AmneziaWG (для опытных)"
-    else:
-        note = ("🔷 Будет выдан **AmneziaWG** — файлом конфига. Нужен, если "
-                "подключается роутер, шлюз или домашний сервер.")
-        switch = "🔶 Вернуть Xray (обычный случай)"
+    note = "🔷 Будет выдан **AmneziaWG** — файлом конфига и QR."
 
     _rid, role_name = await key_role_name(context)
     access = (f"🛡 Доступ: **{escape_md(role_name)}**" if role_name
@@ -454,7 +399,6 @@ async def new_key_screen(context, name):
          InlineKeyboardButton("1 Неделя", callback_data="set_exp_7")],
         [InlineKeyboardButton("1 Месяц", callback_data="set_exp_30"),
          InlineKeyboardButton("Навсегда", callback_data="set_exp_0")],
-        [InlineKeyboardButton(switch, callback_data="new_proto")],
         [InlineKeyboardButton("🛡 Сменить доступ", callback_data="new_key_role")],
         [InlineKeyboardButton("🔙 Отмена", callback_data="back_to_main")],
     ])
@@ -551,16 +495,6 @@ async def finish_key_creation(update: Update, context: ContextTypes.DEFAULT_TYPE
             # ролями что-то не так. Роль довыдадут руками.
             print(f"Роль новому ключу не выдалась: {e}")
 
-        # Xray по умолчанию. Пир при этом создаётся всегда — он держит за
-        # человеком адрес в туннеле, на котором стоит весь учёт, — но конфиг
-        # AmneziaWG человеку не отдаётся, чтобы не путать его двумя способами.
-        if context.user_data.get("proto", "xray") == "xray":
-            from handlers_xray import handout as xray_handout
-            await xray_handout(update, context, new_uid, name, tg_id)
-            context.user_data["state"] = None
-            context.user_data["proto"] = "xray"
-            return
-        
         from delivery import to_self
         # Ключ выдан самому владельцу? Тогда копия «для владельца» — это тот же
         # конфиг и тот же QR вторым заходом в один и тот же чат. Человеку уходит

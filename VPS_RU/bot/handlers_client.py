@@ -43,7 +43,7 @@ async def _issue_new_config(context, chat_id, user, deliver: bool = True):
 
     # Новый пир заводится под ТЕМ ЖЕ человеком. Раньше здесь создавался новый
     # человек с новым uuid, а старый списывался — и вместе с ним уходили роли,
-    # фильтры, персональный лимит, Xray, имя в туннеле и история трафика.
+    # фильтры, персональный лимит, имя в туннеле и история трафика.
     # С ролями это было особенно скверно: без ролей человек в нашей схеме
     # ходит куда угодно, то есть перевыпуск молча открывал ему всю сеть.
     new_uid, c_path, q_path = await create_peer(
@@ -165,32 +165,6 @@ async def check_connection_animation(context, chat_id, message_id, uuid=None):
                         if hs > last_hs_time: last_hs_time = hs
                         if hs > 0 and (now - hs) < 180: is_online = True
     except Exception: pass
-
-    # Xray спрашиваем отдельно: рукопожатия у него нет вовсе, и по пирам он
-    # невидим. Без этой ветки человек, у которого всё работает, получал
-    # «сервер не видит трафика от вас» — и шёл жаловаться владельцу на
-    # исправную связь.
-    if not is_online:
-        try:
-            from xray import online_uuids
-            targets = set([uuid] if uuid else
-                          [u["uuid"] for u in await db.get_users_by_tg_id(chat_id)])
-            if targets & await online_uuids():
-                is_online = True
-                # Время последней активности берём из отметки по адресу: у Xray
-                # это единственный признак, и он же лежит в основе всего учёта.
-                from utils import state_data
-                from xray import twin_addr
-                from acl import peer_ip_map
-                seen = state_data.get("addr_seen") or {}
-                for uid, ip in (await peer_ip_map()).items():
-                    if uid in targets:
-                        twin = twin_addr(ip)
-                        last = int(seen.get(twin, 0)) if twin else 0
-                        if last > last_hs_time:
-                            last_hs_time = last
-        except Exception as e:
-            print(f"Проверка связи по Xray: {e}")
 
     keyboard = [[InlineKeyboardButton("🔙 К списку проверок", callback_data="client_select_check")]]
     if is_online:
@@ -510,16 +484,6 @@ async def client_my_keys_handler(update: Update, context: ContextTypes.DEFAULT_T
     else:
         await context.bot.send_message(chat_id=user_id, text=text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
 
-async def _xray_online():
-    """Кто на связи по Xray. Отдельной обёрткой — чтобы кабинет не падал,
-    если узел молчит: человеку важнее увидеть свой ключ, чем точный статус."""
-    try:
-        import xray
-        return await xray.online_uuids()
-    except Exception:
-        return set()
-
-
 async def client_key_manage_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, uuid_val: str):
     """Карточка ключа глазами владельца ключа, а не администратора."""
     query = update.callback_query
@@ -541,7 +505,7 @@ async def client_key_manage_handler(update: Update, context: ContextTypes.DEFAUL
     if not user.get("is_active", True):
         lines.append(f"⏸ **На паузе** — {await _pause_reason(uuid_val)}")
         lines.append("     Ключ не удалён: как только решение примут, он снова заработает.")
-    elif live.get(uuid_val) or uuid_val in await _xray_online():
+    elif live.get(uuid_val):
         lines.append("🟢 **На связи** — сервер видит ваше устройство")
     else:
         lines.append("🟡 **Не подключён** — включите VPN в приложении")
@@ -569,27 +533,20 @@ async def client_key_manage_handler(update: Update, context: ContextTypes.DEFAUL
     if spent:
         lines.append(f"📊 За сутки: {_human_bytes(spent)}")
 
-    on_xray = bool(await db.get_xray_user(uuid_val))
-    if on_xray:
-        lines += ["", "_Перевыпуск меняет ключ доступа: прежний перестаёт "
-                      "работать сразу. Ваш адрес при этом остаётся прежним — "
-                      "приложение заберёт новый ключ само._"]
-    else:
-        lines += ["", "_Перевыпуск выдаёт новый конфиг, старый работает, пока новый "
-                      "не заработает — без обрыва._"]
+    lines += ["", "_Перевыпуск выдаёт новый конфиг, старый работает, пока новый "
+                  "не заработает — без обрыва._"]
 
     keyboard = [
         # Подпись называет протокол: человеку сразу видно, какое приложение
         # ему нужно. Слово «ссылка» отсюда убрано — по ней не переходят, её
         # вставляют в приложение, и переходившие попадали в браузер.
-        [InlineKeyboardButton("📥 Конфиг Xray" if on_xray else "📥 Конфиг AmneziaWG",
+        [InlineKeyboardButton("📥 Конфиг AmneziaWG",
                               callback_data=f"client_download_{uuid_val}"),
          InlineKeyboardButton("⚡️ Проверить связь", callback_data=f"check_conn_{uuid_val}")],
         [InlineKeyboardButton("🔄 Перевыпустить", callback_data=f"client_regen_{uuid_val}")],
     ]
-    if on_xray:
-        keyboard.append([InlineKeyboardButton("❓ Как подключить",
-                                              callback_data=f"client_how_{uuid_val}")])
+    keyboard.append([InlineKeyboardButton("❓ Как подключить",
+                                          callback_data=f"client_how_{uuid_val}")])
     keyboard.append([InlineKeyboardButton("🔙 К списку ключей", callback_data="client_my_keys")])
 
     await query.edit_message_text(text="\n".join(lines),
@@ -628,36 +585,13 @@ async def client_regen_all_action_handler(update: Update, context: ContextTypes.
     )
 
     # config-first: сначала выдаём ВСЕ новые конфиги, копим старые пиры на снятие
-    #
-    # Протокол проверяем у КАЖДОГО ключа. Перевыпуск одного ключа это делал, а
-    # массовый — нет: он гнал всех путём амнезии. Человеку на Xray это завело бы
-    # лишний пир вместо новой ссылки, а старый ключ повис бы в очереди на снятие
-    # навсегда — она ждёт рукопожатия, которого у Xray не бывает вовсе.
     retire_list = []
-    xray_done = 0
     for user in keys:
         try:
-            if await db.get_xray_user(user["uuid"]):
-                import xray
-                ok, res = await xray.issue(user["uuid"])
-                if not ok:
-                    raise RuntimeError(res)
-                await send_xray_profile(context, chat_id, user["uuid"])
-                xray_done += 1
-                continue
             retire_list.append(await _issue_new_config(context, chat_id, user))
         except Exception as e:
             await context.bot.send_message(chat_id=chat_id, text=f"❌ Ошибка перевыпуска ключа {escape_md(user['name'])}: {e}",
         reply_markup=exit_kb(to_client=True))
-
-    # Раскладку на узле пересобираем один раз на всех, а не на каждого: у людей
-    # на Xray сменились адреса-двойники, и правила знают про старые.
-    if xray_done:
-        try:
-            from restrictions import reapply
-            await reapply("массовый перевыпуск ссылок Xray")
-        except Exception as e:
-            print(f"Массовый перевыпуск, пересборка правил: {e}")
 
     await context.bot.send_message(
         chat_id=chat_id,
@@ -747,78 +681,12 @@ async def client_check_all_handler(update: Update, context: ContextTypes.DEFAULT
 
 # --- ОБРАБОТЧИКИ (ОСТАЛЬНЫЕ) ---
 
-async def send_xray_profile(context, chat_id, uuid_val):
-    """Отдаёт человеку подключение: QR и ссылку. Больше ничего.
-
-    В AmneziaWG человек получает один готовый конфиг — в нём уже прописано и
-    что идёт через туннель, и что мимо. Здесь то же самое: одна ссылка, которую
-    приложение понимает сразу.
-
-    Ссылка уходит отдельным сообщением и без разметки: подчёркивания в ней
-    телеграм принимает за курсив и ломает её.
-    """
-    import xray
-    # Одним куском: сервера и профиль маршрутизации. Человек вставляет это в
-    # приложение один раз и получает сразу и подключение, и сплит.
-    link = await xray.bundle_text(uuid_val)
-    if not link:
-        return False
-
-    qr = await xray.qr_file(uuid_val)
-    if qr:
-        await context.bot.send_photo(
-            chat_id=chat_id, photo=open(qr, "rb"),
-            caption="🔑 Ваше подключение. Оно личное — не передавайте его никому.")
-
-    # Ссылка — отдельным сообщением и кодом: по коду достаточно нажать, и он
-    # копируется целиком. Поэтому подсказка идёт следующим сообщением, а не
-    # приклеивается к ссылке — иначе скопировалось бы и её.
-    await send_copyable(context.bot, chat_id, link,
-                        reply_markup=InlineKeyboardMarkup([[copy_button(link)]]))
-
-    # Подсказка — она же первое знакомство. Человек, которому только что
-    # выдали доступ, ниоткуда не знает, что нужно приложение и где его брать:
-    # список есть, но лежит за кнопкой в карточке ключа, а вопрос возникает
-    # прямо сейчас.
-    apps = xray.apps_markdown(await xray.apps_list())
-
-    # Четвёртого шага здесь больше нет. Он просил добавить «адрес обновлений»,
-    # и без него не работало раздельное туннелирование — но до этого шага
-    # человек просто не доходил. Теперь всё уезжает первым же куском, а
-    # изменения бот присылает сам, когда они появляются.
-
-    await context.bot.send_message(
-        chat_id=chat_id,
-        text=("**Что делать дальше**\n\n"
-              "**1.** Поставьте приложение **Happ** — выберите свою систему:\n"
-              f"{apps}\n\n"
-              "**2.** Скопируйте текст выше **целиком** и вставьте в "
-              "приложение — оно само всё настроит. На телефоне можно "
-              "вместо этого отсканировать QR.\n\n"
-              "**3.** Включите VPN в приложении."),
-        parse_mode=ParseMode.MARKDOWN,
-        disable_web_page_preview=True,
-        reply_markup=exit_kb(to_client=True))
-
-    try:
-        await db.delivery_downloaded(uuid_val)
-    except Exception:
-        pass
-    return True
-
-
 async def client_download_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, uuid_val: str):
     query = update.callback_query
     await query.answer("Подготовка файла...")
     user = await db.get_user_by_uuid(uuid_val)
     if not user: return
 
-    # Тому, кто уже на Xray, файл конфига не нужен и только путает: у него
-    # подключение живёт ссылкой.
-    if await db.get_xray_user(uuid_val):
-        if await send_xray_profile(context, query.message.chat_id, uuid_val):
-            return
-    
     name = user['name']
     chat_id = query.message.chat_id
     
@@ -900,16 +768,9 @@ async def client_regen_confirm(update: Update, context: ContextTypes.DEFAULT_TYP
     query = update.callback_query
     keyboard = [[InlineKeyboardButton("✅ Да, перевыпустить", callback_data=f"do_client_regen_{uuid_val}")],[InlineKeyboardButton("🔙 Отмена", callback_data=f"client_key_manage_{uuid_val}")]
     ]
-    if await db.get_xray_user(uuid_val):
-        text = ("⚠️ **Смена ключа**\n\n"
-                "Ключ доступа сменится, прежний перестанет работать сразу. "
-                "Делайте это, если он попал не в те руки.\n\n"
-                "Ваш адрес останется прежним — приложение заберёт новый ключ "
-                "само, вставлять ничего не нужно.\nВы уверены?")
-    else:
-        text = ("⚠️ **Смена ключа**\n\nВам выдадут новый файл конфигурации — его "
-                "нужно добавить в AmneziaWG. Старый ключ продолжит работать и "
-                "снимется сам, когда новый заработает.\nВы уверены?")
+    text = ("⚠️ **Смена ключа**\n\nВам выдадут новый файл конфигурации — его "
+            "нужно добавить в AmneziaWG. Старый ключ продолжит работать и "
+            "снимется сам, когда новый заработает.\nВы уверены?")
     await query.edit_message_text(
         text,
         reply_markup=InlineKeyboardMarkup(keyboard),
@@ -926,38 +787,6 @@ async def client_regen_action(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.edit_message_text("❌ Ключ не найден.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 В меню", callback_data="client_menu")]]))
         return
         
-    # У человека на Xray перевыпуск — это новая ссылка, а не новый пир.
-    if await db.get_xray_user(uuid_val):
-        import xray
-        ok, res = await xray.issue(uuid_val)
-        if not ok:
-            await context.bot.send_message(chat_id=chat_id, text=f"❌ Не вышло: {res}",
-        reply_markup=exit_kb(to_client=True))
-            return
-        # Новый адрес-двойник — значит, раскладка на узле про старый.
-        from restrictions import reapply
-        await reapply("перевыпуск ссылки Xray")
-        # Сначала отправляем ссылку и только потом объявляем об успехе.
-        # Раньше бот писал «ссылка ниже», ссылка не собиралась, и человек
-        # оставался с обещанием вместо доступа — а владелец узнавал об
-        # этом только от него.
-        sent = await send_xray_profile(context, chat_id, uuid_val)
-        if not sent:
-            await query.edit_message_text(
-                "\u26a0\ufe0f Ключ перевыпущен, но ссылку собрать не вышло."
-                "\n\nВладельцу: не задан адрес сервера для Xray — "
-                "проверьте экран «Протоколы → Xray».",
-                reply_markup=exit_kb(to_client=True))
-            return
-        # Без кнопок: выход уже есть на последнем сообщении, которое отправила
-        # выдача. Раньше здесь шло ещё одно сообщение — «Что дальше?» с кнопкой
-        # в меню: оно появилось, когда у выдачи выхода не было. Теперь это
-        # пятое сообщение подряд, которое ничего не говорит.
-        await query.edit_message_text("✅ Готово. Новая ссылка выше, прежняя "
-                                      "больше не работает.")
-        return
-
-
     await query.edit_message_text(
         f"⏳ Готовлю новый конфиг…\n"
         f"Старый ключ останется рабочим, пока новый не заработает — "
@@ -1222,17 +1051,79 @@ async def has_unseen_changes(tg_id) -> bool:
         return False
 
 
+# Официальные приложения AmneziaWG — ссылки из документации Amnezia
+# (docs.amnezia.org, «Альтернативные приложения»). На iPhone и Mac это одно
+# приложение из App Store; на Linux отдельного приложения нет — ставятся
+# инструменты и конфиг поднимается командой.
+AWG_APPS = {
+    "ios": ("iPhone / iPad", "App Store",
+            "https://apps.apple.com/app/amneziawg/id6478942365"),
+    "android": ("Android", "Google Play",
+                "https://play.google.com/store/apps/details?id=org.amnezia.awg"),
+    "win": ("Windows", "GitHub",
+            "https://github.com/amnezia-vpn/amneziawg-windows-client/releases/latest"),
+    "mac": ("macOS", "App Store",
+            "https://apps.apple.com/app/amneziawg/id6478942365"),
+    "linux": ("Linux", "amneziawg-tools",
+              "https://github.com/amnezia-vpn/amneziawg-tools"),
+}
+
+
+def awg_apps_markdown():
+    return "\n".join(f"• {title}: [{store}]({url})"
+                     for title, store, url in AWG_APPS.values())
+
+
+def platform_keyboard(uuid_val, back=None):
+    """Кнопки выбора системы. По две в ряд — так они остаются читаемыми
+    и на телефоне, и на десктопе."""
+    rows, pair = [], []
+    for key, (title, _store, _url) in AWG_APPS.items():
+        pair.append(InlineKeyboardButton(title, callback_data=f"client_plat_{key}_{uuid_val}"))
+        if len(pair) == 2:
+            rows.append(pair)
+            pair = []
+    if pair:
+        rows.append(pair)
+    if back:
+        rows.append([InlineKeyboardButton("🔙 Назад", callback_data=back)])
+    return InlineKeyboardMarkup(rows)
+
+
+def instructions(platform=None):
+    """Три шага, которые человек делает один раз."""
+    lines = ["🔑 **Как подключить**", ""]
+    if platform in AWG_APPS:
+        title, store, url = AWG_APPS[platform]
+        lines.append(f"**1.** Поставьте приложение **AmneziaWG** для {title}: "
+                     f"[{store}]({url})")
+    else:
+        lines.append("**1.** Поставьте приложение **AmneziaWG** — выберите свою систему:")
+        lines.append(awg_apps_markdown())
+    if platform == "linux":
+        lines.append("**2.** Положите файл конфига в `/etc/amnezia/amneziawg/` "
+                     "и поднимите его: `awg-quick up <имя>`")
+    else:
+        lines.append("**2.** В приложении нажмите «＋» и добавьте файл конфига "
+                     "или отсканируйте QR")
+    lines += [
+        "**3.** Включите VPN",
+        "",
+        "**Российские сервисы идут мимо VPN сами** — банки, госуслуги, "
+        "маркетплейсы. Их список уже записан в конфиге.",
+        "",
+        "⚠️ Это ваш личный доступ. Не передавайте конфиг никому.",
+        "",
+        GOSUSLUGI_APP_WARNING,
+    ]
+    return "\n".join(lines)
+
+
 async def client_how_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, uuid_val: str):
     """Те же три шага, что при выдаче — человек забывает, и это нормально."""
     query = update.callback_query
-    from handlers_xray import platform_keyboard, instructions
-    # Показываем полный список приложений сразу. Раньше здесь была одна
-    # строка «выберите систему» и кнопки — ни одной ссылки на экране, пока
-    # не нажмёшь ещё раз. Владелец не нашёл перечень у людей, и правильно:
-    # его там не было видно.
-    text = await instructions(uuid_val)
     await query.edit_message_text(
-        text,
+        instructions(),
         reply_markup=platform_keyboard(uuid_val,
                                        back=f"client_key_manage_{uuid_val}"),
         parse_mode=ParseMode.MARKDOWN,
@@ -1240,40 +1131,12 @@ async def client_how_handler(update: Update, context: ContextTypes.DEFAULT_TYPE,
 
 
 async def client_apps_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Где взять приложение — экран из личного кабинета.
-
-    Перечень был только в карточке ключа, за кнопкой «Как подключить». Туда за
-    программой не идут: человек ищет, что поставить на новый телефон, а не
-    разбирается с ключом. Показываем то, что нужно именно ему: под ссылку
-    `vless://` — Happ, под конфиг AmneziaWG — AmneziaWG.
-    """
-    import xray
+    """Где взять приложение — экран из личного кабинета."""
     query = update.callback_query
-    keys = await db.get_users_by_tg_id(update.effective_user.id)
-
-    on_xray = on_awg = False
-    for k in keys:
-        if await db.get_xray_user(k["uuid"]):
-            on_xray = True
-        else:
-            on_awg = True
-    if not keys:                      # ключей ещё нет — показываем оба
-        on_xray = on_awg = True
-
-    lines = ["📱 **Приложения**", ""]
-    if on_xray:
-        lines.append("Под ссылку `vless://` — **Happ**:")
-        lines.append(xray.apps_markdown(await xray.apps_list()))
-        lines.append("")
-        lines.append("Поставьте, откройте карточку ключа и скопируйте оттуда "
-                     "ссылку — приложение добавит подключение само.")
-    if on_awg:
-        if on_xray:
-            lines.append("")
-        lines.append("Под конфиг AmneziaWG — приложение **AmneziaWG**: "
-                     "[amnezia.org](https://amnezia.org)")
-        lines.append("Конфиг берётся из карточки ключа — файлом или по QR.")
-
+    lines = ["📱 **Приложения**", "",
+             "Под конфиг AmneziaWG — приложение **AmneziaWG**:",
+             awg_apps_markdown(), "",
+             "Конфиг берётся из карточки ключа — файлом или по QR."]
     keyboard = [[InlineKeyboardButton("🔑 Мои ключи", callback_data="client_my_keys")],
                 [InlineKeyboardButton("🏠 Личный кабинет", callback_data="client_menu")]]
     await query.edit_message_text("\n".join(lines),
@@ -1284,11 +1147,10 @@ async def client_apps_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def client_platform_handler(update: Update, context: ContextTypes.DEFAULT_TYPE,
                                   platform: str, uuid_val: str):
-    """Три шага под выбранную систему — и кнопка прислать ссылку заново."""
+    """Три шага под выбранную систему — и кнопка прислать конфиг заново."""
     query = update.callback_query
-    from handlers_xray import instructions
-    text = await instructions(uuid_val, platform)
-    keyboard = [[InlineKeyboardButton("📥 Прислать ссылку заново",
+    text = instructions(platform)
+    keyboard = [[InlineKeyboardButton("📥 Прислать конфиг заново",
                                       callback_data=f"client_download_{uuid_val}")],
                 [InlineKeyboardButton("🔙 Другая система",
                                       callback_data=f"client_how_{uuid_val}")]]

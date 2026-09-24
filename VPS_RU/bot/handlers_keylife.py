@@ -149,13 +149,6 @@ async def do_extend(update: Update, context: ContextTypes.DEFAULT_TYPE,
 
     await db.execute("UPDATE users SET is_active=TRUE, expires_at=$2 WHERE uuid=$1",
                      uuid_val, expires)
-    # Человек снова имеет право пользоваться — вернуть его надо на обоих
-    # протоколах, а не только на том, с которого он ушёл в паузу.
-    try:
-        from xray import sync_person
-        await sync_person("продление")
-    except Exception as e:
-        print(f"Xray: не удалось вернуть человека в конфиг: {e}")
     await db.resolve_decision(uuid_val, f"extended:{days}")
     await db.log_event("KeyLife",
                        f"Ключ {user['name']} продлён на "

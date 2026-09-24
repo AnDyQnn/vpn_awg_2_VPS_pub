@@ -264,44 +264,6 @@ else
     add_check CAT_VPN "Маршрут мир/РКН → Германия" "error" "table 200 пуста"
 fi
 
-# --- XRAY: ВТОРОЙ ПРОТОКОЛ ------------------------------------------------
-# Раньше аудит проверял только амнезию, хотя Xray живёт на этом же узле. Отказ
-# любой его части выглядит одинаково — «VPN не работает», — и разбирать его
-# приходилось руками по журналам. Теперь видно сразу и по частям.
-#
-# Xray необязателен: если он выключен, это не повод ругаться. Поэтому вся
-# ветка идёт только при включённом протоколе.
-XRAY_ON=$(docker exec vpn_wireguard sh -c 'grep -o "\"xray\": *true" /etc/amnezia/amneziawg/protocols.json 2>/dev/null' 2>/dev/null)
-if [ -n "$XRAY_ON" ]; then
-    add_check CAT_VPN "Протокол Xray" "ok" "Включён"
-
-    XR_PROC=$(docker exec vpn_wireguard sh -c 'ps ax 2>/dev/null | grep -c "[x]ray run"' 2>/dev/null)
-    [ "${XR_PROC:-0}" -ge 1 ] \
-        && add_check CAT_VPN "Процесс Xray" "ok" "Работает" \
-        || add_check CAT_VPN "Процесс Xray" "error" "Не работает — люди на нём без связи"
-
-    # Вход: слушается ли 443. Он один — запасных больше нет, — так что его
-    # падение значит, что все люди на Xray без связи.
-    XR_PORTS=$(docker exec vpn_wireguard sh -c 'ss -tln 2>/dev/null | grep -cE ":443 "' 2>/dev/null)
-    [ "${XR_PORTS:-0}" -ge 1 ] \
-        && add_check CAT_VPN "Вход Xray" "ok" "443 слушается" \
-        || add_check CAT_VPN "Вход Xray" "error" "443 не слушается — люди на Xray без связи"
-
-    # Адреса-двойники: на них держится весь учёт людей на Xray. Пропали —
-    # человек перестаёт считаться, а лимиты и роли его не видят.
-    XR_TWINS=$(docker exec vpn_wireguard sh -c 'ip -4 -o addr show dev xray0 2>/dev/null | grep -c inet' 2>/dev/null)
-    [ "${XR_TWINS:-0}" -ge 1 ] \
-        && add_check CAT_VPN "Адреса людей на Xray" "ok" "${XR_TWINS} шт." \
-        || add_check CAT_VPN "Адреса людей на Xray" "warning" "Ни одного — учёт их не видит"
-
-    XR_GEO=$(docker exec vpn_wireguard sh -c 'ls -la /usr/local/bin/geoip.dat 2>/dev/null | awk "{print \$5}"' 2>/dev/null)
-    [ "${XR_GEO:-0}" -gt 1000000 ] \
-        && add_check CAT_VPN "Гео-файлы Xray" "ok" "$((${XR_GEO:-0} / 1048576)) МБ" \
-        || add_check CAT_VPN "Гео-файлы Xray" "warning" "Нет или пусты — разделение трафика у людей сломается"
-else
-    add_check CAT_VPN "Протокол Xray" "ok" "Выключен (не требуется)"
-fi
-
 # Запрет обхода фильтра через чужой DNS. Без него фильтр держится на честном
 # слове телефона, а телефон по умолчанию спрашивает мимо нас.
 DOH_RULES=$(docker exec vpn_wireguard sh -c 'iptables -S DNS_BYPASS 2>/dev/null | grep -c "^-A"' 2>/dev/null)
@@ -310,16 +272,6 @@ if [ "${DOH_RULES:-0}" -ge 3 ]; then
 else
     add_check CAT_VPN "Запрет обходного DNS" "warning" "Не настроен — фильтр обходят через DNS поверх HTTPS"
 fi
-
-# Свой канал в Германию. Не настроен — это не ошибка: люди идут общим туннелем,
-# как и работали до его появления.
-XR_CHAIN=$(docker exec vpn_wireguard sh -c 'grep -c "reverse" /etc/amnezia/amneziawg/xray.json 2>/dev/null' 2>/dev/null)
-if [ "${XR_CHAIN:-0}" -ge 1 ]; then
-    add_check CAT_VPN "Свой канал в Германию" "ok" "Настроен"
-else
-    add_check CAT_VPN "Свой канал в Германию" "ok" "Не настроен (идём общим туннелем)"
-fi
-
 
 RU_SET=$(docker exec vpn_wireguard ipset list ru_nets 2>/dev/null | grep -cE '^[0-9]+\.')
 [ "${RU_SET:-0}" -ge 100 ] && add_check CAT_VPN "Гео-RU список (ru_nets)" "ok" "${RU_SET} сетей" || add_check CAT_VPN "Гео-RU список (ru_nets)" "warning" "Мало/пусто: ${RU_SET:-0}"
@@ -601,11 +553,10 @@ else
     add_check CAT_LOGS "Системные обновления ОС" "ok" "Ждут $UPDATES, среди них заплаток безопасности нет"
 fi
 
-# --- Подписка наружу ------------------------------------------------------
-# Единственный порт, который мы открываем в интернет сами. Проверяем не «вклю-
-# чена ли», а живо ли то, на чём она держится: сертификат живёт неделю, правила
-# охраны снимаются перезапуском докера, а без таймера продления всё это тихо
-# кончится через шесть дней, и узнают об этом все сразу.
+# --- Сертификат узла ------------------------------------------------------
+# Проверяем не «есть ли», а живо ли то, на чём он держится: на IP-адрес он
+# живёт неделю, а без таймера продления тихо кончится, и страница отказа
+# вернётся на самоподписанный.
 PSUB_CERT="$APP_DIR/volumes/certs/fullchain.pem"
 if [ -s "$PSUB_CERT" ]; then
     PSUB_UNTIL=$(openssl x509 -in "$PSUB_CERT" -noout -enddate 2>/dev/null | cut -d= -f2)
@@ -620,34 +571,22 @@ if [ -s "$PSUB_CERT" ]; then
     PSUB_TS=$(date -d "$PSUB_UNTIL" +%s 2>/dev/null || echo 0)
     PSUB_LEFT=$(( (PSUB_TS - $(date +%s)) / 86400 ))
     if [ "$PSUB_TS" -eq 0 ]; then
-        add_check CAT_SEC "Подписка наружу · сертификат" "warning" "срок не читается"
+        add_check CAT_SEC "Сертификат узла" "warning" "срок не читается"
     elif [ "$PSUB_LEFT" -lt 1 ]; then
-        add_check CAT_SEC "Подписка наружу · сертификат" "error" "истекает меньше чем через сутки"
+        add_check CAT_SEC "Сертификат узла" "error" "истекает меньше чем через сутки"
     elif [ "$PSUB_LEFT" -lt 3 ]; then
-        add_check CAT_SEC "Подписка наружу · сертификат" "warning" "осталось $PSUB_LEFT сут."
+        add_check CAT_SEC "Сертификат узла" "warning" "осталось $PSUB_LEFT сут."
     else
-        add_check CAT_SEC "Подписка наружу · сертификат" "ok" "осталось $PSUB_LEFT сут., $PSUB_WILD"
-    fi
-
-    # Правила охраны. Их снимает перезапуск докера, и без этой проверки порт
-    # остался бы открытым настежь, а выглядело бы всё по-прежнему.
-    PSUB_RULES=$(iptables -S VPN_SUB 2>/dev/null | grep -c -- "-j DROP")
-    PSUB_HOOK=$(iptables -S DOCKER-USER 2>/dev/null | grep -c -- "-j VPN_SUB")
-    if [ "${PSUB_RULES:-0}" -ge 3 ] && [ "${PSUB_HOOK:-0}" -ge 1 ]; then
-        add_check CAT_SEC "Подписка наружу · охрана порта" "ok" "правил $PSUB_RULES, зацеплены в DOCKER-USER"
-    elif [ "${PSUB_HOOK:-0}" -lt 1 ]; then
-        add_check CAT_SEC "Подписка наружу · охрана порта" "error" "цепочка не зацеплена в DOCKER-USER — порт без охраны"
-    else
-        add_check CAT_SEC "Подписка наружу · охрана порта" "error" "правил $PSUB_RULES вместо 3"
+        add_check CAT_SEC "Сертификат узла" "ok" "осталось $PSUB_LEFT сут., $PSUB_WILD"
     fi
 
     if systemctl is-active --quiet vpn-subcert.timer 2>/dev/null; then
-        add_check CAT_SEC "Подписка наружу · продление" "ok" "таймер работает"
+        add_check CAT_SEC "Сертификат · продление" "ok" "таймер работает"
     else
-        add_check CAT_SEC "Подписка наружу · продление" "error" "таймер не запущен, сертификат кончится за неделю"
+        add_check CAT_SEC "Сертификат · продление" "error" "таймер не запущен, сертификат кончится за неделю"
     fi
 else
-    add_check CAT_SEC "Подписка наружу" "ok" "закрыта, видно только изнутри"
+    add_check CAT_SEC "Сертификат узла" "ok" "не выпущен — страница отказа на самоподписанном"
 fi
 
 # --- Сверка базы с тем, что реально стоит ---------------------------------

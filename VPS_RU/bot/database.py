@@ -87,25 +87,6 @@ class Database:
                 await self.execute("ALTER TABLE user_tg_links ADD COLUMN username TEXT;")
 
             await self.execute("""
-                -- Метрики второго протокола. Трафик по людям уже копится в
-                -- часовых срезах; здесь то, чего там нет и что иначе видно
-                -- только «прямо сейчас»: сколько соединений держится, сколько
-                -- людей выдано и был ли на связи мост.
-                --
-                -- Нужно это для разбора задним числом. «Вчера вечером всё
-                -- тормозило» без цифр не разобрать никак, а по снимкам видно,
-                -- был ли всплеск соединений и не отваливался ли мост.
-                CREATE TABLE IF NOT EXISTS xray_metrics (
-                    id SERIAL PRIMARY KEY,
-                    taken_at TIMESTAMP NOT NULL DEFAULT NOW(),
-                    users INT NOT NULL DEFAULT 0,
-                    connections INT NOT NULL DEFAULT 0,
-                    process_up BOOLEAN NOT NULL DEFAULT FALSE,
-                    bridge_up BOOLEAN
-                );
-                CREATE INDEX IF NOT EXISTS idx_xray_metrics_at
-                    ON xray_metrics (taken_at DESC);
-
                 CREATE TABLE IF NOT EXISTS events_log (
                     id SERIAL PRIMARY KEY,
                     timestamp TIMESTAMP DEFAULT NOW(),
@@ -275,26 +256,18 @@ class Database:
             await self.execute(
                 "CREATE INDEX IF NOT EXISTS idx_traffic_hourly_hour ON traffic_hourly(hour);")
 
-            # --- ВТОРОЙ ПРОТОКОЛ: XRAY ---
-            # Человек остаётся один, меняется только способ подключения. Поэтому
-            # здесь не «вторые пользователи», а приписка к существующему: его
-            # идентификатор в Xray и токен личной ссылки на подписку.
-            #
-            # Токен отдельно от идентификатора намеренно: ссылку можно отозвать,
-            # не трогая само подключение, и наоборот — сменить доступ, не меняя
-            # ссылку, которую человек уже сохранил.
-            await self.execute("""
-                CREATE TABLE IF NOT EXISTS xray_users (
-                    user_uuid TEXT PRIMARY KEY REFERENCES users(uuid) ON DELETE CASCADE,
-                    xray_uuid TEXT NOT NULL,
-                    sub_token TEXT NOT NULL UNIQUE,
-                    created_at TIMESTAMP DEFAULT NOW(),
-                    first_seen_at TIMESTAMP,
-                    revoked_at TIMESTAMP
-                );
-            """)
+            # --- СЛЕДЫ СВОЕГО XRAY ---
+            # Свой Xray убран целиком. Его таблицы и настройки больше никто не
+            # читает — убираем, чтобы в базе не лежало то, чего в проекте нет:
+            # ключи Reality, токены ссылок, метрики, личные записи профиля.
+            # IF EXISTS: на новой установке их и не было.
+            await self.execute("DROP TABLE IF EXISTS xray_users;")
+            await self.execute("DROP TABLE IF EXISTS xray_metrics;")
+            await self.execute("DROP TABLE IF EXISTS peer_routing;")
             await self.execute(
-                "CREATE INDEX IF NOT EXISTS idx_xray_token ON xray_users(sub_token);")
+                "DELETE FROM settings WHERE key LIKE 'xray\\_%' "
+                "OR key LIKE 'cascade\\_%' OR key LIKE 'happ\\_profile\\_%' "
+                "OR key IN ('server_host', 'decoy_recipe');")
             # --- ИМЕНА ВНУТРИ ТУННЕЛЯ ---
             # Имя ведёт либо на человека, либо на конкретный адрес. На человека —
             # основной случай: адрес подставляется живым, и перевыпуск ключа имя
@@ -380,24 +353,6 @@ class Database:
             await self.execute(
                 "CREATE INDEX IF NOT EXISTS idx_hits_ref ON filter_hits(ref);")
 
-            # --- СВОИ ИСКЛЮЧЕНИЯ НА КЛЮЧ ---
-            # Ситуационное: рабочая подсеть, домашний сервис, конкретный сайт.
-            # Общему списку такое не место — оно про одно устройство. Ключ
-            # здесь и есть устройство, поэтому запись висит на ключе.
-            #
-            # direction: 'direct' — мимо туннеля, 'proxy' — наоборот, через
-            # туннель вопреки общему правилу.
-            await self.execute("""
-                CREATE TABLE IF NOT EXISTS peer_routing (
-                    id SERIAL PRIMARY KEY,
-                    user_uuid TEXT REFERENCES users(uuid) ON DELETE CASCADE,
-                    direction TEXT NOT NULL DEFAULT 'direct',
-                    value TEXT NOT NULL,
-                    note TEXT,
-                    created_at TIMESTAMP DEFAULT NOW(),
-                    UNIQUE (user_uuid, direction, value)
-                );
-            """)
 
             # --- ПОДДЕРЖКА ПРОЕКТА ---
             # Реквизит: карта, телефон для СБП или картинка с QR. У картинки в
@@ -619,87 +574,6 @@ class Database:
         await self.execute("DELETE FROM pending_retire WHERE old_uuid=$1", old_uuid)
 
     # ------------------------ КОНТРОЛЬ НАГРУЗКИ ------------------------
-    # --- ВТОРОЙ ПРОТОКОЛ: XRAY -------------------------------------------
-    async def add_xray_user(self, user_uuid, xray_uuid, sub_token):
-        """Заводит человеку подключение по Xray. Повторный вызов перевыпускает:
-        и идентификатор, и токен ссылки — это и есть «отозвать утёкшую ссылку»."""
-        await self.execute(
-            """INSERT INTO xray_users (user_uuid, xray_uuid, sub_token)
-               VALUES ($1,$2,$3)
-               ON CONFLICT (user_uuid) DO UPDATE SET
-                   xray_uuid=$2, sub_token=$3, created_at=NOW(),
-                   first_seen_at=NULL, revoked_at=NULL""",
-            user_uuid, xray_uuid, sub_token)
-
-    async def get_xray_user(self, user_uuid):
-        rows = await self.fetch_all(
-            "SELECT xray_uuid, sub_token, created_at, first_seen_at, revoked_at "
-            "FROM xray_users WHERE user_uuid=$1", user_uuid)
-        return dict(rows[0]) if rows else None
-
-    async def get_xray_by_token(self, token):
-        """Кому принадлежит ссылка. Отозванные не отдаём — иначе отзыв ничего
-        не значил бы до следующей выдачи."""
-        rows = await self.fetch_all(
-            "SELECT x.user_uuid, x.xray_uuid, u.name, u.is_active, u.expires_at "
-            "FROM xray_users x JOIN users u ON u.uuid = x.user_uuid "
-            "WHERE x.sub_token=$1 AND x.revoked_at IS NULL", token)
-        return dict(rows[0]) if rows else None
-
-    async def list_xray_users(self):
-        """Все действующие подключения Xray — из них собирается конфиг узла."""
-        rows = await self.fetch_all(
-            "SELECT x.user_uuid, x.xray_uuid, x.first_seen_at, u.name, u.is_active "
-            "FROM xray_users x JOIN users u ON u.uuid = x.user_uuid "
-            "WHERE x.revoked_at IS NULL ORDER BY u.name")
-        return [dict(r) for r in rows]
-
-    async def mark_xray_seen(self, user_uuid):
-        """Первое живое подключение. Именно оно считается переездом, а не факт
-        выдачи ссылки."""
-        await self.execute(
-            "UPDATE xray_users SET first_seen_at=NOW() "
-            "WHERE user_uuid=$1 AND first_seen_at IS NULL", user_uuid)
-
-    async def revoke_xray(self, user_uuid):
-        await self.execute(
-            "UPDATE xray_users SET revoked_at=NOW() WHERE user_uuid=$1", user_uuid)
-
-    # --- метрики Xray -----------------------------------------------------
-    async def add_xray_metric(self, users, connections, process_up, bridge_up):
-        """Снимок состояния. Байты сюда не пишем: трафик по людям уже копится в
-        часовых срезах, и вторая копия однажды разойдётся с первой."""
-        await self.execute(
-            "INSERT INTO xray_metrics (users, connections, process_up, "
-            "bridge_up) VALUES ($1,$2,$3,$4)",
-            int(users), int(connections), bool(process_up), bridge_up)
-
-    async def xray_metrics_summary(self, hours=24):
-        """Сводка за последние часы: пик и среднее число соединений, доля
-        времени с живым процессом и мостом.
-
-        Доля, а не «да/нет»: мост может отваливаться на минуты, и по одному
-        снимку этого не видно вовсе."""
-        rows = await self.fetch_all(
-            "SELECT COUNT(*) AS n, "
-            "MAX(connections) AS peak, "
-            "AVG(connections)::int AS avg_conn, "
-            "COUNT(*) FILTER (WHERE process_up) AS proc_ok, "
-            "COUNT(*) FILTER (WHERE bridge_up) AS bridge_ok, "
-            "COUNT(*) FILTER (WHERE bridge_up IS NOT NULL) AS bridge_seen "
-            "FROM xray_metrics "
-            "WHERE taken_at > NOW() - ($1 || ' hours')::interval",
-            str(int(hours)))
-        return dict(rows[0]) if rows else {}
-
-    async def trim_xray_metrics(self, keep_days=30):
-        """Старое не храним: снимок раз в пять минут — это почти девять тысяч
-        строк в месяц, и смысла в прошлогодних нет никакого."""
-        await self.execute(
-            "DELETE FROM xray_metrics "
-            "WHERE taken_at < NOW() - ($1 || ' days')::interval",
-            str(int(keep_days)))
-
     async def get_traffic_totals(self, uuid):
         """Сколько человек прокачал за всё время: (принято, отдано) в байтах.
 
@@ -716,9 +590,6 @@ class Database:
             return 0, 0
         return int(row[0]["i"] or 0), int(row[0]["o"] or 0)
 
-    async def count_xray_users(self):
-        return await self.fetch_val(
-            "SELECT COUNT(*) FROM xray_users WHERE revoked_at IS NULL") or 0
     # --- ОБЩИЕ ПРАВИЛА ФИЛЬТРАЦИИ ----------------------------------------
     # Категории, включённые сразу всем, и свой список сайтов владельца. Лежат
     # в настройках, а не отдельной таблицей: это одна короткая строка на всю
@@ -973,27 +844,6 @@ class Database:
     async def mark_all_filter_hits_seen(self):
         await self.execute(
             "UPDATE filter_hits SET seen_at=NOW() WHERE seen_at IS NULL")
-
-    # --- СВОИ ИСКЛЮЧЕНИЯ НА КЛЮЧ -----------------------------------------
-    async def add_peer_route(self, uuid_val, value, direction="direct", note=None):
-        await self.execute(
-            """INSERT INTO peer_routing (user_uuid, direction, value, note)
-               VALUES ($1,$2,$3,$4)
-               ON CONFLICT (user_uuid, direction, value) DO NOTHING""",
-            uuid_val, direction, value, note)
-
-    async def list_peer_routes(self, uuid_val):
-        rows = await self.fetch_all(
-            "SELECT id, direction, value, note FROM peer_routing "
-            "WHERE user_uuid=$1 ORDER BY direction, value", uuid_val)
-        return [dict(r) for r in rows]
-
-    async def delete_peer_route(self, route_id):
-        await self.execute("DELETE FROM peer_routing WHERE id=$1", int(route_id))
-
-    async def count_peer_routes(self, uuid_val):
-        return await self.fetch_val(
-            "SELECT COUNT(*) FROM peer_routing WHERE user_uuid=$1", uuid_val) or 0
 
     # --- ЛОГИН В TELEGRAM ------------------------------------------------
     async def set_tg_username(self, tg_id, username):
