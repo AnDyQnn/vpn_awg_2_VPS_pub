@@ -227,6 +227,11 @@ class ProtocolSwitch(BaseModel):
     name: str
     enabled: bool = True
 
+class XrayStack(BaseModel):
+    enabled: bool = False
+    # Адреса владельца в туннеле: только с них открывается панель 3X-UI.
+    panel_ips: List[str] = []
+
 def run_cmd(cmd):
     try:
         if isinstance(cmd, list):
@@ -407,9 +412,10 @@ def setup_network():
     # опубликованы, но закрываем явно: заглушка — вещь внутренняя, в интернете
     # ей делать нечего.
     run_cmd("iptables -A INPUT -i eth0 -p tcp --dport 80 -j DROP")
-    # 443 снаружи слушать некому: страница отказа живёт на 8443 внутри
-    # туннеля, а своего входа на 443 у узла нет. Закрываем явно.
-    run_cmd("iptables -A INPUT -i eth0 -p tcp --dport 443 -j DROP")
+    # Входы Xray (443 — сам вход, 2096 — подписка) открыты, только пока
+    # владелец включил стек 3X-UI. Выключен — закрыты явно: страница отказа
+    # живёт на 8443 внутри туннеля, слушать эти порты больше некому.
+    xray_gate_apply()
     # Раньше закрывался только eth0, а клиенты приходят по wg0 — и любой пир мог забрать
     # приватный ключ сервера через /api/backup_config. Это и есть та самая дыра.
     run_cmd("iptables -A INPUT -i wg0 -p tcp --dport 8000 -j DROP")
@@ -1032,18 +1038,78 @@ PROTO_STATE = f"{CONF_DIR}/protocols.json"
 
 
 def proto_state():
-    """Включён ли AmneziaWG. Нет файла — включён.
+    """Состояние входов. Нет файла — AmneziaWG включён, стек Xray выключен.
 
-    В старом файле мог остаться ключ второго протокола — он больше ничего не
-    значит и не читается."""
+    Стек Xray — панель 3X-UI в соседнем контейнере. Его состояние лежит под
+    ключом `xui`, а не `xray`: под `xray` в старых файлах осталась запись от
+    своего Xray, убранного в 8.63.0, и она открыла бы ворота сама."""
+    state = {"awg": True, "xui": False, "panel_ips": []}
     try:
         if os.path.exists(PROTO_STATE):
             with open(PROTO_STATE) as f:
                 s = json.load(f) or {}
-                return {"awg": bool(s.get("awg", True))}
+            state["awg"] = bool(s.get("awg", True))
+            state["xui"] = bool(s.get("xui", False))
+            state["panel_ips"] = [str(ip) for ip in (s.get("panel_ips") or [])
+                                  if _is_tunnel_ip(str(ip))]
     except Exception as e:
         print(f"Состояние протоколов не читается: {e}")
-    return {"awg": True}
+    return state
+
+
+def _is_tunnel_ip(ip):
+    """Адрес из сети туннеля — только такие пускаем к панели."""
+    import ipaddress as _ip
+    try:
+        return _ip.ip_address(ip) in _ip.ip_network(f"{VPN_SUBNET}/24", strict=False)
+    except ValueError:
+        return False
+
+
+# Порты стека Xray, опубликованные наружу: вход и подписка.
+XRAY_PUBLIC_PORTS = (443, 2096)
+XRAY_GATE_CHAIN = "XRAY_GATE"
+# Панель 3X-UI. Наружу не публикуется; из туннеля — только владельцу.
+XUI_PANEL_PORT = 2053
+XUI_PANEL_CHAIN = "XUI_PANEL"
+
+
+def xray_gate_apply(state=None):
+    """Ворота стека Xray: входы снаружи и доступ к панели.
+
+    Цепочки свои — перестраиваются целиком, ничего чужого не задевая, и
+    переключаются на ходу, без перезапуска контейнера. Порядок в INPUT:
+    зацепляем первыми, чтобы общие правила ниже не решили раньше нас."""
+    state = state or proto_state()
+    ports = ",".join(str(p) for p in XRAY_PUBLIC_PORTS)
+
+    subprocess.run(f"iptables -N {XRAY_GATE_CHAIN}", shell=True, stderr=subprocess.DEVNULL)
+    subprocess.run(f"iptables -F {XRAY_GATE_CHAIN}", shell=True, stderr=subprocess.DEVNULL)
+    hook = f"-i eth0 -p tcp -m multiport --dports {ports} -j {XRAY_GATE_CHAIN}"
+    if subprocess.run(f"iptables -C INPUT {hook}", shell=True, stderr=subprocess.DEVNULL,
+                      stdout=subprocess.DEVNULL).returncode != 0:
+        subprocess.run(f"iptables -I INPUT 1 {hook}", shell=True, stderr=subprocess.DEVNULL)
+    if not state.get("xui"):
+        subprocess.run(f"iptables -A {XRAY_GATE_CHAIN} -j DROP", shell=True,
+                       stderr=subprocess.DEVNULL)
+
+    subprocess.run(f"iptables -N {XUI_PANEL_CHAIN}", shell=True, stderr=subprocess.DEVNULL)
+    subprocess.run(f"iptables -F {XUI_PANEL_CHAIN}", shell=True, stderr=subprocess.DEVNULL)
+    hook = f"-p tcp --dport {XUI_PANEL_PORT} -j {XUI_PANEL_CHAIN}"
+    if subprocess.run(f"iptables -C INPUT {hook}", shell=True, stderr=subprocess.DEVNULL,
+                      stdout=subprocess.DEVNULL).returncode != 0:
+        subprocess.run(f"iptables -I INPUT 1 {hook}", shell=True, stderr=subprocess.DEVNULL)
+    # Бот ходит к панели по петле — ему можно всегда.
+    subprocess.run(f"iptables -A {XUI_PANEL_CHAIN} -i lo -j RETURN", shell=True,
+                   stderr=subprocess.DEVNULL)
+    for ip in state.get("panel_ips") or []:
+        subprocess.run(f"iptables -A {XUI_PANEL_CHAIN} -i wg0 -s {ip}/32 -j RETURN",
+                       shell=True, stderr=subprocess.DEVNULL)
+    # Остальным — отказ сразу, а не молчание: владелец с чужого ключа увидит
+    # «закрыто», а не будет ждать таймаута.
+    subprocess.run(f"iptables -A {XUI_PANEL_CHAIN} -p tcp -j REJECT --reject-with tcp-reset",
+                   shell=True, stderr=subprocess.DEVNULL)
+    return state
 
 
 def save_proto_state(state):
@@ -1404,6 +1470,33 @@ def api_protocols(req: ProtocolSwitch):
         save_proto_state(state)
         awg_up()
         return {"status": "ok", "state": state, "note": "поднят"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/xray/stack")
+def api_xray_stack_get():
+    """Что сейчас с воротами стека Xray."""
+    state = proto_state()
+    rules = subprocess.run(f"iptables -S {XRAY_GATE_CHAIN}", shell=True,
+                           capture_output=True, text=True).stdout
+    return {"enabled": state["xui"], "panel_ips": state["panel_ips"],
+            "gate_open": "-j DROP" not in rules}
+
+
+@app.post("/api/xray/stack")
+def api_xray_stack(req: XrayStack):
+    """Открыть или закрыть входы стека Xray и задать, кому видна панель.
+
+    Сам контейнер 3X-UI включает и выключает хост (профиль compose): у узла
+    нет доступа к докеру. Здесь — только правила, и они меняются на ходу."""
+    try:
+        state = proto_state()
+        state["xui"] = bool(req.enabled)
+        state["panel_ips"] = [ip for ip in req.panel_ips if _is_tunnel_ip(ip)]
+        save_proto_state(state)
+        xray_gate_apply(state)
+        return {"status": "ok", "enabled": state["xui"], "panel_ips": state["panel_ips"]}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

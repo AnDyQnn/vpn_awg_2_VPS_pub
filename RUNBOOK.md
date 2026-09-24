@@ -79,6 +79,18 @@
     systemctl list-timers vpn-subcert
     tail -20 /tmp/certbot-renew.log
 
+## Xray (панель 3X-UI)
+
+Второй канал, выключен по умолчанию. Включается и выключается в боте:
+«Протоколы». Контейнер `vpn_xui`, порты 443 и 2096.
+
+    bash VPS_RU/scripts/xray_stack.sh status        # включён ли, есть ли контейнер
+    docker logs --tail 50 vpn_xui                   # что говорит панель
+    docker exec vpn_wireguard iptables -S XRAY_GATE # пусто — порты открыты
+
+AmneziaWG от панели не зависит: упала она или выключена — люди на AmneziaWG
+этого не заметят. Подробно — `docs/xray.md`.
+
 ## Сначала — просто посмотреть
 
     ssh -p 23232 root@203.0.113.10
@@ -182,3 +194,4 @@
 - `Readme.md` — как оно устроено и как ставится с нуля
 - `CHANGELOG.md` — что менялось и почему; там же причины многих странностей
 - `tests/README.md` — тесты и сверка состояния
+- `docs/xray.md` — второй канал через панель 3X-UI

@@ -21,6 +21,64 @@ from utils import (
     get_update_info, state_data
 )
 
+async def _xui_sync(uuid_val, reason=""):
+    """Пауза и разморозка — на оба канала. Молча: автоматика не должна падать
+    из-за второго канала, её главное дело к этому моменту уже сделано."""
+    try:
+        import xui
+        await xui.sync_person(uuid_val, reason)
+    except Exception as e:
+        print(f"Xray: состояние не синхронизировано ({reason}): {e}")
+
+
+async def _xui_routing():
+    try:
+        import xui
+        if await xui.refresh_routing():
+            print("Xray: профиль маршрутизации в подписке обновлён")
+    except Exception as e:
+        print(f"Xray: профиль маршрутизации не обновился: {e}")
+
+
+def xui_routing_soon():
+    """Список обхода изменился — обновить профиль в подписке Xray, в фоне:
+    панель при этом перезапускается, и ждать её в обработчике кнопки незачем."""
+    try:
+        asyncio.get_event_loop().create_task(_xui_routing())
+    except Exception as e:
+        print(f"Xray: обновление профиля не запланировано: {e}")
+
+
+async def xui_activity_loop(app):
+    """Кто на связи по Xray.
+
+    Рукопожатия у Xray нет, и отметку активности ему не ставил никто: человек,
+    сидящий только на Xray, выглядел бы неактивным, и через месяц цикл
+    неактивности поставил бы его на паузу. Берём время из панели.
+
+    Заодно первое подключение: о нём сообщаем владельцу — от него зависит,
+    можно ли человеку снимать AmneziaWG."""
+    await asyncio.sleep(90)
+    while True:
+        try:
+            import xui
+            if xui.stack_enabled():
+                now = time.time()
+                for uuid_val, ts in (await xui.last_online()).items():
+                    if now - ts < 600:
+                        await db.execute(
+                            "UPDATE users SET last_active_at=NOW() WHERE uuid=$1", uuid_val)
+                    if await db.mark_xui_seen(uuid_val):
+                        user = await db.get_user_by_uuid(uuid_val)
+                        name = escape_md((user or {}).get("name") or uuid_val)
+                        await notify_admin(
+                            app, text=f"🔶 **{name}** впервые подключился по Xray.",
+                            parse_mode=ParseMode.MARKDOWN)
+        except Exception as e:
+            print(f"Xray: отметка активности: {e}")
+        await asyncio.sleep(300)
+
+
 # --- SPLIT-TUNNEL: дата-центро-враждебные РФ-сервисы (мимо VPN, через домашний канал) ---
 # Источник правды — БД (таблица bypass_exclusions, см. database.py). Здесь только
 # логика проверки дрейфа и формирования уведомлений.
@@ -490,6 +548,7 @@ async def alert_loop(app):
                                 except Exception: pass
                                 
                                 await db.execute("UPDATE users SET is_active=FALSE WHERE uuid=$1", uuid_val)
+                                await _xui_sync(uuid_val, "ключ заморожен")
                                 await db.log_event("Security", f"KEY COMPROMISED (Flapping): {user['name']}")
                                 
                                 if ADMIN_ID:
@@ -666,6 +725,7 @@ async def _ask_owner(app, uuid_val, reason, last_handshake=None, was_expires_at=
     except Exception:
         pass
     await db.execute("UPDATE users SET is_active=FALSE WHERE uuid=$1", uuid_val)
+    await _xui_sync(uuid_val, f"пауза: {reason}")
     await db.add_pending_decision(uuid_val, reason, last_handshake, was_expires_at)
 
     if not ADMIN_ID:
@@ -1289,6 +1349,9 @@ async def bypass_reresolve_loop(app):
             await _auto_absorb_drift(app)
         except Exception as e:
             print(f"bypass_reresolve_loop error: {e}")
+        # Профиль маршрутизации в подписке Xray сверяем тем же часом: без
+        # изменений это пустой вызов, а разошедшийся профиль догонит сам.
+        await _xui_routing()
         await asyncio.sleep(3600)
 
 async def _send_upgrade_notices(app):
@@ -1461,6 +1524,7 @@ async def bypass_list_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def bypass_del_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, exid: str):
     query = update.callback_query
     new_v = await db.remove_bypass_exclusion(exid)
+    xui_routing_soon()
     await db.log_event("Routing", f"Bypass exclusion removed (id={exid}); routing -> v{new_v}.")
     await query.answer(f"Удалено. Версия маршрутизации: {new_v}.")
     await bypass_list_handler(update, context)
@@ -1490,6 +1554,7 @@ async def bypass_add_request_handler(update: Update, context: ContextTypes.DEFAU
     if approve:
         cidrs = [c.strip() for c in (req['cidrs'] or '').split(',') if c.strip()]
         new_v = await db.add_bypass_exclusion(req['domain'], cidrs, note="по заявке клиента", source="client")
+        xui_routing_soon()
         await db.set_bypass_request_status(req_id, "approved")
         await db.log_event("Routing", f"Bypass exclusion added by request: {req['domain']} -> v{new_v}.")
         await query.edit_message_text(

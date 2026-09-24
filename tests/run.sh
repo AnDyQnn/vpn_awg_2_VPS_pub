@@ -96,9 +96,21 @@ run_bot() {
     docker build -q -t vpn-bot-test "$(dpath "$ROOT")/VPS_RU/bot" >/dev/null
 
     mkdir -p "$TESTS_DIR/out"
+    # Образ панели 3X-UI — тот же, что в compose. Берём строку оттуда, чтобы
+    # тест и прод не разошлись в версии.
+    XUI_IMAGE=$(grep -oE 'ghcr.io/mhsanaei/3x-ui:[^}"]+' "$ROOT/VPS_RU/docker-compose.yml" | head -1)
     for t in "$@"; do
+        # Тестам панели нужна настоящая панель: свежая на каждый тест, потому
+        # что первичная настройка меняет в ней логин, путь и подписку.
+        case "$t" in
+            xui_*)
+                docker rm -f vpntest-xui >/dev/null 2>&1 || true
+                docker run -d --name vpntest-xui --network vpntest \
+                    -e XUI_ENABLE_FAIL2BAN=false "$XUI_IMAGE" >/dev/null ;;
+        esac
         out=$(docker run --rm --network vpntest --entrypoint python3 \
             -e DATABASE_URL=postgres://vpn:vpnpass@vpntest-db:5432/vpndb \
+            -e XUI_URL=http://vpntest-xui:2053 \
             -e BOT_TOKEN=test -e ADMIN_ID=1 \
             -v "$(dpath "$TESTS_DIR")/bot/$t:/app/$t" \
             -v "$(dpath "$ROOT")/VPS_RU/ru_wg_api/dnsfilter.py:/app/node_dnsfilter.py" \
@@ -108,6 +120,7 @@ run_bot() {
             -v "$(dpath "$ROOT")/VERSION:/app/VERSION_FILE"             -v "$(dpath "$ROOT")/config/buttons.json:/app/buttons.json:ro" \
             vpn-bot-test "/app/$t" 2>&1) || true
         report "$t" "$out"
+        case "$t" in xui_*) docker rm -f vpntest-xui >/dev/null 2>&1 || true ;; esac
     done
 }
 

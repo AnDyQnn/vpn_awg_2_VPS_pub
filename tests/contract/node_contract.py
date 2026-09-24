@@ -73,7 +73,14 @@ async def main():
         peers = node_get("/peers")          # отдаётся голым списком
         node_uuids = {p.get("uuid") for p in peers if p.get("uuid")}
 
-        missing = db_uuids - node_uuids
+        # Переехавшие на Xray живут без пира AmneziaWG — это не расхождение, а
+        # итог переезда: доступ у них есть, через панель 3X-UI.
+        try:
+            moved = {r["user_uuid"] for r in await db.fetch_all(
+                "SELECT user_uuid FROM xui_clients")}
+        except Exception:
+            moved = set()
+        missing = db_uuids - node_uuids - moved
         ghosts = node_uuids - db_uuids
         if missing:
             names = [r["name"] for r in rows if r["uuid"] in missing][:3]

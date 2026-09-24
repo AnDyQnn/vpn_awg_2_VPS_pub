@@ -224,7 +224,13 @@ fi
 #    --remove-orphans: снести контейнеры сервисов, которых больше нет в compose
 #    (например, удалённые control_plane/caddy) — чтобы не висели и не жрали ресурсы.
 echo "[Deploy] Шаг 4: Применение новых образов (краткий перезапуск)..."
+# Образ панели 3X-UI, если стек Xray включён, — заранее и со своим запасом:
+# весит он почти полгигабайта.
+[ -f "$NODE_DIR/scripts/xray_stack.sh" ] && bash "$NODE_DIR/scripts/xray_stack.sh" prepare "$NODE_DIR"
 docker compose up -d --remove-orphans
+# Стек выключен — контейнер панели убираем: снятый профиль compose сам не
+# останавливает.
+[ -f "$NODE_DIR/scripts/xray_stack.sh" ] && bash "$NODE_DIR/scripts/xray_stack.sh" settle "$NODE_DIR"
 
 # 6. HEALTH-CHECK новой версии. Если контейнер крашится/рестартит — ОТКАТ на предыдущую
 #    версию (даунгрейд): возвращаем код, пересобираем, поднимаем. VPN/данные защищены.

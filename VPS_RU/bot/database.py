@@ -268,6 +268,20 @@ class Database:
                 "DELETE FROM settings WHERE key LIKE 'xray\\_%' "
                 "OR key LIKE 'cascade\\_%' OR key LIKE 'happ\\_profile\\_%' "
                 "OR key IN ('server_host', 'decoy_recipe');")
+            # --- ВТОРОЙ КАНАЛ: XRAY ЧЕРЕЗ ПАНЕЛЬ 3X-UI ---
+            # Человек один, каналов у него может быть два. Клиент в панели — это
+            # приписка к человеку: под каким именем он там заведён и по какому
+            # идентификатору у него подписка. Первое подключение запоминаем
+            # сами: от него зависит, можно ли снимать ему AmneziaWG.
+            await self.execute("""
+                CREATE TABLE IF NOT EXISTS xui_clients (
+                    user_uuid TEXT PRIMARY KEY REFERENCES users(uuid) ON DELETE CASCADE,
+                    email TEXT NOT NULL UNIQUE,
+                    sub_id TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT NOW(),
+                    first_seen_at TIMESTAMP
+                );
+            """)
             # --- ИМЕНА ВНУТРИ ТУННЕЛЯ ---
             # Имя ведёт либо на человека, либо на конкретный адрес. На человека —
             # основной случай: адрес подставляется живым, и перевыпуск ключа имя
@@ -844,6 +858,35 @@ class Database:
     async def mark_all_filter_hits_seen(self):
         await self.execute(
             "UPDATE filter_hits SET seen_at=NOW() WHERE seen_at IS NULL")
+
+    # --- ВТОРОЙ КАНАЛ: XRAY ЧЕРЕЗ ПАНЕЛЬ 3X-UI ---------------------------
+    async def add_xui_client(self, user_uuid, email, sub_id):
+        await self.execute(
+            """INSERT INTO xui_clients (user_uuid, email, sub_id) VALUES ($1,$2,$3)
+               ON CONFLICT (user_uuid) DO UPDATE SET email=$2, sub_id=$3""",
+            user_uuid, email, sub_id)
+
+    async def get_xui_client(self, user_uuid):
+        rows = await self.fetch_all(
+            "SELECT user_uuid, email, sub_id, created_at, first_seen_at "
+            "FROM xui_clients WHERE user_uuid=$1", user_uuid)
+        return dict(rows[0]) if rows else None
+
+    async def list_xui_clients(self):
+        rows = await self.fetch_all(
+            "SELECT x.user_uuid, x.email, x.sub_id, x.first_seen_at, u.name, u.is_active "
+            "FROM xui_clients x JOIN users u ON u.uuid = x.user_uuid ORDER BY u.name")
+        return [dict(r) for r in rows]
+
+    async def drop_xui_client(self, user_uuid):
+        await self.execute("DELETE FROM xui_clients WHERE user_uuid=$1", user_uuid)
+
+    async def mark_xui_seen(self, user_uuid):
+        """Первое подключение. Возвращает True, если это оно и есть."""
+        rows = await self.fetch_all(
+            "UPDATE xui_clients SET first_seen_at=NOW() "
+            "WHERE user_uuid=$1 AND first_seen_at IS NULL RETURNING user_uuid", user_uuid)
+        return bool(rows)
 
     # --- ЛОГИН В TELEGRAM ------------------------------------------------
     async def set_tg_username(self, tg_id, username):

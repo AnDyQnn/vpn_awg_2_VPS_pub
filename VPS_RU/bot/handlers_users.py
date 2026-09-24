@@ -237,6 +237,17 @@ async def render_user_detail(context, chat_id, message_id, uuid):
     except Exception:
         pass
 
+    # Каналы: человек один, способов подключиться у него может быть два.
+    # Блок собирается там же, где экран каналов, чтобы они не разошлись.
+    chan_text = ""
+    try:
+        import xui
+        if xui.stack_enabled() or await db.get_xui_client(uuid):
+            from handlers_channels import person_channels, channels_block
+            chan_text = "\n" + channels_block(await person_channels(uuid)) + "\n"
+    except Exception:
+        pass
+
     # Доставка: Telegram не говорит, прочитано ли сообщение, поэтому показываем
     # цепочку действий — она точнее отвечает на вопрос «ключ дошёл», чем галочка.
     try:
@@ -257,6 +268,7 @@ async def render_user_detail(context, chat_id, message_id, uuid):
         + f"⏳ Годен до: {exp_str} (МСК)\n"
         f"📱 TG ID: {tg_status}\n"
         f"📅 Создан: {created_str}\n"
+        f"{chan_text}"
         f"{delivery_line}"
         f"{roles_text}"
         f"{ips_text}"
@@ -280,6 +292,8 @@ async def render_user_detail(context, chat_id, message_id, uuid):
     keyboard.append([
         InlineKeyboardButton("📉 История нагрузки", callback_data=f"svc_pchart_{uuid}"),
     ])
+    keyboard.append([InlineKeyboardButton("🔀 Каналы · AmneziaWG и Xray",
+                                          callback_data=f"ch_{uuid}")])
     keyboard.append([InlineKeyboardButton("🛡 Доступы · роли", callback_data=f"role_u_{uuid}"),
                      InlineKeyboardButton("🧹 Фильтры", callback_data=f"flt_user_{uuid}")])
     keyboard.append([InlineKeyboardButton("✏️ Переименовать ключ", callback_data=f"rename_user_{uuid}")])
@@ -326,6 +340,13 @@ async def action_delete_user(update: Update, context: ContextTypes.DEFAULT_TYPE,
     await update.callback_query.answer("Удаление...")
     try:
         await delete_peer(uuid, user['name'])
+        # Доступ по Xray — до удаления записи: после неё не останется, по
+        # какому имени искать клиента в панели.
+        try:
+            import xui
+            await xui.revoke(uuid)
+        except Exception as e:
+            print(f"Xray: доступ не отозван при удалении: {e}")
         await db.execute("DELETE FROM users WHERE uuid=$1", uuid)
         # Адрес освободился и завтра достанется другому. Правило фильтра,
         # выданное на этот адрес, осталось бы висеть на новом хозяине — он
