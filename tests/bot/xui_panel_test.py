@@ -7,6 +7,7 @@
   • первичная настройка: вход заводским логином, свой API-токен, замена
     заводского логина, панель на случайном пути, подписка на имени узла;
   • повторная настройка ничего не ломает и ничего не меняет;
+  • у Xray свой DNS: системный в сетевой области узла — резолвер провайдера;
   • вход VLESS + Reality на 443 с маской по умолчанию;
   • профиль маршрутизации Happ в подписке — только сайты из списка обхода;
   • выдача доступа человеку, пауза, отзыв;
@@ -93,6 +94,24 @@ async def main():
           all(isinstance(prof.get(k), list) for k in
               ("DirectSites", "DirectIp", "ProxySites", "ProxyIp", "BlockSites", "BlockIp")))
     check("гео-файлы не с GitHub", "github.com" not in prof["Geoipurl"])
+
+    print()
+    print("=== DNS самого Xray ===")
+    # Без своего DNS Xray резолвит через провайдера хоста, а тот на
+    # заблокированное отвечает «такого нет»: YouTube у людей не открывался.
+    obj = await xui.api("POST", "panel/api/xray/")
+    obj = json.loads(obj) if isinstance(obj, str) else obj
+    tpl = obj["xraySetting"]
+    tpl = json.loads(tpl) if isinstance(tpl, str) else tpl
+    check("DNS Xray прописан", tpl.get("dns") == xui.XRAY_DNS, str(tpl.get("dns")))
+    direct = [o for o in tpl.get("outbounds") or [] if o.get("protocol") == "freedom"]
+    check("прямой выход спрашивает DNS Xray",
+          direct and all(o["settings"].get("domainStrategy") == "UseIPv4" for o in direct))
+    await asyncio.sleep(3)
+    srv = await xui.api("GET", "panel/api/server/status")
+    xs = (srv or {}).get("xray") or {}
+    check("Xray после правки шаблона работает", xs.get("state") == "running", str(xs)[:120])
+    check("повторно ничего не меняет", await xui.ensure_xray_dns() is False)
 
     print()
     print("=== вход ===")

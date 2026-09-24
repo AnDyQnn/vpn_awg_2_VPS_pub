@@ -105,8 +105,10 @@ def _base(sec=None) -> str:
 # --- разговор с панелью ----------------------------------------------------------
 
 async def _call(method, path, body=None, token=None, session=None, csrf=None,
-                base=None, timeout=20):
-    """Один запрос к панели. Возвращает `obj` ответа или бросает XuiError."""
+                base=None, timeout=20, form=False):
+    """Один запрос к панели. Возвращает `obj` ответа или бросает XuiError.
+
+    `form=True` — тело формой, а не JSON: так принимает шаблон Xray."""
     url = PANEL_URL + (base or _base()) + path.lstrip("/")
     headers = {}
     if token:
@@ -117,8 +119,9 @@ async def _call(method, path, body=None, token=None, session=None, csrf=None,
     if own:
         session = aiohttp.ClientSession()
     try:
-        async with session.request(method, url, json=body, headers=headers,
-                                   timeout=aiohttp.ClientTimeout(total=timeout)) as r:
+        kw = {"data": body} if form else {"json": body}
+        async with session.request(method, url, headers=headers,
+                                   timeout=aiohttp.ClientTimeout(total=timeout), **kw) as r:
             text = await r.text()
             if r.status != 200:
                 raise XuiError(f"{method} {path}: код {r.status}")
@@ -138,13 +141,13 @@ async def _call(method, path, body=None, token=None, session=None, csrf=None,
     return data.get("obj") if isinstance(data, dict) else data
 
 
-async def api(method, path, body=None, timeout=20):
+async def api(method, path, body=None, timeout=20, form=False):
     """Запрос с токеном бота."""
     sec = load_secrets()
     if not sec.get("token"):
         raise XuiError("панель ещё не настроена")
     return await _call(method, path, body, token=sec["token"], base=_base(sec),
-                       timeout=timeout)
+                       timeout=timeout, form=form)
 
 
 async def ping() -> bool:
@@ -246,6 +249,8 @@ async def bootstrap(admin_id=0):
     changed = await configure(admin_id)
     if changed:
         notes.append("настройки: " + ", ".join(changed))
+    if await ensure_xray_dns():
+        notes.append("DNS Xray — через Германию")
     if await ensure_inbound():
         notes.append("вход %d заведён" % INBOUND_PORT)
     return True, "; ".join(notes) or "всё уже на месте"
@@ -420,6 +425,51 @@ async def routing_link():
     prof["LastUpdated"] = str(stamp)
     raw = json.dumps(prof, ensure_ascii=False, separators=(",", ":"))
     return "happ://routing/onadd/" + base64.b64encode(raw.encode()).decode()
+
+
+# DNS самого Xray. Без него Xray резолвит системным резолвером контейнера, а тот
+# в сетевой области узла — встроенный DNS Docker, который спрашивает резолвер
+# хоста, то есть российского провайдера. Провайдер на заблокированное отвечает
+# «такого нет», и у людей на Xray не открывались ровно те сайты, ради которых
+# VPN: YouTube, Instagram. Проверено на узле: через 127.0.0.11 — NXDOMAIN,
+# через 1.1.1.1 — настоящий адрес.
+#
+# 1.1.1.1 и 8.8.8.8 — не российские адреса, поэтому запросы к ним узел сам
+# уводит в Германию: перехват DNS по дороге им не грозит. Только IPv4 — выхода
+# по IPv6 у узла нет, и шестёрка упёрлась бы в тупик.
+XRAY_DNS = {"servers": ["1.1.1.1", "8.8.8.8"], "queryStrategy": "UseIPv4"}
+
+
+async def ensure_xray_dns():
+    """Прописывает DNS в шаблон Xray панели. True — пришлось менять."""
+    obj = await api("POST", "panel/api/xray/")
+    if isinstance(obj, str):
+        obj = json.loads(obj)
+    tpl = obj.get("xraySetting")
+    if isinstance(tpl, str):
+        tpl = json.loads(tpl)
+    changed = False
+    if tpl.get("dns") != XRAY_DNS:
+        tpl["dns"] = dict(XRAY_DNS)
+        changed = True
+    for ob in tpl.get("outbounds") or []:
+        # Прямой выход должен спрашивать имена у DNS самого Xray, а не у
+        # системы: иначе настройка выше ничего не даёт.
+        if ob.get("protocol") == "freedom":
+            st = ob.setdefault("settings", {})
+            if st.get("domainStrategy") != "UseIPv4":
+                st["domainStrategy"] = "UseIPv4"
+                changed = True
+    if not changed:
+        return False
+    await api("POST", "panel/api/xray/update",
+              {"xraySetting": json.dumps(tpl, ensure_ascii=False),
+               "outboundTestUrl": obj.get("outboundTestUrl") or ""}, form=True)
+    try:
+        await api("POST", "panel/api/server/restartXrayService", timeout=30)
+    except XuiError:
+        pass
+    return True
 
 
 async def managed_inbound():
