@@ -174,6 +174,14 @@ run_contract() {
     done
     # Сетевое пространство общее с узлом — так же, как в боевом compose.
     out=$(docker run --rm --network container:ctr-node --entrypoint python3         -e DATABASE_URL=postgres://vpn:vpnpass@vpntest-db:5432/vpndb         -e BOT_TOKEN=test -e ADMIN_ID=1         -e WG_API_URL=http://127.0.0.1:8000/api         -v "$(dpath "$TESTS_DIR")/contract/node_contract.py:/app/node_contract.py"         vpn-bot-test /app/node_contract.py 2>&1) || true
+    # Зона имён и фильтры: настоящий бот против настоящего узла — без домена,
+    # с доменом и снова без. Адреса пиров вешаем на узел как свои, чтобы
+    # спросить DNS «от имени пира»; список категории подкладываем, качать
+    # его с GitHub здесь незачем.
+    docker exec ctr-node sh -c 'for i in 2 3 4 5; do ip addr add 10.13.13.$i/32 dev lo; done;
+        mkdir -p /etc/amnezia/amneziawg/cache/dns;
+        for i in $(seq 1 300); do echo "0.0.0.0 facebook.com"; done > /etc/amnezia/amneziawg/cache/dns/social.txt'         >/dev/null 2>&1
+    zone_out=$(docker run --rm --network container:ctr-node --entrypoint python3         -e DATABASE_URL=postgres://vpn:vpnpass@vpntest-db:5432/vpndb         -e BOT_TOKEN=test -e ADMIN_ID=1 -e WG_API_URL=http://127.0.0.1:8000/api         -v "$(dpath "$TESTS_DIR")/contract/zone_stand.py:/app/zone_stand.py"         vpn-bot-test /app/zone_stand.py 2>&1) || true
     docker rm -f ctr-node >/dev/null 2>&1 || true
     echo "$out" | grep -E '^(ok|warning|error)\|' | sed 's/^/    /'
     if echo "$out" | grep -qE '^(ok|warning|error)\|'; then
@@ -181,6 +189,7 @@ run_contract() {
     else
         report "сверка отвечает" "$out"
     fi
+    report "зона имён и фильтры: бот + узел" "$zone_out"
 }
 
 if [ "$WHAT" = "de" ] || [ "$WHAT" = "all" ]; then
