@@ -511,6 +511,28 @@ class Database:
                     PRIMARY KEY (user_uuid, category)
                 );
             """)
+            # --- КАТЕГОРИИ ФИЛЬТРОВ СЛИТЫ (8.66.6) ---
+            # «Мошенничество» и «Шифровальщики» вошли в «Опасные сайты»,
+            # «Слежка» — в «Рекламу и слежку». Кому была включена старая,
+            # тому включается новая; повтор не плодится.
+            for old, new in (("scam", "malware"), ("ransomware", "malware"),
+                             ("tracking", "ads")):
+                for table in ("user_filters", "filter_exempt"):
+                    await self.execute(
+                        f"INSERT INTO {table} (user_uuid, category) "
+                        f"SELECT user_uuid, $2 FROM {table} WHERE category=$1 "
+                        f"ON CONFLICT DO NOTHING", old, new)
+                    await self.execute(
+                        f"DELETE FROM {table} WHERE category=$1", old)
+            raw = await self.fetch_val(
+                "SELECT value FROM settings WHERE key='filters_common'")
+            if raw:
+                alias = {"scam": "malware", "ransomware": "malware", "tracking": "ads"}
+                cats = sorted({alias.get(c, c) for c in raw.split(",") if c})
+                if ",".join(cats) != raw:
+                    await self.execute(
+                        "UPDATE settings SET value=$1 WHERE key='filters_common'",
+                        ",".join(cats))
             await self.execute("""
                 CREATE TABLE IF NOT EXISTS role_grants (
                     id SERIAL PRIMARY KEY,

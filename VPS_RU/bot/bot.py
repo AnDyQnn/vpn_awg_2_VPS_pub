@@ -957,8 +957,30 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 await context.bot.send_message(chat_id=chat_id, text=f"⚠️ Пользователь `{result}` не получил меню (возможно, он еще не запустил бота командой /start):\n`{e}`", parse_mode=ParseMode.MARKDOWN)
 
+# Кнопки клиента, которые действуют над конкретным ключом: префикс → ключ в
+# хвосте. Точные имена без ключа (client_regen_all и т. п.) — не отсюда.
+_KEY_BUTTONS = ("support_audit_", "support_ask_", "client_key_manage_", "check_conn_",
+                "client_download_", "client_how_", "do_client_regen_", "client_regen_")
+_NOT_KEY = {"client_regen_all", "do_client_regen_all"}
+
+
+def key_of_callback(data):
+    """Идентификатор ключа из нажатия клиентской кнопки или пусто."""
+    if not data or data in _NOT_KEY:
+        return ""
+    if data.startswith("client_plat_"):
+        parts = data.split("_", 3)          # client | plat | система | ключ
+        return parts[3] if len(parts) == 4 else ""
+    for prefix in _KEY_BUTTONS:
+        if data.startswith(prefix):
+            tail = data[len(prefix):]
+            # «все ключи» и повтор проверки без ключа — не про чужой ключ.
+            return "" if tail in ("all", "None") else tail
+    return ""
+
+
 async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.callback_query.data not in ["start_dashboard", "vpn_graph", "show_online"]: 
+    if update.callback_query.data not in ["start_dashboard", "vpn_graph", "show_online"]:
         await stop_bg_tasks()
 
     query = update.callback_query
@@ -978,7 +1000,17 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     # Роутер функций
-    
+
+    # Кнопки клиента несут идентификатор ключа. Сама кнопка есть только у
+    # владельца ключа, но callback_data не секрет: нажатие может подделать
+    # любой пользователь бота. Без этой проверки, узнав чужой идентификатор,
+    # можно было получить чужой конфиг или перевыпустить чужой ключ.
+    uuid_arg = key_of_callback(data)
+    if uuid_arg and not check_admin(update.effective_user.id):
+        owner = await db.get_user_by_uuid(uuid_arg)
+        if not owner or update.effective_user.id not in (owner.get("tg_ids") or []):
+            return await query.answer("Ключ не найден.", show_alert=True)
+
     if data == "support_start": await support_start_handler(update, context); return
     if data.startswith("support_audit_"): await support_run_audit_handler(update, context, data.split("support_audit_")[1]); return
     if data.startswith("support_ask_"): await support_ask_msg_handler(update, context, data.split("support_ask_")[1]); return

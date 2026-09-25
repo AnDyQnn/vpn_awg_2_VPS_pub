@@ -288,6 +288,15 @@ else
     add_check CAT_VPN "Порядок запретов в транзите" "error" "Запрет обхода DNS или замок панели агента ниже общего ACCEPT — не срабатывают"
 fi
 
+# Внутренние сети Docker (база, хост через шлюз) пирам недоступны. До 8.66.6
+# любой пир доставал до PostgreSQL — держал только пароль.
+DCK_N=$(echo "$FWD" | grep -n -- '-d 172.16.0.0/12 -i wg0 -j REJECT' | head -1 | cut -d: -f1)
+if [ -n "$ACC_N" ] && [ -n "$DCK_N" ] && [ "$DCK_N" -lt "$ACC_N" ]; then
+    add_check CAT_SEC "Внутренние сети от пиров" "ok" "Закрыты"
+else
+    add_check CAT_SEC "Внутренние сети от пиров" "error" "Пир достаёт до базы и хоста через сеть Docker"
+fi
+
 RU_SET=$(docker exec vpn_wireguard ipset list ru_nets 2>/dev/null | grep -cE '^[0-9]+\.')
 [ "${RU_SET:-0}" -ge 100 ] && add_check CAT_VPN "Гео-RU список (ru_nets)" "ok" "${RU_SET} сетей" || add_check CAT_VPN "Гео-RU список (ru_nets)" "warning" "Мало/пусто: ${RU_SET:-0}"
 

@@ -192,6 +192,32 @@ check("пиру панель агента закрыта", r == "timeout", r)
 r = sh("curl -s -o /dev/null -w '%%{http_code}' --max-time 4 http://%s:8000/" % AGENT).stdout
 check("самому узлу — открыта", r == "200", r)
 
+print("\n=== внутренние сети Docker пирам закрыты ===")
+# Правило ставит setup_network — сверяем, что оно там есть, и что работает.
+src = io.open(SRC, encoding="utf-8").read()
+setup = src[src.index("def setup_network"):src.index("\ndef ", src.index("def setup_network") + 10)]
+check("setup_network закрывает 172.16.0.0/12 от пиров",
+      "-i wg0 -d 172.16.0.0/12 -j REJECT" in setup)
+sh("ip netns add dock")
+sh("ip link add dk0 type veth peer name eth0 netns dock")
+sh("ip addr add 172.20.0.1/24 dev dk0 && ip link set dk0 up")
+sh("ip -n dock addr add 172.20.0.5/24 dev eth0 && ip -n dock link set eth0 up "
+   "&& ip -n dock link set lo up && ip -n dock route add default via 172.20.0.1")
+subprocess.Popen("ip netns exec dock python3 -m http.server 5432 --bind 172.20.0.5",
+                 shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+for _ in range(20):
+    if sh("curl -s -o /dev/null --max-time 1 http://172.20.0.5:5432/").returncode == 0:
+        break
+    time.sleep(0.5)
+r = tcp("p1", "172.20.0.5", 5432)
+check("без правила пир достаёт до базы (так было)", r == "ok", r)
+ns["_insert_before_accept"](
+    "FORWARD", "-i wg0 -d 172.16.0.0/12 -j REJECT --reject-with icmp-net-prohibited")
+r = tcp("p1", "172.20.0.5", 5432)
+check("с правилом — нет", r != "ok", r)
+r = sh("curl -s -o /dev/null -w '%{http_code}' --max-time 4 http://172.20.0.5:5432/").stdout
+check("сам узел до базы достаёт", r == "200", r)
+
 print("\n=== повторный запуск не плодит правил и не опускает их ===")
 ns["doh_block_apply"](True)
 ns["_insert_before_accept"](

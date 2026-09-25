@@ -42,10 +42,11 @@ LISTEN_PORT = int(os.getenv("DNS_PORT", "53"))
 IP_FREEBIND = 15
 STATE_POLL_SECONDS = 5
 BLOCK_TTL = 60
-# Потолок на категорию. Держим не строки, а отпечатки — восемь байт на домен,
-# поэтому миллион помещается в восемь мегабайт и упирается не в память, а в
-# здравый смысл: списки длиннее миллиона в природе не встречаются.
-MAX_DOMAINS_PER_CATEGORY = 2000000
+# Потолок на категорию. Держим не строки, а отпечатки — восемь байт на домен.
+# «Опасные сайты» — это под четыре миллиона: один только список вредоносного
+# больше двух с половиной, и прежний потолок в два миллиона молча отрезал
+# четверть. Пять миллионов — сорок мегабайт, узлу по силам.
+MAX_DOMAINS_PER_CATEGORY = 5000000
 
 # Категории и откуда берутся списки. Источники — публичные, в формате «домен в строке»
 # или hosts. Если источник недоступен, категория остаётся с прошлым кэшем, а не пустой:
@@ -81,9 +82,13 @@ _BL = "https://raw.githubusercontent.com/blocklistproject/Lists/master/%s.txt"
 # отдавали 404 — и категория выглядела бы включённой, не фильтруя ничего.
 # Такое собирается своей группой: владелец приносит список и даёт ему имя.
 CATEGORIES = {
+    # Реклама и слежка — одно и то же для человека: чужие скрипты на странице,
+    # которые показывают баннеры и считают, куда он ходит. Списки при этом
+    # почти не пересекаются (из 144 тысяч трекеров 137 в рекламном нет),
+    # поэтому берутся все три; телеметрия телевизоров — туда же.
     "ads": {
-        "title": "Реклама и трекеры",
-        "urls": ["https://raw.githubusercontent.com/blocklistproject/Lists/master/ads.txt"],
+        "title": "Реклама и слежка",
+        "urls": [_BL % "ads", _BL % "tracking", _BL % "smart-tv"],
     },
     "adult": {
         "title": "Для взрослых",
@@ -93,10 +98,15 @@ CATEGORIES = {
         "title": "Азартные игры",
         "urls": ["https://raw.githubusercontent.com/blocklistproject/Lists/master/gambling.txt"],
     },
+    # Всё, что опасно открыть: вирусы, фишинг, мошенничество, обманные сайты,
+    # вредные перенаправления, серверы шифровальщиков. Раньше это были четыре
+    # отдельные категории, и владельцу приходилось угадывать, какая чем
+    # отличается. «Шифровальщики» были почти целиком внутри вредоносного
+    # (1901 из 1904), а «мошенничество» — наоборот, почти целиком снаружи.
     "malware": {
-        "title": "Вредоносное и фишинг",
-        "urls": ["https://raw.githubusercontent.com/blocklistproject/Lists/master/malware.txt",
-                 "https://raw.githubusercontent.com/blocklistproject/Lists/master/phishing.txt"],
+        "title": "Опасные сайты",
+        "urls": [_BL % "malware", _BL % "phishing", _BL % "ransomware",
+                 _BL % "scam", _BL % "fraud", _BL % "redirect", _BL % "abuse"],
     },
     "social": {
         "title": "Соцсети",
@@ -140,7 +150,7 @@ CATEGORIES = {
         ],
     },
     "crypto": {
-        "title": "Криптовалюты и майнинг",
+        "title": "Криптовалюты",
         "urls": [_BL % "crypto"],
         # Внешний список — майнинг в браузере и часть бирж; крупных бирж,
         # которыми пользуются из России, в нём нет.
@@ -152,17 +162,12 @@ CATEGORIES = {
             "bestchange.ru", "bestchange.com",
         ],
     },
-    "scam": {
-        "title": "Мошенничество",
-        "urls": [_BL % "scam", _BL % "fraud"],
-    },
-    "tracking": {
-        "title": "Слежка и телеметрия",
-        "urls": [_BL % "tracking", _BL % "smart-tv"],
-    },
+    # Источник называет это «сайтами нелегальных наркотиков», по факту там
+    # больше всего серых аптек. «Алкоголь» в названии был без единого списка
+    # под ним, а «abuse» — это обманные сайты, им место в опасных.
     "drugs": {
-        "title": "Наркотики и алкоголь",
-        "urls": [_BL % "drugs", _BL % "abuse"],
+        "title": "Наркотики и серые аптеки",
+        "urls": [_BL % "drugs", _BL % "vaping"],
     },
     "streaming": {
         "title": "Видео и стриминг",
@@ -180,10 +185,6 @@ CATEGORIES = {
             "amediateka.ru", "smotrim.ru", "dzen.ru", "tiktok.com",
             "kick.com", "trovo.live", "vkplay.live", "live.vkvideo.ru",
         ],
-    },
-    "ransomware": {
-        "title": "Шифровальщики",
-        "urls": [_BL % "ransomware"],
     },
 }
 
@@ -341,29 +342,56 @@ def _fingerprint(domain):
                           "big", signed=True)
 
 
-def _parse_list(text):
-    """Понимает и hosts-формат, и просто домены в строку.
+def _domain_of(line):
+    """Домен из строки списка: hosts-формат или просто домен. Пусто — мусор."""
+    line = line.strip()
+    if not line or line.startswith("#"):
+        return ""
+    parts = line.split()
+    domain = parts[1] if len(parts) > 1 and parts[0] in ("0.0.0.0", "127.0.0.1") else parts[0]
+    domain = domain.strip(".").lower()
+    if not domain or domain in ("localhost", "localhost.localdomain", "broadcasthost"):
+        return ""
+    if "/" in domain:
+        return ""
+    return domain
 
-    Возвращает упорядоченный массив отпечатков: проверка бинарным поиском,
-    память — восемь байт на домен.
-    """
-    seen = array.array("q")
-    for line in text.splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
+
+def _parse_lines(lines):
+    """Упорядоченный массив отпечатков без повторов: проверка бинарным
+    поиском, восемь байт на домен.
+
+    Раньше строки собирались в множество чисел и сортировались целиком. На
+    списке вредоносного в два с половиной миллиона это сотни мегабайт на пике —
+    при потолке контейнера в полгигабайта. Теперь отпечатки раскладываются по
+    256 корзинам по старшему байту, и сортируется по одной корзине: пик —
+    шестнадцать байт на домен, а не сотня."""
+    buckets = [array.array("q") for _ in range(256)]
+    n = 0
+    for line in lines:
+        domain = _domain_of(line)
+        if not domain:
             continue
-        parts = line.split()
-        domain = parts[1] if len(parts) > 1 and parts[0] in ("0.0.0.0", "127.0.0.1") else parts[0]
-        domain = domain.strip(".").lower()
-        if not domain or domain in ("localhost", "localhost.localdomain", "broadcasthost"):
-            continue
-        if " " in domain or "/" in domain:
-            continue
-        seen.append(_fingerprint(domain))
-        if len(seen) >= MAX_DOMAINS_PER_CATEGORY:
+        fp = _fingerprint(domain)
+        buckets[(fp >> 56) & 0xFF].append(fp)
+        n += 1
+        if n >= MAX_DOMAINS_PER_CATEGORY:
             break
-    out = array.array("q", sorted(set(seen)))
+    out = array.array("q")
+    # Числа со знаком: отрицательные (старший байт 0x80–0xFF) идут первыми.
+    for b in list(range(128, 256)) + list(range(0, 128)):
+        last = None
+        for v in sorted(buckets[b]):
+            if v != last:
+                out.append(v)
+                last = v
+        buckets[b] = None
     return out
+
+
+def _parse_list(text):
+    """Список, пришедший строкой (свой довесок, свои группы)."""
+    return _parse_lines(text.splitlines())
 
 
 def _has(domains, name):
@@ -392,6 +420,8 @@ class Filters:
         self.bot_link = ""         # куда идти с вопросом «почему закрыто»
         self._mtime = 0
         self._checked = 0
+        self._mtimes = {}          # категория -> время файла, с которого загружена
+        self._loading = set()      # категории, которые грузятся прямо сейчас
 
     def maybe_reload(self):
         now = time.time()
@@ -407,6 +437,8 @@ class Filters:
                 self.except_clients = {}
             return
         if mtime == self._mtime:
+            # Раскладка та же, но список категории мог обновиться на диске.
+            self._load_domains()
             return
         self._mtime = mtime
         try:
@@ -415,7 +447,7 @@ class Filters:
         except Exception as e:
             print(f"DNS: не читается состояние фильтров: {e}", flush=True)
             return
-        self.clients = {ip: list(cats) for ip, cats in (state.get("clients") or {}).items()}
+        self.clients = {ip: _canon(cats) for ip, cats in (state.get("clients") or {}).items()}
         # Разрешения: общие и на конкретный адрес. Хранятся строками — их
         # десятки, а не миллион, и по ним удобно отвечать владельцу, что именно
         # сработало.
@@ -423,37 +455,74 @@ class Filters:
                              for d in (state.get("allow_common") or []) if d}
         self.allow_clients = {ip: {str(d).lower().strip(".") for d in doms if d}
                               for ip, doms in (state.get("allow_clients") or {}).items()}
-        self.except_clients = {ip: {str(c) for c in cats if c}
+        self.except_clients = {ip: set(_canon(c for c in cats if c))
                                for ip, cats in
                                (state.get("except_clients") or {}).items()}
         # Общие категории и свой список — то же самое, но без разбора, кому
         # именно: они действуют на всех, кто ходит через узел.
-        self.common = list(state.get("common") or [])
+        self.common = _canon(state.get("common") or [])
         self.custom = {str(d).lower().strip(".") for d in (state.get("custom") or []) if d}
         self.bot_link = state.get("bot_link") or ""
         self._load_domains()
 
-    def _load_domains(self):
+    def _load_domains(self, sync=False):
+        """Держит в памяти ровно включённые категории и свежие их списки.
+
+        Загрузка — в фоне. Список опасных сайтов — три миллиона строк и
+        полминуты работы; прежде она шла внутри DNS-сервера, и всё это время
+        DNS не отвечал никому. Теперь резолвер отвечает как обычно, а
+        категория начинает действовать, когда список готов (свой довесок —
+        сразу). Обновлённый файл — раз в 12 часов его перекачивает узел —
+        подхватывается сам: раньше загруженная категория не перечитывалась
+        до перезапуска."""
         needed = {c for cats in self.clients.values() for c in cats}
         needed |= set(self.common)
         for cat in list(self.domains):
             if cat not in needed:
                 del self.domains[cat]            # освобождаем память
+                self._mtimes.pop(cat, None)
         for cat in needed:
-            if cat in self.domains:
-                continue
             path = os.path.join(CACHE_DIR, f"{cat}.txt")
-            # Свой довесок категории — всегда, даже без скачанного списка.
-            extra = "\n".join((CATEGORIES.get(cat) or {}).get("extra") or [])
             try:
-                with open(path, encoding="utf-8", errors="ignore") as f:
-                    self.domains[cat] = _parse_list(f.read() + "\n" + extra)
-                print(f"DNS: категория {cat} — {len(self.domains[cat])} доменов", flush=True)
+                mt = os.path.getmtime(path)
             except OSError:
-                self.domains[cat] = _parse_list(extra) if extra else set()
-                print(f"DNS: список категории {cat} ещё не загружен"
-                      + (f", работает свой довесок ({len(self.domains[cat])})"
-                         if extra else ""), flush=True)
+                mt = 0
+            if cat in self.domains and self._mtimes.get(cat) == mt:
+                continue
+            if cat in self._loading:
+                continue
+            extras = (CATEGORIES.get(cat) or {}).get("extra") or []
+            if cat not in self.domains and extras:
+                self.domains[cat] = _parse_list("\n".join(extras))
+            self._loading.add(cat)
+            if sync:
+                self._load_one(cat, path, mt)
+            else:
+                import threading
+                threading.Thread(target=self._load_one, args=(cat, path, mt),
+                                 daemon=True).start()
+
+    def _load_one(self, cat, path, mt):
+        # Свой довесок категории — всегда, даже без скачанного списка.
+        extras = (CATEGORIES.get(cat) or {}).get("extra") or []
+        try:
+            try:
+                # Построчно, а не целиком: файл опасных сайтов — сотня мегабайт.
+                with open(path, encoding="utf-8", errors="ignore") as f:
+                    import itertools
+                    arr = _parse_lines(itertools.chain(f, extras))
+                note = f"DNS: категория {cat} — {len(arr)} доменов"
+            except OSError:
+                arr = _parse_list("\n".join(extras)) if extras else array.array("q")
+                note = (f"DNS: список категории {cat} ещё не загружен"
+                        + (f", работает свой довесок ({len(arr)})" if extras else ""))
+            self.domains[cat] = arr              # подмена одним присваиванием
+            self._mtimes[cat] = mt
+            print(note, flush=True)
+        except Exception as e:
+            print(f"DNS: категория {cat} не загрузилась: {e}", flush=True)
+        finally:
+            self._loading.discard(cat)
 
     @staticmethod
     def _covers(rules, parts):
@@ -827,9 +896,25 @@ def ensure_cert():
     return CERT_FILE
 
 
-CATEGORY_TITLES = {"ads": "реклама и трекеры", "adult": "для взрослых",
-                   "gambling": "азартные игры", "malware": "вредоносное и фишинг",
-                   "social": "соцсети"}
+CATEGORY_TITLES = {"ads": "реклама и слежка", "adult": "для взрослых",
+                   "gambling": "азартные игры", "malware": "опасный сайт",
+                   "social": "соцсети", "torrent": "торренты и пиратство",
+                   "crypto": "криптовалюты", "drugs": "наркотики и серые аптеки",
+                   "streaming": "видео и стриминг"}
+
+# Прежние категории, слитые в новые. Раскладка от бота старой версии или
+# застрявшая на диске всё равно должна работать, а не молча перестать
+# фильтровать.
+CATEGORY_ALIASES = {"scam": "malware", "ransomware": "malware", "tracking": "ads"}
+
+
+def _canon(cats):
+    out = []
+    for c in cats or []:
+        c = CATEGORY_ALIASES.get(str(c), str(c))
+        if c not in out:
+            out.append(c)
+    return out
 
 
 def _render_block_page(host, category, ref=""):

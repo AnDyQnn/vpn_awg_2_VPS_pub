@@ -171,7 +171,7 @@ async def check_connection_animation(context, chat_id, message_id, uuid=None):
         res_text = f"🟢 **Соединение успешно!**\n\nСервер видит ваше устройство.\nПоследняя активность: `{date_str} МСК`"
     else:
         res_text = f"🔴 **Нет соединения**\n\nСервер не видит трафика от вас.\n1. Убедитесь, что VPN включен.\n2. Попробуйте открыть любой сайт.\n3. Нажмите проверить еще раз."
-        keyboard.insert(0,[InlineKeyboardButton("🔄 Проверить еще раз", callback_data=f"check_conn_{uuid}")])
+        keyboard.insert(0,[InlineKeyboardButton("🔄 Проверить еще раз", callback_data=f"check_conn_{uuid or 'all'}")])
 
     await context.bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=res_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
 
