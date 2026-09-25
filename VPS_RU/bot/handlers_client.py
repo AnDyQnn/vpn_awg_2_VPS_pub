@@ -544,6 +544,12 @@ async def client_key_manage_handler(update: Update, context: ContextTypes.DEFAUL
          InlineKeyboardButton("⚡️ Проверить связь", callback_data=f"check_conn_{uuid_val}")],
         [InlineKeyboardButton("🔄 Перевыпустить", callback_data=f"client_regen_{uuid_val}")],
     ]
+    # Подписка — дополнение к файлу, а не замена: тот же ключ ссылкой для
+    # Clash Mi. Нет сертификата у узла — кнопки нет, файл работает как всегда.
+    import handlers_clashsub
+    if handlers_clashsub.available():
+        keyboard.insert(1, [InlineKeyboardButton("🔗 Подписка Clash Mi",
+                                                 callback_data=f"client_sub_{uuid_val}")])
     keyboard.append([InlineKeyboardButton("❓ Как подключить",
                                           callback_data=f"client_how_{uuid_val}")])
     keyboard.append([InlineKeyboardButton("🔙 К списку ключей", callback_data="client_my_keys")])

@@ -359,6 +359,36 @@ def check_node_cert():
         say("ok", "Сертификат узла", "осталось %.1f сут." % left)
 
 
+def check_clash_sub():
+    """Подписка Clash Mi: слушается ли 443, когда сертификат есть.
+
+    Без сертификата бот порт не открывает — это задумано, не поломка. С ним
+    порт обязан слушаться: иначе у людей с Clash Mi молча перестанет
+    обновляться профиль, а VPN продолжит работать на старом — и никто не
+    узнает, пока не перевыпустит ключ.
+
+    Сверка идёт из сети узла, так что 127.0.0.1:443 — тот же порт, что
+    снаружи.
+    """
+    import socket
+    cert = os.path.join(os.getenv("SUB_CERT_DIR", "/volumes/certs"),
+                        "fullchain.pem")
+    try:
+        has_cert = os.path.getsize(cert) > 0
+    except OSError:
+        has_cert = False
+    if not has_cert:
+        say("ok", "Подписка Clash Mi", "сертификата нет — порт закрыт, как и задумано")
+        return
+    try:
+        with socket.create_connection(("127.0.0.1", 443), timeout=3):
+            pass
+        say("ok", "Подписка Clash Mi", "слушает 443")
+    except OSError as e:
+        say("warning", "Подписка Clash Mi",
+            "сертификат есть, а 443 не слушается (%s) — профили у людей не обновляются" % e)
+
+
 if __name__ == "__main__":
     try:
         asyncio.run(main())
@@ -367,4 +397,5 @@ if __name__ == "__main__":
     check_category_lists()
     check_env_described()
     check_node_cert()
+    check_clash_sub()
     print("\n".join(LINES))

@@ -39,6 +39,7 @@ from billing import reminder_loop as billing_reminder_loop
 import chat_cleanup
 from wireguard_manager import pause_peer, resume_peer
 
+import clashsub
 from handlers_client import (
     client_menu, send_client_menu, check_connection_handler, client_stats_handler, 
     client_regen_confirm, client_regen_action, support_start_handler, support_run_audit_handler, 
@@ -1006,6 +1007,11 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "client_notify_toggle": await client_notify_toggle_handler(update, context); return
     if data == "client_notify_off": await client_notify_off_handler(update, context); return
     if data.startswith("client_download_"): await client_download_handler(update, context, data.split("client_download_")[1]); return
+    # Подписка Clash Mi. Выше проверки прав: это кнопка из карточки ключа
+    # человека; чей ключ — проверяет сам обработчик.
+    if data.startswith("client_sub_"):
+        import handlers_clashsub
+        await handlers_clashsub.client_sub_handler(update, context, data[len("client_sub_"):]); return
     
     if data.startswith("client_plat_"):
         parts = data.split("_", 3)          # client | plat | система | uuid
@@ -1035,6 +1041,9 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Домен и сертификаты: имя узла, выпуск и продление, доступ снаружи.
     # Работу делает хост, здесь
     # только просьба и показ того, что вышло.
+    if data.startswith("csub_"):
+        import handlers_clashsub
+        await handlers_clashsub.dispatch_admin(update, context, data); return
     if data.startswith("psub_"):
         import handlers_pubsub as hps
         if data == "psub_menu":
@@ -1639,6 +1648,9 @@ async def post_init(application):
         asyncio.create_task(watch_api_token(application)),
         # Смена токена по расписанию — если владелец её включил.
         asyncio.create_task(rotate_loop(application)),
+        # Подписка Clash Mi на 443: тот же ключ AmneziaWG ссылкой. Без
+        # сертификата порт не открывается.
+        asyncio.create_task(clashsub.serve()),
     ]
     state_data["bg_tasks"].update(tasks)
 

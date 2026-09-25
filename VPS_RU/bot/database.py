@@ -271,6 +271,19 @@ class Database:
                 "DELETE FROM settings WHERE key LIKE 'xray\\_%' "
                 "OR key LIKE 'cascade\\_%' OR key LIKE 'happ\\_profile\\_%' "
                 "OR key IN ('server_host', 'decoy_recipe');")
+            # --- ПОДПИСКА ДЛЯ КЛИЕНТОВ НА MIHOMO ---
+            # Ссылка на профиль Clash с тем же ключом AmneziaWG, что и в файле
+            # конфига. Токен — секрет: по нему отдаётся закрытый ключ человека.
+            # Свой на каждый ключ, меняется по кнопке, если ссылка утекла.
+            await self.execute("""
+                CREATE TABLE IF NOT EXISTS sub_tokens (
+                    user_uuid TEXT PRIMARY KEY REFERENCES users(uuid) ON DELETE CASCADE,
+                    token TEXT NOT NULL UNIQUE,
+                    created_at TIMESTAMP DEFAULT NOW(),
+                    fetched_at TIMESTAMP,
+                    fetch_count INT NOT NULL DEFAULT 0
+                );
+            """)
             # --- ИМЕНА ВНУТРИ ТУННЕЛЯ ---
             # Имя ведёт либо на человека, либо на конкретный адрес. На человека —
             # основной случай: адрес подставляется живым, и перевыпуск ключа имя
@@ -831,6 +844,53 @@ class Database:
     async def mark_all_filter_hits_seen(self):
         await self.execute(
             "UPDATE filter_hits SET seen_at=NOW() WHERE seen_at IS NULL")
+
+    # --- ПОДПИСКА ДЛЯ КЛИЕНТОВ НА MIHOMO --------------------------------
+    async def sub_token(self, user_uuid, rotate=False):
+        """Токен подписки человека. Нет — заводим; rotate=True — меняем на
+        новый, и прежняя ссылка перестаёт работать сразу."""
+        import secrets
+        if not rotate:
+            tok = await self.fetch_val(
+                "SELECT token FROM sub_tokens WHERE user_uuid=$1", user_uuid)
+            if tok:
+                return tok
+        tok = secrets.token_urlsafe(32)
+        await self.execute(
+            """INSERT INTO sub_tokens (user_uuid, token) VALUES ($1,$2)
+               ON CONFLICT (user_uuid) DO UPDATE
+               SET token=$2, created_at=NOW(), fetched_at=NULL, fetch_count=0""",
+            user_uuid, tok)
+        return tok
+
+    async def sub_by_token(self, token):
+        """Кто стоит за токеном: запись человека или None."""
+        rows = await self.fetch_all(
+            "SELECT u.uuid, u.name, u.is_active, u.expires_at, s.fetched_at, s.fetch_count "
+            "FROM sub_tokens s JOIN users u ON u.uuid = s.user_uuid WHERE s.token=$1",
+            token)
+        return dict(rows[0]) if rows else None
+
+    async def sub_fetched(self, user_uuid):
+        await self.execute(
+            "UPDATE sub_tokens SET fetched_at=NOW(), fetch_count=fetch_count+1 "
+            "WHERE user_uuid=$1", user_uuid)
+
+    async def sub_info(self, user_uuid):
+        rows = await self.fetch_all(
+            "SELECT token, created_at, fetched_at, fetch_count FROM sub_tokens "
+            "WHERE user_uuid=$1", user_uuid)
+        return dict(rows[0]) if rows else None
+
+    async def traffic_totals(self, user_uuid):
+        """Сколько человек прокачал за всё время: (отдал, принял), байты.
+        Из часовых срезов — там уже приросты, а не показания счётчиков."""
+        rows = await self.fetch_all(
+            "SELECT COALESCE(SUM(bytes_in),0) AS i, COALESCE(SUM(bytes_out),0) AS o "
+            "FROM traffic_hourly WHERE user_uuid=$1", user_uuid)
+        if not rows:
+            return 0, 0
+        return int(rows[0]["i"] or 0), int(rows[0]["o"] or 0)
 
     # --- ЛОГИН В TELEGRAM ------------------------------------------------
     async def set_tg_username(self, tg_id, username):
