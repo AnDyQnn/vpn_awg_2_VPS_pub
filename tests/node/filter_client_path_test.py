@@ -131,6 +131,26 @@ r = sh("ip netns exec p2 curl -sk --max-time 8 --resolve xn--80aicmhbn.vpn:443:%
 check("закрыто.vpn по https → страница", "Доступ к этому сервису закрыт" in r.stdout,
       "rc=%d" % r.returncode)
 
+print("\n=== «Соцсети» закрывают и российские ===")
+# Внешний список на стенде — только facebook; ВК и ОК приходят встроенным
+# довеском категории.
+for site in ("vk.com", "m.vk.com", "ok.ru", "m.ok.ru", "x.com"):
+    a = dig("p1", site)
+    check("%s → страница" % site, a == NODE, a)
+
+print("\n=== «закрыть для всех»: общая категория и свой список ===")
+ns["save_dns_state"]({}, "https://t.me/example_bot", ["social"], ["yandex.ru"])
+ns["apply_dns_filters"]({}, everyone=True)
+time.sleep(6)
+for who in ("p1", "p2"):
+    a = dig(who, "vk.com")
+    check("%s: vk.com (общая категория) → страница" % who, a == NODE, a)
+    a = dig(who, "www.yandex.ru")
+    check("%s: www.yandex.ru (свой список) → страница" % who, a == NODE, a)
+r = sh("ip netns exec p2 curl -s --max-time 8 --resolve www.yandex.ru:80:%s "
+       "http://www.yandex.ru/" % NODE)
+check("http → страница «закрыт фильтром»", "Этот сайт закрыт фильтром" in r.stdout)
+
 p.terminate()
 print()
 print("ВСЁ ПРОШЛО" if ok else "ЕСТЬ ПРОВАЛЫ")

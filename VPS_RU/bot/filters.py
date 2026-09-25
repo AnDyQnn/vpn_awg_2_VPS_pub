@@ -180,7 +180,17 @@ async def apply_filters(reason: str = ""):
     except Exception as e:
         return False, f"узел недоступен: {e}"
 
-    msg = f"Фильтры применены: под фильтром {data.get('filtered', 0)} чел."
+    # Общие правила и свой список действуют на всех: число «лично под
+    # фильтром» их не видит, и владелец, закрыв сайт всем, читал «0 чел.».
+    if common or custom:
+        # Агент в Германии — не человек, в число не входит.
+        people = sum(1 for addrs in ips.values()
+                     if any(a != "10.13.13.254" for a in addrs))
+        msg = (f"Фильтры применены: общие правила — на всех ({people} чел.)"
+               + (f", лично ещё {data.get('filtered', 0)}"
+                  if data.get("filtered") else ""))
+    else:
+        msg = f"Фильтры применены: под фильтром {data.get('filtered', 0)} чел."
     if allow_common or allow_clients:
         msg += (f" · исключений: {len(allow_common)} общих, "
                 f"{sum(len(v) for v in allow_clients.values())} личных")
@@ -233,7 +243,10 @@ async def filters_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parts.append(f"свой список: {len(custom)}")
         lines.append("🌍 **Общие правила** — " + "; ".join(parts))
         lines.append("")
-    if not by_uuid:
+    if not by_uuid and (common or custom):
+        lines.append("Лично никому не включены — действуют только общие правила, "
+                     "на всех.")
+    elif not by_uuid:
         lines += ["Фильтры никому не включены — интернет у всех открыт полностью.",
                   "",
                   "Фильтр закрывает сайты по категориям и работает через свой DNS. "

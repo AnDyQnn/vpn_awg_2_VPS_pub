@@ -100,15 +100,57 @@ CATEGORIES = {
     },
     "social": {
         "title": "Соцсети",
-        "urls": [_BL % "facebook", _BL % "tiktok"],
+        "urls": [_BL % "facebook", _BL % "tiktok", _BL % "twitter"],
+        # Внешние списки — Facebook с Instagram и WhatsApp, TikTok и Twitter.
+        # Российских соцсетей в них нет вовсе: владелец закрывал «Соцсети», а
+        # ВКонтакте и Одноклассники открывались. Дописываем сами; работает и
+        # тогда, когда внешний список не скачался. Telegram не трогаем: через
+        # него работает бот и кнопка «написать владельцу» на странице отказа.
+        "extra": [
+            # ВКонтакте
+            "vk.com", "vk.ru", "vk.me", "vkontakte.ru", "vk.cc", "vk.link",
+            "userapi.com", "vkuser.net", "vkuseraudio.net", "vkuservideo.net",
+            "vk-cdn.net", "vk-portal.net", "vkontakte.com",
+            # Одноклассники и «Мой мир»
+            "ok.ru", "odnoklassniki.ru", "odkl.ru", "okcdn.ru", "mycdn.me",
+            "my.mail.ru",
+            # Остальные крупные
+            "twitter.com", "x.com", "twimg.com", "t.co",
+            "instagram.com", "cdninstagram.com", "threads.net", "threads.com",
+            "pinterest.com", "pinimg.com", "snapchat.com", "reddit.com",
+            "redd.it", "redditmedia.com", "redditstatic.com", "tumblr.com",
+            "linkedin.com", "licdn.com", "likee.video", "like.video",
+        ],
     },
     "torrent": {
         "title": "Торренты и пиратство",
         "urls": [_BL % "torrent", _BL % "piracy"],
+        # Внешние списки маленькие (под пять тысяч) и русских сайтов в них
+        # почти нет: rutracker и kinozal есть, rutor, nnmclub и онлайн-
+        # кинотеатры с пиратским видео — нет.
+        "extra": [
+            "rutracker.org", "rutracker.net", "rutracker.cc", "rutor.info",
+            "rutor.is", "rutor.org", "nnmclub.to", "nnm-club.me", "nnm-club.ws",
+            "kinozal.tv", "kinozal.me", "kinozal.guru", "rustorka.com",
+            "tfile.cc", "megapeer.vip", "fast-torrent.club", "torrent-igruha.org",
+            "thepiratebay.org", "1337x.to", "rarbg.to", "yts.mx", "nyaa.si",
+            "lordfilm.tv", "lordfilm.ru", "hdrezka.ag", "rezka.ag", "hdrezka.me",
+            "kinogo.biz", "baskino.me", "seasonvar.ru", "filmix.ac",
+            "zona.plus", "kinokrad.co", "gidonline.io",
+        ],
     },
     "crypto": {
         "title": "Криптовалюты и майнинг",
         "urls": [_BL % "crypto"],
+        # Внешний список — майнинг в браузере и часть бирж; крупных бирж,
+        # которыми пользуются из России, в нём нет.
+        "extra": [
+            "binance.com", "bybit.com", "okx.com", "kucoin.com", "htx.com",
+            "huobi.com", "mexc.com", "gate.io", "bitget.com", "coinbase.com",
+            "kraken.com", "bingx.com", "exmo.com", "exmo.me", "garantex.org",
+            "coinmarketcap.com", "coingecko.com",
+            "bestchange.ru", "bestchange.com",
+        ],
     },
     "scam": {
         "title": "Мошенничество",
@@ -124,7 +166,20 @@ CATEGORIES = {
     },
     "streaming": {
         "title": "Видео и стриминг",
-        "urls": [_BL % "youtube", _BL % "twitter"],
+        # Twitter отсюда перенесён в соцсети: это не видео.
+        "urls": [_BL % "youtube"],
+        # Внешний список — только YouTube, и то без самого youtube.com.
+        # Российских и мировых видеосервисов в нём нет вовсе.
+        "extra": [
+            "youtube.com", "youtu.be", "ytimg.com", "googlevideo.com",
+            "youtube-nocookie.com", "youtubei.googleapis.com",
+            "rutube.ru", "rutube.sport", "vkvideo.ru", "vk.video",
+            "twitch.tv", "ttvnw.net", "jtvnw.net", "netflix.com", "nflxvideo.net",
+            "kinopoisk.ru", "hd.kinopoisk.ru", "ivi.ru", "ivi.tv", "okko.tv",
+            "wink.ru", "premier.one", "start.ru", "more.tv", "kion.ru",
+            "amediateka.ru", "smotrim.ru", "dzen.ru", "tiktok.com",
+            "kick.com", "trovo.live", "vkplay.live", "live.vkvideo.ru",
+        ],
     },
     "ransomware": {
         "title": "Шифровальщики",
@@ -388,13 +443,17 @@ class Filters:
             if cat in self.domains:
                 continue
             path = os.path.join(CACHE_DIR, f"{cat}.txt")
+            # Свой довесок категории — всегда, даже без скачанного списка.
+            extra = "\n".join((CATEGORIES.get(cat) or {}).get("extra") or [])
             try:
                 with open(path, encoding="utf-8", errors="ignore") as f:
-                    self.domains[cat] = _parse_list(f.read())
+                    self.domains[cat] = _parse_list(f.read() + "\n" + extra)
                 print(f"DNS: категория {cat} — {len(self.domains[cat])} доменов", flush=True)
             except OSError:
-                self.domains[cat] = set()
-                print(f"DNS: список категории {cat} ещё не загружен", flush=True)
+                self.domains[cat] = _parse_list(extra) if extra else set()
+                print(f"DNS: список категории {cat} ещё не загружен"
+                      + (f", работает свой довесок ({len(self.domains[cat])})"
+                         if extra else ""), flush=True)
 
     @staticmethod
     def _covers(rules, parts):

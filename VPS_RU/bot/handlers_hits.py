@@ -114,10 +114,17 @@ async def collect_hits():
 # экране. Поэтому они идут одной строкой в конце.
 QUIET_CATEGORIES = {"ads", "tracking"}
 
-# Как часто писать. Не чаще: инциденты приходят пачками, и сводка раз в пять
-# минут превратилась бы в ту же ленту, от которой мы уходим.
-NOTIFY_QUIET_MINUTES = 60
-NOTIFY_CHOICES = (15, 60, 180, 720)
+# Как часто писать. По умолчанию — сразу: владелец закрыл сайт и проверяет,
+# сработало ли, — ждать сводку час значит решить, что не сработало. Пачка
+# с одной открытой страницы всё равно приходит одним сообщением: забираем раз
+# в HITS_POLL_SECONDS, и всё, что набралось за это время, — одна сводка.
+# Кому часто — выбирает реже.
+NOTIFY_QUIET_MINUTES = 0
+# Как часто забирать попытки с узла. Узел отдаёт хвост файла — это копейки,
+# а пять минут между заборами и были той задержкой, из-за которой инцидент
+# приходил «когда-нибудь потом».
+HITS_POLL_SECONDS = 20
+NOTIFY_CHOICES = (0, 15, 60, 180, 720)
 
 # Сколько строк в одной сводке. Дальше — «и ещё N»: длинное сообщение читают по
 # диагонали, а короткое читают.
@@ -232,8 +239,8 @@ async def notify_new(app):
 
 
 async def hits_loop(app):
-    """Забираем раз в пять минут. Чаще незачем: разбирают такое не в реальном
-    времени, а узел не должен отвечать на опросы вместо работы."""
+    """Забираем раз в HITS_POLL_SECONDS. Раньше — раз в пять минут, и
+    инцидент доходил до владельца когда-нибудь потом."""
     await asyncio.sleep(90)
     while True:
         try:
@@ -241,7 +248,7 @@ async def hits_loop(app):
             await notify_new(app)
         except Exception as e:
             print(f"Попытки на закрытое: {e}")
-        await asyncio.sleep(300)
+        await asyncio.sleep(HITS_POLL_SECONDS)
 
 
 async def notify_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -251,8 +258,8 @@ async def notify_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     every = await notify_every()
 
     lines = ["🔔 **Сводка по инцидентам**", "",
-             ("Сейчас: **раз в %d мин.**" % every) if on
-             else "Сейчас: **выключена**", "",
+             (("Сейчас: **сразу**" if not every else "Сейчас: **раз в %d мин.**" % every)
+              if on else "Сейчас: **выключена**"), "",
              "Приходит одной сводкой, а не строкой на каждый случай: инциденты "
              "идут пачками, и лента из них перестаёт читаться на второй день.",
              "",
@@ -261,7 +268,8 @@ async def notify_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
              "чтобы цифры сходились с экраном._"]
 
     kb = [[InlineKeyboardButton(("✅ " if on and d == every else "") +
-                                ("%d мин." % d if d < 60 else "%d ч." % (d // 60)),
+                                ("Сразу" if not d else
+                                 "%d мин." % d if d < 60 else "%d ч." % (d // 60)),
                                 callback_data=f"hit_notify_{d}")
            for d in NOTIFY_CHOICES]]
     kb.append([InlineKeyboardButton("🔕 Выключить сводку" if on

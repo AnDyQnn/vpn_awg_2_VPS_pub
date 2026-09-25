@@ -83,7 +83,17 @@ async def main():
     assert "10.13.13.9" in text
     print("одно сообщение на пачку, люди сгруппированы: ок")
 
-    print("\n=== чаще выбранного не пишем ===")
+    print("\n=== по умолчанию — сразу: следующий инцидент не ждёт часа ===")
+    # Владелец закрыл сайт и проверяет — ждать сводку час значит решить, что
+    # не сработало.
+    await add(now, "Ника", "10.13.13.5", "сразу.example", "gambling")
+    sent = await hh.notify_new(app)
+    assert sent == 1 and len(app.bot.sent) == 2, "по умолчанию сводка обязана уйти сразу"
+    app.bot.sent.pop()
+    print("сразу: ок")
+
+    print("\n=== выбрали «раз в 15 мин.» — чаще не пишем ===")
+    await db.set_setting(hh.EVERY_KEY, 15)
     await add(now, "Ника", "10.13.13.5", "ещё.example", "gambling")
     sent = await hh.notify_new(app)
     print("  отправлено:", sent, "| сообщений всего:", len(app.bot.sent))

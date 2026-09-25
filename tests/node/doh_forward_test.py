@@ -9,7 +9,7 @@
 
 Стенд повторяет боевой FORWARD: сначала общие ACCEPT, потом всё остальное
 тем же порядком, что при старте узла. Пиры — в своих сетях за мостом wg0,
-в интернет — через eth0 контейнера.
+«интернет» — своя сеть стенда.
 
 Проверяется:
   • тому, чей DNS узел забирает, закрыты 853 и DoH к известным резолверам;
@@ -79,12 +79,39 @@ for n, ip in (("p1", FILTERED), ("p2", FREE), ("de", AGENT)):
        "&& ip -n %s route add default via %s dev eth0"
        % (n, ip, n, n, n, NODE, n, NODE))
     sh("ip route add %s/32 dev wg0" % ip)
+# «Интернет» — своя сеть на стенде: 1.1.1.1 со всеми портами и обычный сайт.
+# Настоящий интернет здесь не годится: результат зависел бы от того, через
+# что выходит машина с тестами (у нас она сама сидит за этим же узлом).
+SITE = "203.0.113.80"
+sh("ip netns add world")
+sh("ip link add wan0 type veth peer name eth0 netns world")
+sh("ip addr add 198.18.0.1/30 dev wan0 && ip link set wan0 up")
+sh("ip -n world addr add 198.18.0.2/30 dev eth0 && ip -n world link set eth0 up "
+   "&& ip -n world link set lo up && ip -n world addr add 1.1.1.1/32 dev lo "
+   "&& ip -n world addr add %s/32 dev lo && ip -n world route add default via 198.18.0.1" % SITE)
+sh("ip route add 1.1.1.1/32 via 198.18.0.2 && ip route add %s/32 via 198.18.0.2" % SITE)
+open("/tmp/world.py", "w").write('''
+import socket, threading
+def tcp(host, port):
+    s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    s.bind((host, port)); s.listen(50)
+    while True:
+        c, _ = s.accept(); c.close()
+def udp():
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.bind(("1.1.1.1", 53))
+    while True:
+        d, a = s.recvfrom(512); s.sendto(d, a)
+for h, p in (("1.1.1.1", 853), ("1.1.1.1", 443), ("%s", 443)):
+    threading.Thread(target=tcp, args=(h, p), daemon=True).start()
+udp()
+''' % SITE)
+subprocess.Popen("ip netns exec world python3 /tmp/world.py", shell=True,
+                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 sh("sysctl -qw net.ipv4.conf.all.send_redirects=0")
 sh("sysctl -qw net.ipv4.conf.wg0.send_redirects=0")
 sh("sysctl -qw net.ipv4.conf.wg0.proxy_arp=1")
 sh("sysctl -qw net.ipv4.ip_forward=1")
 sh("sysctl -qw net.bridge.bridge-nf-call-iptables=0")
-sh("iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE")
 # Боевой порядок FORWARD: общие ACCEPT ставит setup_network первыми.
 sh("iptables -A FORWARD -i wg0 -j ACCEPT")
 sh("iptables -A FORWARD -o wg0 -j ACCEPT")
@@ -137,10 +164,8 @@ r = tcp("p1", "1.1.1.1", 853)
 check("под фильтром: DNS поверх TLS (1.1.1.1:853) — отказ", r == "refused", r)
 r = tcp("p1", "1.1.1.1", 443)
 check("под фильтром: DNS поверх HTTPS (1.1.1.1:443) — отказ", r == "refused", r)
-import socket  # noqa: E402
-site = socket.gethostbyname("example.com")
-r = tcp("p1", site, 443)
-check("под фильтром: обычный сайт на 443 открыт", r == "ok", "%s → %s" % (site, r))
+r = tcp("p1", SITE, 443)
+check("под фильтром: обычный сайт на 443 открыт", r == "ok", r)
 r = tcp("p2", "1.1.1.1", 853)
 check("без фильтра: 853 не трогаем", r == "ok", r)
 r = udp_dns("p2")

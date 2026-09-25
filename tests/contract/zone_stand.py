@@ -167,6 +167,13 @@ async def main():
     moved, _ = await phase("3. владелец убрал домен", "vpn", anna_ip, boris_ip)
     check("вернулись имена", moved >= 2, "переехало: %d" % moved)
 
+    # Уборка: база стенда общая с тестами бота, и оставленные здесь люди,
+    # фильтры и имена ломали им счёт («под фильтром 0», «имя найдено»).
+    await db.execute("DELETE FROM users WHERE name LIKE 'zs-%'")
+    await db.execute("DELETE FROM dns_names")
+    for key in (dn.ZONE_KEY, dn.NODE_NAME_KEY, dn.NODE_NAME_DONE):
+        await db.execute("DELETE FROM settings WHERE key=$1", key)
+
     print("\nВСЁ ПРОШЛО" if ok else "\nЕСТЬ ПРОВАЛЫ")
 
 
