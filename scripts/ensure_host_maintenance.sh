@@ -323,6 +323,23 @@ EOF
 systemctl daemon-reload 2>/dev/null || true
 systemctl enable --now vpn-watchdog.service 2>/dev/null || true
 
+# Сторож — долгоживущий bash: код он читает один раз при старте и дальше крутит
+# цикл из памяти. `enable --now` уже запущенную службу не трогает, и новый код
+# сторожа до узла не доезжал вовсе: обе ноды с 20.09 жили на старом, и
+# российский раз в полминуты «возвращал охрану порта подписки», которой в
+# проекте уже не было. Перезапускаем, когда скрипт на диске сменился.
+# Перезапуск безопасен: сторож только смотрит и лечит, связь он не держит.
+WD_SHA_FILE=/var/lib/vpn-watchdog.sha256
+WD_SHA=$(sha256sum "${SELF_DIR}/vpn_watchdog.sh" 2>/dev/null | cut -d' ' -f1)
+if [ -n "$WD_SHA" ] && [ "$WD_SHA" != "$(cat "$WD_SHA_FILE" 2>/dev/null)" ]; then
+    if systemctl restart vpn-watchdog.service 2>/dev/null; then
+        echo "$WD_SHA" > "$WD_SHA_FILE"
+        echo "[maintenance] Сторож перезапущен — подхватил новый код."
+    else
+        echo "[maintenance] ⚠️  Сторож не перезапустился: systemctl restart vpn-watchdog"
+    fi
+fi
+
 # 4.5 ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ ОПИСАНЫ В .env
 # Переменная, которой в файле нет вовсе, ничем не отличается от переменной с
 # пустым значением: и то и другое выглядит как пустота. Разница в том, что

@@ -234,6 +234,14 @@ if [ -d "$NODE_DIR/volumes/xui" ] || [ -f "$NODE_DIR/volumes/secrets/xui.json" ]
     rm -rf "$NODE_DIR/volumes/xui" "$NODE_DIR/volumes/secrets/xui.json"
     echo "[Deploy] Данные панели 3X-UI убраны."
 fi
+# Следы своего Xray (до 8.63): конфиг узла, картинки сайта-заглушки и
+# гео-файлы, которые раздавались приложению Happ. И папка давно убранной
+# панели Caddy — её данные пережили её самоё. Никто из этого не читает.
+for LEFT in "$NODE_DIR/volumes/wireguard/xray.json" "$NODE_DIR/volumes/decoy" \
+            "$NODE_DIR/volumes/geo" "$NODE_DIR/volumes/caddy"; do
+    [ -e "$LEFT" ] || continue
+    rm -rf "$LEFT" && echo "[Deploy] Убран след прежнего: ${LEFT#$NODE_DIR/}"
+done
 if [ -f "$NODE_DIR/.env" ] && grep -q '^COMPOSE_PROFILES=' "$NODE_DIR/.env"; then
     grep -v '^COMPOSE_PROFILES=' "$NODE_DIR/.env" > "$NODE_DIR/.env.tmp" &&
         mv "$NODE_DIR/.env.tmp" "$NODE_DIR/.env" && chmod 600 "$NODE_DIR/.env"

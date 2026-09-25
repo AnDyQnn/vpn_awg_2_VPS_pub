@@ -18,7 +18,7 @@ from utils import (
     get_moscow_now, dt_to_moscow, broadcast_message, DE_AGENT_URL, WG_API_URL,
     is_agent,
     ADMIN_ID, escape_md, GOSUSLUGI_APP_WARNING, analyze_resource, CONFIGS_DIR, ROUTING_VERSION,
-    get_update_info, state_data
+    get_update_info
 )
 
 # --- SPLIT-TUNNEL: дата-центро-враждебные РФ-сервисы (мимо VPN, через домашний канал) ---

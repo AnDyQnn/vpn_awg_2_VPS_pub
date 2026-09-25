@@ -9,9 +9,8 @@ from telegram.constants import ParseMode
 from utils import (
     exit_kb,
     api_session,
-    send_copyable,
     escape_md, WG_API_URL, state_data, check_admin, CONFIGS_DIR, dt_to_moscow,
-    ts_to_moscow, safe_delete, GOSUSLUGI_APP_WARNING, copy_button
+    ts_to_moscow, safe_delete, GOSUSLUGI_APP_WARNING
 )
 from database import db
 from delivery import track_send
