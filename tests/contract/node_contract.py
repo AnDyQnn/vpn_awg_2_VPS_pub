@@ -264,8 +264,17 @@ def check_category_lists():
     Смотрим то же, что видит резолвер: файлы кэша. Пустой или отсутствующий
     файл у включённой кем-то категории — ошибка, а не мелочь.
     """
-    cache = "/etc/amnezia/amneziawg/cache/dns"
-    state = "/etc/amnezia/amneziawg/dns_filter.json"
+    # Сверка идёт из контейнера бота, а там папка узла видна как
+    # /volumes/wireguard. Путь узла оставлен запасным. Раньше проверка знала
+    # только его, в боте не находила файла и всегда отвечала «фильтры никому
+    # не включены» — незагруженный список она не увидела бы никогда.
+    base = next((d for d in ("/volumes/wireguard", "/etc/amnezia/amneziawg")
+                 if os.path.exists(os.path.join(d, "dns_filter.json"))), None)
+    if not base:
+        say("ok", "Списки категорий", "фильтры никому не включены")
+        return
+    cache = os.path.join(base, "cache", "dns")
+    state = os.path.join(base, "dns_filter.json")
     try:
         with open(state, encoding="utf-8") as f:
             data = json.load(f) or {}

@@ -57,7 +57,11 @@ STARTUP_QUIET=120
 # ядро спорят, — а спорят как раз в первую минуту.
 nice -n 15 /opt/venv/bin/python3 -u /app/dnsfilter.py &
 
-# Обновление списков категорий раз в 12 часов — только тех, что реально включены.
+# Обновление списков категорий раз в 12 часов — только тех, что реально включены:
+# лично кому-то и всем сразу. Общие раньше сюда не попадали: их список качался
+# один раз, при раскладке, и если та загрузка сорвалась (туннель до Германии
+# ещё не поднялся, источник не ответил), общая категория оставалась пустой
+# навсегда — включённой на экране и ничего не фильтрующей.
 (
   sleep "$STARTUP_QUIET"
   while true; do
@@ -67,8 +71,10 @@ p = "/etc/amnezia/amneziawg/dns_filter.json"
 cats = set()
 try:
     with open(p) as f:
-        for v in (json.load(f) or {}).get("clients", {}).values():
-            cats.update(v)
+        state = json.load(f) or {}
+    for v in (state.get("clients") or {}).values():
+        cats.update(v)
+    cats.update(state.get("common") or [])
 except Exception:
     pass
 print(" ".join(sorted(cats)))
