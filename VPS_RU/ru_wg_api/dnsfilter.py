@@ -543,11 +543,26 @@ class Names:
         # Чей запрос куда пересылать наверх. Пусто — значит всем общий.
         self.upstreams = {str(k): str(v)
                           for k, v in (raw.get("upstreams") or {}).items() if v}
+        self.zone = str(raw.get("zone") or "").lower().strip(".")
         print(f"Имена: загружено {len(self.map)}, "
               f"своих DNS у {len(self.upstreams)} адресов", flush=True)
 
+    zone = ""
+
     def lookup(self, name):
         return self.map.get((name or "").lower().rstrip("."))
+
+    def service_host(self):
+        """Служебное имя узла — то, на котором живёт страница отказа.
+
+        Берём имя в зоне, ведущее на адрес страницы, в той форме, в какой его
+        набирает браузер (punycode). Своего имени нет — пусто."""
+        if not self.zone:
+            return ""
+        cands = sorted(n for n, ip in self.map.items()
+                       if ip == BLOCK_IP and n.isascii()
+                       and n.endswith("." + self.zone))
+        return cands[0] if cands else ""
 
     def upstream_for(self, client_ip):
         """Куда пересылать запрос этого человека.
@@ -881,17 +896,104 @@ def _render_block_page(host, category, ref=""):
             .replace("__CATEGORY__", CATEGORY_TITLES.get(category, category or "")))
 
 
+# --- ПЕРЕНАПРАВЛЕНИЕ НА СВОЁ ИМЯ -------------------------------------------
+# Закрытый сайт по http уводим на страницу узла на СВОЁМ имени:
+# «https://blocked.example.ru/?site=…». Там сертификат настоящий, и человек
+# видит страницу с замком и нашим адресом, а не чужой адрес со страницей
+# внутри. Это не подмена — обычное перенаправление с нашего же ответа.
+#
+# По https так нельзя и не будет: чтобы ответить перенаправлением, надо сначала
+# пройти рукопожатие от имени чужого сайта, а его сертификата у нас нет. Но
+# Chrome, получив ошибку на https, сам откатывается на http — и тогда
+# перенаправление срабатывает; проверено браузером.
+#
+# Только когда сертификат покрывает служебное имя. Без своего домена
+# сертификат выпущен на адрес, и перенаправление увело бы на ошибку — там
+# страница отдаётся прямо, как раньше.
+_SITE_RE = re.compile(r"^[a-z0-9.-]{1,253}$")
+_REF_RE = re.compile(r"^[A-Z0-9-]{0,16}$")
+_CAT_RE = re.compile(r"^[\w -]{0,40}$")
+_cert_names = {"stamp": None, "names": []}
+
+
+def _cert_covers(host):
+    """Покрывает ли настоящий сертификат это имя (точно или «*.» на уровень)."""
+    pair = real_cert()
+    if not pair or not host:
+        return False
+    stamp = cert_stamp()
+    if _cert_names["stamp"] != stamp:
+        try:
+            import ssl
+            info = ssl._ssl._test_decode_cert(pair[0])
+            names = [v.lower() for k, v in info.get("subjectAltName", ()) if k == "DNS"]
+        except Exception:
+            names = []
+        _cert_names.update(stamp=stamp, names=names)
+    for n in _cert_names["names"]:
+        if n == host:
+            return True
+        if n.startswith("*.") and host.count(".") == n.count(".") \
+                and host.split(".", 1)[1] == n[2:]:
+            return True
+    return False
+
+
+def redirect_target(host, category, ref):
+    """Адрес страницы на своём имени — или пусто, если перенаправлять некуда."""
+    from urllib.parse import urlencode
+    NAMES.maybe_reload()
+    svc = NAMES.service_host()
+    if not svc or host == svc or not _cert_covers(svc):
+        return ""
+    return "https://%s/?%s" % (svc, urlencode({"site": host, "c": category, "ref": ref}))
+
+
+def _query(request_line):
+    """Параметры из строки запроса «GET /?site=…&c=… HTTP/1.1»."""
+    from urllib.parse import parse_qs, urlsplit
+    try:
+        target = request_line.split(" ")[1]
+        return {k: v[0] for k, v in parse_qs(urlsplit(target).query).items()}
+    except Exception:
+        return {}
+
+
 async def handle_http(reader, writer):
     """Отдаём страницу на любой путь: человек пришёл сюда не за файлом,
     а потому что его увели с закрытого сайта."""
     try:
         request = await asyncio.wait_for(reader.read(2048), 5)
         host, category = "", ""
-        for line in request.decode("latin-1", "ignore").split("\r\n"):
+        lines = request.decode("latin-1", "ignore").split("\r\n")
+        for line in lines:
             if line.lower().startswith("host:"):
-                host = line.split(":", 1)[1].strip().split(":")[0]
+                host = line.split(":", 1)[1].strip().split(":")[0].lower()
                 break
         ip = writer.get_extra_info("peername")
+        tls = writer.get_extra_info("ssl_object") is not None
+
+        # Пришли по перенаправлению на своё имя: что закрыто и почему, сказано
+        # в адресе. Инцидент уже записан при первом запросе — второй раз не пишем.
+        q = _query(lines[0]) if lines else {}
+        NAMES.maybe_reload()
+        if tls and host and host == NAMES.service_host() and q.get("site"):
+            site = q.get("site", "").lower()
+            cat = q.get("c", "")
+            ref = q.get("ref", "")
+            if _SITE_RE.match(site) and _CAT_RE.match(cat) and _REF_RE.match(ref):
+                if cat == "доступы":
+                    cat = ""
+                body = _render_block_page(site, cat, ref).encode("utf-8")
+                writer.write(b"HTTP/1.1 200 OK\r\n"
+                             b"Content-Type: text/html; charset=utf-8\r\n"
+                             b"Cache-Control: no-store\r\n"
+                             b"Connection: close\r\n"
+                             b"Content-Length: " + str(len(body)).encode()
+                             + b"\r\n\r\n" + body)
+                await writer.drain()
+                return
+
         if ip and host:
             category = FILTERS.blocked(ip[0], host.lower()) or ""
         # Номер берём тот же, что записан в журнале: человек копирует его со
@@ -908,6 +1010,16 @@ async def handle_http(reader, writer):
             # номер, которого нет в журнале.
             ref = _hit_refs.get((ip[0], host.lower())) or hit_ref(
                 ip[0], host.lower(), time.time())
+        # По http — перенаправляем на своё имя, если есть куда.
+        target = "" if tls else redirect_target(host, category or "доступы", ref)
+        if target:
+            writer.write(b"HTTP/1.1 302 Found\r\n"
+                         b"Location: " + target.encode("ascii", "ignore") + b"\r\n"
+                         b"Cache-Control: no-store\r\n"
+                         b"Connection: close\r\n"
+                         b"Content-Length: 0\r\n\r\n")
+            await writer.drain()
+            return
         body = _render_block_page(host, category, ref).encode("utf-8")
         writer.write(b"HTTP/1.1 200 OK\r\n"
                      b"Content-Type: text/html; charset=utf-8\r\n"

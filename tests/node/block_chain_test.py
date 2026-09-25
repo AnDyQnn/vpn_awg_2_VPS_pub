@@ -159,7 +159,7 @@ def start_filter(zone, cert_dir):
     return p, log
 
 
-def common_checks(zone, closed_url):
+def common_checks(zone, closed_url, redirect=False):
     print("\n  -- DNS --")
     check("закрытый сайт человеку → адрес страницы", dns_a(SITE, PERSON) == NODE,
           dns_a(SITE, PERSON))
@@ -169,9 +169,26 @@ def common_checks(zone, closed_url):
           dns_a("%s.%s" % (CLOSED, zone), OTHER) == NODE)
 
     print("\n  -- страница по HTTP --")
-    rc, body, _ = curl("http://%s/" % SITE, PERSON, NODE)
-    check("закрытый сайт по http → страница «закрыт фильтром»",
-          "Этот сайт закрыт фильтром" in body and "соцсети" in body, "curl=%d" % rc)
+    if not redirect:
+        rc, body, _ = curl("http://%s/" % SITE, PERSON, NODE)
+        check("закрытый сайт по http → страница «закрыт фильтром»",
+              "Этот сайт закрыт фильтром" in body and "соцсети" in body, "curl=%d" % rc)
+    else:
+        svc = puny("%s.%s" % (CLOSED, zone))
+        r = sh("curl -s -o /dev/null --max-time 8 --interface %s --resolve %s:80:%s "
+               "-w '%%{http_code} %%{redirect_url}' http://%s/" % (PERSON, SITE, NODE, SITE))
+        code, _, url = r.stdout.partition(" ")
+        check("закрытый сайт по http → перенаправление на своё имя",
+              code == "302" and url.startswith("https://%s/?site=%s&c=social&ref=" % (svc, SITE)),
+              r.stdout[:90])
+        # Переход по нему — страница на своём имени, сертификат проходит проверку.
+        rc, body, _ = curl(url, PERSON, NODE, "--cacert /tmp/certs/fullchain.pem")
+        check("по перенаправлению — страница без предупреждения, с тем сайтом",
+              rc == 0 and "Этот сайт закрыт фильтром" in body and SITE in body
+              and "соцсети" in body, "curl=%d" % rc)
+        hits = open(CONF + "/dns_hits.jsonl").read() \
+            if os.path.exists(CONF + "/dns_hits.jsonl") else ""
+        check("переход не записан вторым инцидентом", svc not in hits)
 
     print("\n  -- страница по HTTPS: 443 уводится на неё, а не на подписку --")
     rc, body, subj = curl("https://%s/" % SITE, PERSON, NODE, "-k")
@@ -218,7 +235,7 @@ p, log = start_filter("example.ru", "/tmp/certs")
 check("страница поднялась на сертификате домена",
       any("8443 (настоящий)" in l for l in log), [l for l in log if "8443" in l])
 closed = "https://%s.example.ru/" % puny(CLOSED)
-subj = common_checks("example.ru", closed)
+subj = common_checks("example.ru", closed, redirect=True)
 check("сертификат домена", "example.ru" in subj, subj)
 # Сертификат учебный, поэтому доверие ему задаём явно — как браузер доверяет
 # Let's Encrypt. Главное: имя совпадает, и предупреждения нет.
