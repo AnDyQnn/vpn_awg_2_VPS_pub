@@ -415,7 +415,10 @@ def setup_network():
     # приватный ключ сервера через /api/backup_config. Это и есть та самая дыра.
     run_cmd("iptables -A INPUT -i wg0 -p tcp --dport 8000 -j DROP")
     # Доступ к панели немецкого агента разрешён только с адреса мастера.
-    run_cmd("iptables -A FORWARD -i wg0 -o wg0 -p tcp --dport 8000 ! -s 10.13.13.1 -j DROP")
+    # Перед общим ACCEPT, а не в конец: выше стоит «-i wg0 -j ACCEPT», и
+    # правило в конце цепочки не срабатывало ни разу — счётчик был ноль.
+    _insert_before_accept(
+        "FORWARD", "-i wg0 -o wg0 -p tcp --dport 8000 ! -s 10.13.13.1 -j DROP")
 
     # --- УПРАВЛЕНИЕ ПЕРЕГРУЗКОЙ TCP ВНУТРИ КОНТЕЙНЕРА ---------------------
     # Настройка на хосте сюда НЕ доходит: у контейнера своё сетевое
@@ -576,6 +579,40 @@ NODE_IP = f"{VPN_SUBNET.rsplit('.', 1)[0]}.1"
 # ждать таймаут и выглядело бы как «интернет тупит».
 DOH_CHAIN = "DNS_BYPASS"
 DOH_SET = "doh_nets"
+# Кого закрывать. Ровно тех, чей DNS узел забирает себе (заворот DNS_REDIR):
+# у них обычный DNS идёт к нам, и обходной путь надо закрыть. У остальных
+# обычный DNS идёт к 1.1.1.1 напрямую — закрой им его, и интернет встанет.
+# Цепочку собирает rebuild_dns_chain вместе с заворотом, из тех же данных.
+DOH_SEL = "DNS_BYPASS_SEL"
+
+
+def _insert_before_accept(chain, spec):
+    """Ставит правило перед первым общим ACCEPT цепочки.
+
+    В FORWARD узла стоят «-i wg0 -j ACCEPT» и «-o wg0 -j ACCEPT» — всё, что
+    ниже них, до транзита пиров не доходит. Запрет обхода DNS и замок панели
+    агента стояли ниже и не срабатывали ни разу. Место считаем по факту, а не
+    номером: над ACCEPT могут быть учёт и доступы, и их порядок не трогаем."""
+    rules = [l for l in subprocess.run(
+        f"iptables -S {chain}", shell=True, capture_output=True,
+        text=True).stdout.splitlines() if l.startswith("-A ")]
+    # Уже стоит — снимаем и ставим заново: могло остаться ниже ACCEPT от
+    # прежней версии, а -C место не проверяет.
+    while subprocess.run(f"iptables -C {chain} {spec}", shell=True,
+                         stderr=subprocess.DEVNULL,
+                         stdout=subprocess.DEVNULL).returncode == 0:
+        subprocess.run(f"iptables -D {chain} {spec}", shell=True,
+                       stderr=subprocess.DEVNULL)
+        rules = [l for l in subprocess.run(
+            f"iptables -S {chain}", shell=True, capture_output=True,
+            text=True).stdout.splitlines() if l.startswith("-A ")]
+    pos = next((i + 1 for i, l in enumerate(rules) if l.endswith("-j ACCEPT")), None)
+    if pos:
+        subprocess.run(f"iptables -I {chain} {pos} {spec}", shell=True,
+                       stderr=subprocess.DEVNULL)
+    else:
+        subprocess.run(f"iptables -A {chain} {spec}", shell=True,
+                       stderr=subprocess.DEVNULL)
 # Известные резолверы DNS поверх HTTPS. Список намеренно короткий: сюда входят
 # только адреса, которые кроме DNS ничего не отдают, — закрыть их на 443 ничего
 # больше не ломает.
@@ -605,17 +642,30 @@ def doh_block_apply(enabled=True):
     subprocess.run(f"iptables -N {DOH_CHAIN}", shell=True, stderr=subprocess.DEVNULL)
     subprocess.run(f"iptables -F {DOH_CHAIN}", shell=True, stderr=subprocess.DEVNULL)
 
+    subprocess.run(f"iptables -N {DOH_SEL}", shell=True, stderr=subprocess.DEVNULL)
     hook = f"-s {TUNNEL_NET} -j {DOH_CHAIN}"
-    for chain in ("FORWARD", "OUTPUT"):
-        have = subprocess.run(f"iptables -C {chain} {hook}", shell=True,
-                              stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
-        if enabled and have.returncode != 0:
-            subprocess.run(f"iptables -A {chain} {hook}", shell=True,
+    sel_hook = f"-s {TUNNEL_NET} -j {DOH_SEL}"
+    # Прежняя версия вешала запрет в FORWARD напрямую и в конец — под общий
+    # ACCEPT, где он не срабатывал. Снимаем, если остался.
+    while subprocess.run(f"iptables -C FORWARD {hook}", shell=True,
+                         stderr=subprocess.DEVNULL,
+                         stdout=subprocess.DEVNULL).returncode == 0:
+        subprocess.run(f"iptables -D FORWARD {hook}", shell=True,
+                       stderr=subprocess.DEVNULL)
+    have = subprocess.run(f"iptables -C OUTPUT {hook}", shell=True,
+                          stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+    if enabled:
+        # Транзит пиров — через выбор «кого», и выше общего ACCEPT.
+        _insert_before_accept("FORWARD", sel_hook)
+        if have.returncode != 0:
+            subprocess.run(f"iptables -A OUTPUT {hook}", shell=True,
                            stderr=subprocess.DEVNULL)
-        elif not enabled and have.returncode == 0:
-            subprocess.run(f"iptables -D {chain} {hook}", shell=True,
+    else:
+        subprocess.run(f"iptables -D FORWARD {sel_hook}", shell=True,
+                       stderr=subprocess.DEVNULL)
+        if have.returncode == 0:
+            subprocess.run(f"iptables -D OUTPUT {hook}", shell=True,
                            stderr=subprocess.DEVNULL)
-    if not enabled:
         return 0
 
     rules = [
@@ -906,6 +956,25 @@ def rebuild_dns_chain(clients=None, names=None, everyone=None):
                 f"iptables -t nat -A {DNS_CHAIN} -s {VPN_SUBNET}/24 -p {proto} "
                 f"--dport 53 -j DNAT --to-destination {DNS_LOCAL_IP}:53",
                 shell=True, stderr=subprocess.DEVNULL)
+
+    # Запрет обходного DNS — тем же адресам, что и заворот. Чей DNS мы
+    # забираем, тому закрываем и путь мимо нас (DNS поверх TLS и HTTPS):
+    # телефон по умолчанию спрашивает именно так, и фильтр без этого не
+    # видит ни одного запроса. Остальных не трогаем: их обычный DNS идёт к
+    # 1.1.1.1 напрямую, и закрыть его значило бы выключить им интернет.
+    for chain in (DOH_SEL, DOH_CHAIN):
+        subprocess.run(f"iptables -N {chain}", shell=True, stderr=subprocess.DEVNULL)
+    subprocess.run(f"iptables -F {DOH_SEL}", shell=True, stderr=subprocess.DEVNULL)
+    # Агент в Германии — не человек, его путь не трогаем.
+    subprocess.run(f"iptables -A {DOH_SEL} -s {DE_AGENT_IP} -j RETURN",
+                   shell=True, stderr=subprocess.DEVNULL)
+    if names or everyone:
+        sources = [f"{VPN_SUBNET}/24"]
+    else:
+        sources = [ip for ip, cats in (clients or {}).items() if cats]
+    for src in sources:
+        subprocess.run(f"iptables -A {DOH_SEL} -s {src} -j {DOH_CHAIN}",
+                       shell=True, stderr=subprocess.DEVNULL)
     return redirected
 
 

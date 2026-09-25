@@ -22,9 +22,9 @@ import subprocess
 import time
 
 SRC = "/app/api.py"
-NEED_FUNCS = {"doh_block_apply"}
+NEED_FUNCS = {"doh_block_apply", "_insert_before_accept"}
 NEED_CONSTS = {"DOH_CHAIN", "DOH_SET", "DOH_ADDRS", "TUNNEL_NET", "NODE_IP",
-               "VPN_SUBNET", "CONF_DIR"}
+               "VPN_SUBNET", "CONF_DIR", "DOH_SEL"}
 
 tree = ast.parse(io.open(SRC, encoding="utf-8").read())
 picked = []

@@ -273,6 +273,21 @@ else
     add_check CAT_VPN "Запрет обходного DNS" "warning" "Не настроен — фильтр обходят через DNS поверх HTTPS"
 fi
 
+# Правила мало иметь — они должны стоять ВЫШЕ общего «-i wg0 -j ACCEPT».
+# Ниже него транзит пиров до них не доходит: так и было до 8.66.3 — правила
+# на месте, счётчик ноль, телефоны спрашивали DNS мимо узла, и фильтр не
+# видел ни одного запроса. Тем же был мёртв замок панели агента (:8000).
+FWD=$(docker exec vpn_wireguard iptables -S FORWARD 2>/dev/null | grep '^-A')
+ACC_N=$(echo "$FWD" | grep -n -- '-i wg0 -j ACCEPT' | head -1 | cut -d: -f1)
+SEL_N=$(echo "$FWD" | grep -n 'DNS_BYPASS_SEL' | head -1 | cut -d: -f1)
+PNL_N=$(echo "$FWD" | grep -n 'dport 8000' | head -1 | cut -d: -f1)
+if [ -n "$ACC_N" ] && [ -n "$SEL_N" ] && [ "$SEL_N" -lt "$ACC_N" ] \
+        && [ -n "$PNL_N" ] && [ "$PNL_N" -lt "$ACC_N" ]; then
+    add_check CAT_VPN "Порядок запретов в транзите" "ok" "Выше общего ACCEPT"
+else
+    add_check CAT_VPN "Порядок запретов в транзите" "error" "Запрет обхода DNS или замок панели агента ниже общего ACCEPT — не срабатывают"
+fi
+
 RU_SET=$(docker exec vpn_wireguard ipset list ru_nets 2>/dev/null | grep -cE '^[0-9]+\.')
 [ "${RU_SET:-0}" -ge 100 ] && add_check CAT_VPN "Гео-RU список (ru_nets)" "ok" "${RU_SET} сетей" || add_check CAT_VPN "Гео-RU список (ru_nets)" "warning" "Мало/пусто: ${RU_SET:-0}"
 

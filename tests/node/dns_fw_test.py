@@ -13,7 +13,7 @@ NEED = {"_dns_ensure_chain", "apply_dns_filters", "save_dns_state",
         "rebuild_dns_chain", "read_dns_clients", "read_dns_names", "apply_dns_names",
         "read_dns_state", "rebuild_dns_filters", "refresh_dns_lists"}
 CONSTS = {"DNS_CHAIN", "DNS_STATE_FILE", "DNS_LOCAL_IP", "CONF_DIR",
-          "DNS_NAMES_FILE", "VPN_SUBNET",
+          "DNS_NAMES_FILE", "VPN_SUBNET", "DOH_SEL", "DOH_CHAIN", "DE_AGENT_IP",
           # Адрес страницы отказа: на него заворачивается 443, иначе запрос
           # упирается в пустой порт.
           "BLOCK_PAGE_IP"}
