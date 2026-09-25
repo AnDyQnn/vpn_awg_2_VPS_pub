@@ -98,7 +98,11 @@ async def main():
     assert "DOMAIN-SUFFIX,xn----7sbbf1acfj5cdt6k6a.xn--p1ai,DIRECT" in rules, \
         "русское имя едет в punycode, как его и спросит приложение"
     assert not any("мусор" in r or " " in r for r in rules), "мусор в правила не попадает"
-    assert rules[0].startswith("IP-CIDR,10.13.13.0/24,VPN"), "туннель — первым"
+    assert rules[0] == "IP-CIDR,203.0.113.10/32,DIRECT,no-resolve", \
+        "сам узел — мимо туннеля, иначе с включённым VPN подписка не обновится"
+    assert rules[1].startswith("IP-CIDR,10.13.13.0/24,VPN"), "затем туннель"
+    own = cs.build_profile("x", cs.parse_conf(CONF), [], "example.ru", self_host="example.ru")
+    assert "  - DOMAIN,example.ru,DIRECT\n" in own, "имя узла — тоже напрямую"
     assert rules[-1] == "MATCH,VPN", "всё остальное — в VPN"
     print("мимо VPN — только то, что безопасно; остальное в туннель: ок")
 

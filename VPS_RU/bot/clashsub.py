@@ -148,7 +148,7 @@ def site_name(raw):
         return d
 
 
-def build_profile(name, conf, bypass_rows, zone):
+def build_profile(name, conf, bypass_rows, zone, self_host=""):
     """Профиль Clash (mihomo) из конфига AmneziaWG и списка обхода.
 
     Сплит повторяет AllowedIPs файла: всё в туннель, кроме подсетей из списка
@@ -227,7 +227,24 @@ def build_profile(name, conf, bypass_rows, zone):
             if c and bypass_safe(c) and c not in cidrs:
                 cidrs.append(c)
 
-    lines += ["rules:",
+    # Сам узел — мимо туннеля. Подписка живёт на его же адресе, и с
+    # включённым VPN запрос на обновление профиля уходил бы в туннель и
+    # разворачивался обратно на тот же сервер. Такой разворот файрвол хоста
+    # не пропускает, поэтому профиль молча переставал бы обновляться.
+    # Напрямую это обычный HTTPS до российского сервера.
+    own = []
+    try:
+        ipaddress.ip_address(host)
+        own.append("  - IP-CIDR,%s/32,DIRECT,no-resolve" % host)
+    except ValueError:
+        pass
+    if self_host and self_host != host:
+        try:
+            ipaddress.ip_address(self_host)
+            own.append("  - IP-CIDR,%s/32,DIRECT,no-resolve" % self_host)
+        except ValueError:
+            own.append("  - DOMAIN,%s,DIRECT" % self_host)
+    lines += ["rules:"] + own + [
               "  - IP-CIDR,%s,%s,no-resolve" % (TUNNEL_NET, PROXY_NAME),
               "  - DOMAIN-SUFFIX,%s,%s" % (zone, PROXY_NAME)]
     lines += ["  - DOMAIN-SUFFIX,%s,DIRECT" % d for d in domains]
@@ -248,7 +265,8 @@ async def profile_for(user):
     if not conf["Interface"].get("PrivateKey") or not conf["Peer"].get("Endpoint"):
         return None
     from dnsnames import zone
-    return build_profile(user["name"], conf, await db.get_bypass_exclusions(), zone())
+    return build_profile(user["name"], conf, await db.get_bypass_exclusions(), zone(),
+                         self_host=public_host())
 
 
 # --- АДРЕС ПОДПИСКИ ----------------------------------------------------------
