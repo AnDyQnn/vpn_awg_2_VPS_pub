@@ -84,5 +84,24 @@ os.utime(p, (t, t))
 g._load_domains(sync=True)
 check("обновлённый список пересобран", g.blocked("10.13.13.7", "later.example") == "adult")
 
+print("\n=== заготовка впрок: включение категории — сразу, без разбора ===")
+# Список скачан раньше (категория была включена), сейчас выключен.
+g2 = os.path.join(dnsfilter.CACHE_DIR, "gambling.txt")
+open(g2, "w").write("".join("0.0.0.0 bet%d.example\n" % i for i in range(200000)))
+gbin = dnsfilter._bin_path("gambling")
+check("до заготовки готового файла нет", not os.path.exists(gbin))
+n = dnsfilter.prebuild_once()
+check("заготовка собрала выключенный список", os.path.exists(gbin), "собрано: %d" % n)
+check("повторная заготовка ничего не делает", dnsfilter.prebuild_once() == 0)
+m = os.path.getmtime(gbin)
+h = dnsfilter.Filters()
+h.clients = {"10.13.13.7": ["gambling"]}
+t0 = time.time()
+h._load_domains(sync=True)
+took = time.time() - t0
+check("включение категории — меньше секунды", took < 1.0, "%.2f с" % took)
+check("и без пересборки", os.path.getmtime(gbin) == m)
+check("работает", h.blocked("10.13.13.7", "bet12345.example") == "gambling")
+
 print()
 print("ВСЁ ПРОШЛО" if ok else "ЕСТЬ ПРОВАЛЫ")

@@ -412,10 +412,21 @@ def build_bin(cat, txt_path, out_path):
             arr = _parse_lines(itertools.chain(f, extras))
     except OSError:
         arr = _parse_lines(extras)
-    tmp = out_path + ".tmp"
+    # Своё имя временного файла у каждого процесса: сборку одной категории
+    # могут начать двое (загрузка и заготовка впрок) — общий .tmp они бы
+    # испортили друг другу.
+    tmp = "%s.%d.tmp" % (out_path, os.getpid())
     with open(tmp, "wb") as o:
         arr.tofile(o)
     os.replace(tmp, out_path)
+    # Время готового файла = время списка, из которого он собран. Сравнение
+    # «файл не старше списка» тогда точное и не зависит от часов: со временем
+    # сборки список «из будущего» пересобирался бы на каждом проходе.
+    try:
+        tm = os.path.getmtime(txt_path)
+        os.utime(out_path, (tm, tm))
+    except OSError:
+        pass
     # Прежние сборки той же категории с другим довеском — мусор.
     import glob
     for old in glob.glob(os.path.join(os.path.dirname(out_path), f"{cat}.*.bin")):
@@ -424,6 +435,62 @@ def build_bin(cat, txt_path, out_path):
                 os.remove(old)
             except OSError:
                 pass
+
+
+PREBUILD_EVERY = 600
+
+
+def prebuild_once(skip=()):
+    """Готовит файлы для всех скачанных списков, у которых файла нет или он
+    старше списка. Включённые и выключенные — все: владелец включает
+    категорию, а её список уже разобран, и она работает сразу. Прежде первое
+    включение большой категории давало полминуты, когда она не работала: шёл
+    разбор. Возвращает, сколько собрано."""
+    import subprocess
+    import sys
+    built = 0
+    try:
+        names = sorted(os.listdir(CACHE_DIR))
+    except OSError:
+        return 0
+    for fn in names:
+        if not fn.endswith(".txt"):
+            continue
+        cat = fn[:-4]
+        if cat in skip:
+            continue
+        txt = os.path.join(CACHE_DIR, fn)
+        binp = _bin_path(cat)
+        try:
+            mt = os.path.getmtime(txt)
+        except OSError:
+            continue
+        try:
+            bmt = os.path.getmtime(binp)
+        except OSError:
+            bmt = -1
+        if bmt >= mt:
+            continue
+        try:
+            subprocess.run(["nice", "-n", "19", sys.executable, os.path.abspath(__file__),
+                            "--build", cat, txt, binp], timeout=900,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            built += 1
+        except Exception as e:
+            print(f"DNS: заготовка {cat} не собралась: {e}", flush=True)
+    return built
+
+
+def _prebuild_loop():
+    time.sleep(30)                       # дать узлу подняться
+    while True:
+        try:
+            n = prebuild_once(skip=set(FILTERS._loading))
+            if n:
+                print(f"DNS: заготовлено впрок списков: {n}", flush=True)
+        except Exception as e:
+            print(f"DNS: заготовка впрок: {e}", flush=True)
+        time.sleep(PREBUILD_EVERY)
 
 
 def _has(domains, name):
@@ -1281,6 +1348,9 @@ HTTPS_PAGE_PORT = 8443
 async def main():
     os.makedirs(CACHE_DIR, exist_ok=True)
     FILTERS.maybe_reload()
+    # Заготовка впрок: разобранные списки для всех скачанных категорий.
+    import threading
+    threading.Thread(target=_prebuild_loop, daemon=True).start()
     loop = asyncio.get_event_loop()
     # Общий сокет создаём руками, а не через local_addr: asyncio не ставит на
     # него разрешение делить адрес, и тогда второй сокет — на адресе узла —
