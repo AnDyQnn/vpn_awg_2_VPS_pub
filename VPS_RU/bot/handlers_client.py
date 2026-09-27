@@ -349,17 +349,25 @@ async def client_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         pass
 
+    text, markup, mode_ = await client_menu_view(user_id, first_name)
+    if update.callback_query:
+        await update.callback_query.edit_message_text(text=text, reply_markup=markup, parse_mode=mode_)
+    else:
+        await context.bot.send_message(chat_id=user_id, text=text, reply_markup=markup, parse_mode=mode_)
+
+
+async def client_menu_view(user_id, first_name):
+    """Текст и кнопки главного экрана клиента — без отправки.
+
+    Отдельно от обработчика, потому что меню собирает не только нажатие:
+    ночная чистка чата оставляет человеку именно его, а нажатия там нет."""
     keys, live, limits, common, mode = await _client_context(user_id)
 
     if not keys:
         if check_admin(user_id):
             text = "❌ У вас нет привязанных ключей, но вы Админ."
             kb = [[InlineKeyboardButton("🚪 Вернуться в Админку", callback_data="back_to_main")]]
-            if update.callback_query:
-                await update.callback_query.edit_message_text(text=text, reply_markup=InlineKeyboardMarkup(kb))
-            else:
-                await context.bot.send_message(chat_id=user_id, text=text, reply_markup=InlineKeyboardMarkup(kb))
-            return
+            return text, InlineKeyboardMarkup(kb), None
         else:
             text = ("❌ У вас нет привязанных ключей VPN.\n\n"
                     "Попросите того, кто выдаёт доступ, привязать ваш ключ "
@@ -367,11 +375,7 @@ async def client_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             kb = InlineKeyboardMarkup(
                 [[InlineKeyboardButton("🆘 Сообщить о проблеме",
                                        callback_data="support_start")]])
-            if update.callback_query:
-                await update.callback_query.edit_message_text(text=text, reply_markup=kb)
-            else:
-                await context.bot.send_message(chat_id=user_id, text=text, reply_markup=kb)
-            return
+            return text, kb, None
 
     online = sum(1 for k in keys if live.get(k["uuid"]))
     paused = [k for k in keys if not k.get("is_active", True)]
@@ -436,10 +440,7 @@ async def client_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if check_admin(user_id):
         keyboard.append([InlineKeyboardButton("🚪 Выйти из режима клиента", callback_data="back_to_main")])
 
-    if update.callback_query:
-        await update.callback_query.edit_message_text(text=text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
-    else:
-        await context.bot.send_message(chat_id=user_id, text=text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
+    return text, InlineKeyboardMarkup(keyboard), ParseMode.MARKDOWN
 
 # --- НОВОЕ МЕНЮ: УПРАВЛЕНИЕ КЛЮЧАМИ ---
 

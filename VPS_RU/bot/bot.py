@@ -1729,7 +1729,12 @@ if __name__ == "__main__":
         print("Чистка чата: слежение не включилось (%s)" % _e)
     loop = asyncio.get_event_loop()
     loop.run_until_complete(db.connect())
-    app = ApplicationBuilder().token(BOT_TOKEN).post_init(post_init).build()
+    # Нажатия разбираются параллельно. По умолчанию библиотека берёт их строго
+    # по одному: одна долгая операция (запрос к узлу, применение фильтров,
+    # выгрузка) держала все кнопки у всех, пока не кончится, — снаружи это и
+    # было «бот подвисает». Потолок — чтобы шквал нажатий не съел одно ядро.
+    app = (ApplicationBuilder().token(BOT_TOKEN).post_init(post_init)
+           .concurrent_updates(8).build())
     
     app.add_handler(CommandHandler("start", start))
     # Нативные slash-команды (регистрируем ДО общего обработчика команд)

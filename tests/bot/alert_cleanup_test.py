@@ -84,10 +84,12 @@ async def run():
     app = FakeApp(bot)
     monitor.ADMIN_ID = ADMIN
 
-    # Уборка забирает всё, кроме нескольких последних, — здесь это только мешает
-    # считать, поэтому на время проверки оставляем ноль. Что последние
-    # действительно не трогаются, проверяет chat_cleanup_test.
-    cc.KEEP_LAST = 0
+    # Здесь проверяется, доходят ли сообщения до уборки. Главное меню, которое
+    # уборка оставляет после себя, проверяет chat_cleanup_test — тут оно
+    # только мешало бы считать.
+    async def _no_menu(*a, **k):
+        return None
+    cc._put_menu = _no_menu
     cc.START_DELAY = 0.01
     cc.CHECK_SECONDS = 0.01
     cc._patched = False

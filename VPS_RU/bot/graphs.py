@@ -5,6 +5,8 @@ import matplotlib.dates as mdates
 from matplotlib.ticker import MaxNLocator
 from database import db
 import aiohttp
+import asyncio
+import threading
 import time
 from utils import get_moscow_now, dt_to_moscow, WG_API_URL, api_session
 
@@ -18,6 +20,18 @@ PALETTE = ["#a371f7", "#58a6ff", "#3fb950", "#d29922", "#f85149",
            "#22d3ee", "#e879f9", "#facc15"]
 TOP_N   = 6              # максимум онлайн-сессий цветом, остальные → «Прочие»
 ACTIVE_WINDOW_SEC = 300  # «активен/онлайн» = хендшейк не старше 5 минут
+
+# Рисование — только в отдельном потоке. Картинка в 150 dpi на одноядерном
+# узле — это секунда-две чистого процессора; в общем цикле бота она стояла бы
+# на пути у всех нажатий, а «трафик в реальном времени» перерисовывается каждые
+# 10 секунд — кнопки у всех замирали бы по кругу. pyplot держит общее
+# состояние, поэтому две картинки одновременно не рисуем.
+_DRAW_LOCK = threading.Lock()
+
+
+def _locked(fn, *args):
+    with _DRAW_LOCK:
+        return fn(*args)
 
 
 def _fmt_mb(mb: float) -> str:
@@ -76,6 +90,10 @@ async def generate_vpn_graph():
     for uid, d in user_plot_data.items():
         d['online'] = (now_ts - live_hs.get(uid, 0)) < ACTIVE_WINDOW_SEC
 
+    return await asyncio.to_thread(_locked, _draw_vpn, user_plot_data, now)
+
+
+def _draw_vpn(user_plot_data, now):
     # --- тёмный стиль ---
     plt.rcParams.update({
         "figure.facecolor": BG, "axes.facecolor": PANEL,
@@ -174,6 +192,15 @@ async def generate_load_graph(hours=24, uuid=None, title=None, limit_line=None):
     """
     rows = await db.get_hourly(hours=hours, uuid=uuid)
     path = f"/volumes/backups/load_graph{'_' + uuid[:8] if uuid else ''}.png"
+    ref = limit_line
+    if rows and not ref and not uuid:
+        from insights import node_ceiling
+        ref = await node_ceiling()
+    return await asyncio.to_thread(_locked, _draw_load, rows, path, hours,
+                                   uuid, title, ref)
+
+
+def _draw_load(rows, path, hours, uuid, title, ref):
 
     plt.rcParams.update({
         "figure.facecolor": BG, "axes.facecolor": PANEL, "savefig.facecolor": BG,
@@ -230,9 +257,6 @@ async def generate_load_graph(hours=24, uuid=None, title=None, limit_line=None):
             ax2.plot(times, peaks, color=PALETTE[7], lw=1.2, ls=(0, (3, 3)), label="Пик в часе")
         ax2.set_ylabel("Пакеты в секунду", fontsize=10.5)
 
-        from insights import node_ceiling
-        ref = limit_line if limit_line else (
-            None if uuid else await node_ceiling())
         if ref:
             ax2.axhline(ref, color=PALETTE[4], lw=1.4, ls=(0, (5, 4)))
             ax2.text(times[0], ref * .95,

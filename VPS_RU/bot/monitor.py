@@ -590,6 +590,8 @@ async def alert_loop(app):
                         last_ip_cache[uuid_val] = (hostname, now)
 
                     if uuid_val not in notified_cache:
+                        # Живое рукопожатие — последняя стадия доставки ключа.
+                        await db.delivery_connected(uuid_val)
                         device_set = await db.device_set(uuid_val)
                         if user:
                             safe_name = escape_md(user['name'])

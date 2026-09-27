@@ -509,6 +509,10 @@ class Database:
                     PRIMARY KEY (chat_id, message_id)
                 );
             """)
+            # Что это за сообщение: экран с кнопками, архив или прочее. Нужно
+            # чистке — архив и главное меню она оставляет.
+            await self.execute(
+                "ALTER TABLE chat_msgs ADD COLUMN IF NOT EXISTS kind TEXT DEFAULT ''")
             await self.execute("""
                 CREATE TABLE IF NOT EXISTS filter_exempt (
                     user_uuid TEXT REFERENCES users(uuid) ON DELETE CASCADE,
@@ -858,23 +862,26 @@ class Database:
     # Хранится только номер и время. Ни текста, ни вложений: чистке нужно ровно
     # то, чем удаляют, а лишнее в базе — это лишнее в бэкапе.
 
-    async def remember_chat_msg(self, chat_id: int, message_id: int):
+    async def remember_chat_msg(self, chat_id: int, message_id: int, kind: str = ""):
         import time
         await self.execute(
-            "INSERT INTO chat_msgs (chat_id, message_id, sent_at) "
-            "VALUES ($1,$2,$3) ON CONFLICT DO NOTHING",
-            int(chat_id), int(message_id), float(time.time()))
+            "INSERT INTO chat_msgs (chat_id, message_id, sent_at, kind) "
+            "VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING",
+            int(chat_id), int(message_id), float(time.time()), kind or "")
 
     async def chat_msgs(self, chat_id: int, keep_last: int = 0):
-        """Что можно убирать: всё, кроме нескольких последних.
+        """Записанные сообщения чата, свежие первыми.
 
-        Последние не трогаем: на одном из них владелец сейчас и смотрит, и
-        вместе с сообщением исчезли бы кнопки."""
+        keep_last — сколько самых свежих не отдавать вовсе."""
         rows = await self.fetch_all(
-            "SELECT message_id, sent_at FROM chat_msgs WHERE chat_id=$1 "
-            "ORDER BY message_id DESC OFFSET $2",
+            "SELECT message_id, sent_at, COALESCE(kind,'') AS kind FROM chat_msgs "
+            "WHERE chat_id=$1 ORDER BY message_id DESC OFFSET $2",
             int(chat_id), int(keep_last))
         return [dict(r) for r in rows]
+
+    async def chat_ids(self):
+        rows = await self.fetch_all("SELECT DISTINCT chat_id FROM chat_msgs")
+        return [int(r["chat_id"]) for r in rows]
 
     async def forget_chat_msg(self, chat_id: int, message_id: int):
         await self.execute(
@@ -1179,6 +1186,8 @@ class Database:
                    d.opened_at, d.downloaded_at, d.last_error
             FROM key_delivery d JOIN users u ON u.uuid = d.user_uuid
             WHERE d.connected_at IS NULL
+              AND NOT (u.last_active_at IS NOT NULL AND d.sent_at IS NOT NULL
+                       AND u.last_active_at > d.sent_at)
               AND (d.blocked_at IS NOT NULL
                    OR d.sent_at < NOW() - ($1 || ' hours')::INTERVAL)
             ORDER BY COALESCE(d.sent_at, d.blocked_at)

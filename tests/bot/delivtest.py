@@ -80,6 +80,21 @@ async def main():
     print("в застрявших только те, кто не подключился: ок")
     print("  свежая отправка (dl-4) и дошедший (dl-1) в список не попали")
 
+    # Молчун на самом деле подключился: туннель видел его после отправки.
+    # Отметка «подключился» могла не встать (раньше её не ставил никто) —
+    # в застрявших он всё равно висеть не должен.
+    await db.execute("UPDATE users SET last_active_at = NOW() WHERE uuid='dl-2'")
+    stuck = {s["user_uuid"] for s in await db.get_stuck_deliveries(24)}
+    assert stuck == {"dl-3"}, stuck
+    await db.execute("UPDATE users SET last_active_at = NULL WHERE uuid='dl-2'")
+    print("был на связи после отправки — не застрял: ок")
+
+    # И монитор ставит отметку сам, по живому рукопожатию.
+    import io as _io
+    src = _io.open("/app/monitor.py", encoding="utf-8").read()
+    assert "await db.delivery_connected(uuid_val)" in src,         "монитор не ставит стадию «подключился»"
+    print("монитор отмечает подключение: ок")
+
     # перевыпуск: стадии обнуляются, старые отметки к новому конфигу не относятся
     await db.delivery_sent("dl-1", 111)
     rec = await db.get_delivery("dl-1")

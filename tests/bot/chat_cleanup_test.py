@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Чистка чата владельца в конце дня.
+"""Чистка чатов в конце дня.
 
-Она была и раньше, но знала только про тревоги: их шлют через один помощник,
-который запоминает номер. Всё остальное — биллинг, архивы, выгрузки, выдача
-ключей, ответы на нажатия — проходило мимо и оставалось в чате навсегда.
-
-Поэтому главное здесь — не «удаляет ли», а «узнаёт ли про всё».
+Два вопроса. Узнаёт ли она про всё, что бот прислал, — иначе чистить нечего.
+И что остаётся после неё: у владельца архивы и главное меню, у человека —
+его главное меню. Раньше «экран» определялся как «два последних сообщения», а
+экран правится на месте и к ночи уже не последний, — и после уборки в чате не
+оставалось ничего, даже закреплённого архива.
 """
 import asyncio
 
@@ -38,22 +38,42 @@ class FakeBot:
         return FakeMessage(FakeBot._next)
 
     async def delete_message(self, chat_id=None, message_id=None):
-        deleted.append(message_id)
+        deleted.append((chat_id, message_id))
+
+    async def edit_message_text(self, chat_id=None, message_id=None, text=None, **kw):
+        edited.append((chat_id, message_id, text))
 
 
 deleted = []
+edited = []
 
 
 class FakeApp:
     def __init__(self):
         self.bot = FakeBot()
+        self.user_data = {}
+
+
+async def fake_admin_menu(app, chat_id):
+    return "ГЛАВНОЕ МЕНЮ ВЛАДЕЛЬЦА", "kb", None
+
+
+async def fake_user_menu(app, chat_id):
+    return "ГЛАВНОЕ МЕНЮ ЧЕЛОВЕКА", "kb", None
+
+
+async def ids(chat):
+    return {r["message_id"] for r in await db.chat_msgs(chat)}
 
 
 async def main():
     await db.connect()
-    await db.execute("DELETE FROM chat_msgs WHERE chat_id IN ($1,$2)", ADMIN, OTHER)
-    await db.execute("DELETE FROM settings WHERE key IN ($1,$2,$3)",
-                     cc.ON_KEY, cc.DONE_KEY, "admin_alert_msgs")
+    await db.execute("DELETE FROM chat_msgs")
+    await db.execute("DELETE FROM settings WHERE key IN ($1,$2,$3,$4,$5)",
+                     cc.ON_KEY, cc.DONE_KEY, cc.LAST_KEY, "admin_alert_msgs",
+                     "backup_message_id")
+    cc.admin_menu = fake_admin_menu
+    cc.user_menu = fake_user_menu
 
     # Подменяем то, на что ставится перехват: настоящего telegram.Bot в тесте
     # трогать незачем, а проверяем мы именно механику перехвата.
@@ -62,68 +82,103 @@ async def main():
     assert not cc.apply(ADMIN, classes=[FakeBot]), "второй раз вставать не должен"
 
     print("=== перехват идёт в тот класс, которым шлёт приложение ===")
-    # Приложение шлёт не голым Bot, а ExtBot, и тот переопределяет
-    # send_message. Перехват только на Bot до живого бота не доезжает — и
-    # выглядит это как работающая чистка, которой нечего чистить.
-    targets = cc._targets()
-    names = [c.__name__ for c in targets]
+    names = [c.__name__ for c in cc._targets()]
     print("  перехватываем:", names)
     assert "ExtBot" in names, names
-    ext = [c for c in targets if c.__name__ == "ExtBot"][0]
-    assert "send_message" in ext.__dict__,         "ExtBot объявляет send_message сам — значит его и надо перехватывать"
+    ext = [c for c in cc._targets() if c.__name__ == "ExtBot"][0]
+    assert "send_message" in ext.__dict__, \
+        "ExtBot объявляет send_message сам — значит его и надо перехватывать"
     print("оба класса на месте: ок")
-    print()
 
     bot = FakeBot()
-
-    print("=== запоминается ВСЁ, что ушло владельцу ===")
-    # Три разных способа отправки: текст, документ, картинка. Прежняя чистка
-    # знала только про один и только из одного места.
-    m1 = await bot.send_message(chat_id=ADMIN, text="тревога")
-    m2 = await bot.send_document(chat_id=ADMIN, document=b"")
-    m3 = await bot.send_photo(chat_id=ADMIN, photo=b"")
-    rows = await db.chat_msgs(ADMIN)
-    got = {r["message_id"] for r in rows}
-    print("  запомнено:", sorted(got))
-    assert {m1.message_id, m2.message_id, m3.message_id} <= got, got
-    print("текст, документ и картинка — все три: ок")
-
-    print("\n=== чужой чат не трогаем вовсе ===")
-    mo = await bot.send_message(chat_id=OTHER, text="ключ человеку")
-    rows = await db.chat_msgs(OTHER)
-    assert not rows, "чужие сообщения запоминать нельзя"
-    print("  сообщений чужого чата в списке:", len(rows))
-    print("человек хранит свой ключ сам: ок")
-
-    print("\n=== последние не трогаем ===")
-    rows = await db.chat_msgs(ADMIN, keep_last=cc.KEEP_LAST)
-    kept = {r["message_id"] for r in rows}
-    print("  под удаление:", sorted(kept))
-    assert m3.message_id not in kept, "самое свежее обязано остаться"
-    assert m2.message_id not in kept, "и предыдущее тоже"
-    assert m1.message_id in kept
-    print("экран с кнопками переживает чистку: ок")
-
-    print("\n=== уборка удаляет и забывает ===")
-    deleted.clear()
-    for _ in range(4):
-        await bot.send_message(chat_id=ADMIN, text="шум")
     app = FakeApp()
-    gone = await cc.sweep(app, ADMIN)
-    print("  убрано:", gone, "| удалено в телеграме:", len(deleted))
-    assert gone == len(deleted) > 0
-    left = await db.chat_msgs(ADMIN)
-    assert len(left) == cc.KEEP_LAST, left
-    print("в списке остались только последние: ок")
+
+    print("\n=== запоминается всё, и понятно, что это ===")
+    screen = await bot.send_message(chat_id=ADMIN, text="меню", reply_markup="kb")
+    backup = await bot.send_document(chat_id=ADMIN, document=b"",
+                                     caption="💾 **Архив системы · мастер**")
+    noise = [await bot.send_message(chat_id=ADMIN, text="тревога"),
+             await bot.send_document(chat_id=ADMIN, document=b"", caption="выгрузка"),
+             await bot.send_photo(chat_id=ADMIN, photo=b"")]
+    kinds = {r["message_id"]: r["kind"] for r in await db.chat_msgs(ADMIN)}
+    assert kinds[screen.message_id] == "menu", kinds
+    assert kinds[backup.message_id] == "backup", kinds
+    assert all(kinds[m.message_id] == "" for m in noise), kinds
+    print("  экран — menu, архив — backup, прочее — без пометки: ок")
+
+    print("\n=== ручная уборка: экран и архив остаются, хоть экран и старый ===")
+    # Экран отправлен первым, а после него пришло три сообщения. Прежняя
+    # уборка «оставляла два последних» — и экран уходил.
+    deleted.clear()
+    gone = await cc.sweep(app, ADMIN, anchor=screen.message_id)
+    left = await ids(ADMIN)
+    assert gone == 3, gone
+    assert left == {screen.message_id, backup.message_id}, left
+    assert (ADMIN, screen.message_id) not in deleted
+    print("  убрано %d, остались экран и архив: ок" % gone)
+
+    print("\n=== закреплённый архив прежних версий — по номеру из настроек ===")
+    old_backup = await bot.send_document(chat_id=ADMIN, document=b"")   # без подписи
+    await db.set_setting("backup_message_id", str(old_backup.message_id))
+    await cc.sweep(app, ADMIN, anchor=screen.message_id)
+    assert old_backup.message_id in await ids(ADMIN)
+    print("  архив по номеру цел: ок")
+
+    print("\n=== ночь: экран владельца становится главным меню ===")
+    await bot.send_message(chat_id=ADMIN, text="шум")
+    edited.clear()
+    # Бот помнит экран так же, как show_screen его запоминает.
+    app.user_data[ADMIN] = {"screen_at": (ADMIN, screen.message_id)}
+    mine, _, _ = await cc.sweep_all(app, ADMIN)
+    assert mine == 1, mine
+    assert (ADMIN, screen.message_id, "ГЛАВНОЕ МЕНЮ ВЛАДЕЛЬЦА") in edited, edited
+    assert {screen.message_id, backup.message_id, old_backup.message_id} <= await ids(ADMIN)
+    print("  шум убран, экран переписан в главное меню, архивы на месте: ок")
+
+    print("\n=== бот перезапускался и экран не помнит — берёт последний с кнопками ===")
+    app.user_data.clear()
+    await bot.send_message(chat_id=ADMIN, text="шум")
+    edited.clear()
+    await cc.sweep_all(app, ADMIN)
+    assert edited and edited[-1][1] == screen.message_id, edited
+    print("  главное меню встало на прежний экран: ок")
+
+    print("\n=== чат человека: остаётся его главное меню ===")
+    u_menu = await bot.send_message(chat_id=OTHER, text="меню человека", reply_markup="kb")
+    u_conf = await bot.send_document(chat_id=OTHER, document=b"", caption="📄 Ваш VPN конфиг")
+    u_note = await bot.send_message(chat_id=OTHER, text="🟢 VPN Подключен")
+    deleted.clear(); edited.clear()
+    _, theirs, chats = await cc.sweep_all(app, ADMIN)
+    assert theirs == 2 and chats == 1, (theirs, chats)
+    assert (OTHER, u_conf.message_id) in deleted and (OTHER, u_note.message_id) in deleted
+    assert (OTHER, u_menu.message_id, "ГЛАВНОЕ МЕНЮ ЧЕЛОВЕКА") in edited, edited
+    assert await ids(OTHER) == {u_menu.message_id}
+    print("  копия ключа и шум убраны, меню человека переписано и осталось: ок")
+
+    print("\n=== у человека не было экрана — меню приходит новым, без звука ===")
+    await db.execute("DELETE FROM chat_msgs WHERE chat_id=$1", OTHER)
+    await bot.send_message(chat_id=OTHER, text="уведомление без кнопок")
+    sent = []
+    orig = FakeBot.send_message
+
+    async def spy(self, chat_id=None, *a, **kw):
+        sent.append((chat_id, kw.get("disable_notification")))
+        return await orig(self, chat_id, *a, **kw)
+    app.bot.send_message = spy.__get__(app.bot)
+    await cc.sweep_all(app, ADMIN)
+    assert (OTHER, True) in sent, sent
+    print("  новое меню, тихо: ок")
+
+    print("\n=== чужие группы не запоминаются ===")
+    await bot.send_message(chat_id=-100500, text="группа")
+    assert not await db.chat_msgs(-100500)
+    print("  ок")
 
     print("\n=== старые тревоги из прежнего списка тоже уходят ===")
-    # Иначе они остались бы в чате навсегда: прежний список после этой версии
-    # никто не пополняет и никто не разбирает.
     deleted.clear()
     await db.set_setting("admin_alert_msgs", "555,556,557")
-    gone = await cc.sweep(app, ADMIN)
-    print("  удалено:", sorted(deleted))
-    assert {555, 556, 557} <= set(deleted), deleted
+    await cc.sweep(app, ADMIN, anchor=screen.message_id)
+    assert {555, 556, 557} <= {m for _, m in deleted}, deleted
     assert (await db.get_setting("admin_alert_msgs")) == ""
     print("хвост прежней чистки подобран: ок")
 
@@ -132,9 +187,10 @@ async def main():
     assert not await cc.enabled()
     print("тумблер работает: ок")
 
-    await db.execute("DELETE FROM chat_msgs WHERE chat_id IN ($1,$2)", ADMIN, OTHER)
-    await db.execute("DELETE FROM settings WHERE key IN ($1,$2,$3)",
-                     cc.ON_KEY, cc.DONE_KEY, "admin_alert_msgs")
+    await db.execute("DELETE FROM chat_msgs")
+    await db.execute("DELETE FROM settings WHERE key IN ($1,$2,$3,$4,$5)",
+                     cc.ON_KEY, cc.DONE_KEY, cc.LAST_KEY, "admin_alert_msgs",
+                     "backup_message_id")
     print("\nВСЁ ПРОШЛО")
 
 
