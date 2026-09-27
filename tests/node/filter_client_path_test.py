@@ -151,6 +151,21 @@ r = sh("ip netns exec p2 curl -s --max-time 8 --resolve www.yandex.ru:80:%s "
        "http://www.yandex.ru/" % NODE)
 check("http → страница «закрыт фильтром»", "Этот сайт закрыт фильтром" in r.stdout)
 
+print("\n=== мягкий контроль: не режет, но отмечает ===")
+hits = CONF + "/dns_hits.jsonl"
+if os.path.exists(hits):
+    os.remove(hits)
+ns["save_dns_state"]({}, "https://t.me/example_bot", [], [], watch=["social"])
+ns["apply_dns_filters"]({}, everyone=True)
+time.sleep(6)
+a = dig("p2", "vk.com")
+check("vk.com под наблюдением — не подменён на страницу", a != NODE, a)
+time.sleep(0.5)
+rows = [json.loads(l) for l in open(hits)] if os.path.exists(hits) else []
+check("обращение записано как наблюдение",
+      any(r.get("domain") == "vk.com" and r.get("watch") for r in rows),
+      [(r.get("domain"), r.get("watch")) for r in rows][-3:])
+
 p.terminate()
 print()
 print("ВСЁ ПРОШЛО" if ok else "ЕСТЬ ПРОВАЛЫ")

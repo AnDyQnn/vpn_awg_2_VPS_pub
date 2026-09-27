@@ -80,7 +80,7 @@ except Exception:
 print(" ".join(sorted(cats)))
 PY
 )"
-    [ -n "$CATS" ] && nice -n 15 bash /app/update_dns_lists.sh "$CATS"
+    [ -n "$CATS" ] && FORCE=1 nice -n 15 bash /app/update_dns_lists.sh "$CATS"
     sleep 43200
   done
 ) &

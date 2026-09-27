@@ -394,6 +394,38 @@ def _parse_list(text):
     return _parse_lines(text.splitlines())
 
 
+def _bin_path(cat):
+    """Готовый разобранный список категории. В имени — отпечаток встроенного
+    довеска: поменяли довесок в новой версии — файл собирается заново."""
+    extras = (CATEGORIES.get(cat) or {}).get("extra") or []
+    tag = hashlib.blake2b("\n".join(extras).encode(), digest_size=4).hexdigest()
+    return os.path.join(CACHE_DIR, f"{cat}.{tag}.bin")
+
+
+def build_bin(cat, txt_path, out_path):
+    """Разбирает список категории в файл отпечатков. Запускается отдельным
+    процессом (--build) под nice 19 — см. Filters._load_one."""
+    import itertools
+    extras = (CATEGORIES.get(cat) or {}).get("extra") or []
+    try:
+        with open(txt_path, encoding="utf-8", errors="ignore") as f:
+            arr = _parse_lines(itertools.chain(f, extras))
+    except OSError:
+        arr = _parse_lines(extras)
+    tmp = out_path + ".tmp"
+    with open(tmp, "wb") as o:
+        arr.tofile(o)
+    os.replace(tmp, out_path)
+    # Прежние сборки той же категории с другим довеском — мусор.
+    import glob
+    for old in glob.glob(os.path.join(os.path.dirname(out_path), f"{cat}.*.bin")):
+        if old != out_path:
+            try:
+                os.remove(old)
+            except OSError:
+                pass
+
+
 def _has(domains, name):
     """Есть ли имя в категории. Массив упорядочен, поэтому бинарным поиском."""
     if not domains:
@@ -509,19 +541,36 @@ class Filters:
                                  daemon=True).start()
 
     def _load_one(self, cat, path, mt):
-        # Свой довесок категории — всегда, даже без скачанного списка.
-        extras = (CATEGORIES.get(cat) or {}).get("extra") or []
+        """Разбор списка — в отдельном процессе с самым низким приоритетом.
+
+        Раньше разбор шёл потоком внутри DNS-сервера. Поток делит с сервером
+        один интерпретатор, а узел — одно ядро с WireGuard: пока разбирались
+        сотни тысяч строк, DNS отвечал с задержкой или не отвечал, и сайты «не
+        открывались» — со стороны это выглядело как блокировка. Теперь
+        разбирает отдельный процесс под nice 19, а результат ложится готовым
+        файлом: сервер читает его за доли секунды, и после перезапуска
+        разбирать заново не нужно."""
         try:
+            binp = _bin_path(cat)
             try:
-                # Построчно, а не целиком: файл опасных сайтов — сотня мегабайт.
-                with open(path, encoding="utf-8", errors="ignore") as f:
-                    import itertools
-                    arr = _parse_lines(itertools.chain(f, extras))
-                note = f"DNS: категория {cat} — {len(arr)} доменов"
+                bmt = os.path.getmtime(binp)
             except OSError:
-                arr = _parse_list("\n".join(extras)) if extras else array.array("q")
+                bmt = -1
+            if bmt < 0 or (mt and bmt < mt):
+                import subprocess
+                import sys
+                subprocess.run(["nice", "-n", "19", sys.executable,
+                                os.path.abspath(__file__), "--build", cat, path, binp],
+                               timeout=900, stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL)
+            arr = array.array("q")
+            with open(binp, "rb") as f:
+                arr.frombytes(f.read())
+            if mt:
+                note = f"DNS: категория {cat} — {len(arr)} доменов"
+            else:
                 note = (f"DNS: список категории {cat} ещё не загружен"
-                        + (f", работает свой довесок ({len(arr)})" if extras else ""))
+                        + (f", работает свой довесок ({len(arr)})" if len(arr) else ""))
             self.domains[cat] = arr              # подмена одним присваиванием
             self._mtimes[cat] = mt
             print(note, flush=True)
@@ -1291,4 +1340,8 @@ async def main():
 
 
 if __name__ == "__main__":
+    import sys
+    if len(sys.argv) >= 5 and sys.argv[1] == "--build":
+        build_bin(sys.argv[2], sys.argv[3], sys.argv[4])
+        sys.exit(0)
     asyncio.run(main())

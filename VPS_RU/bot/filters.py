@@ -958,21 +958,51 @@ async def watch_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE, key: 
 
 
 async def watch_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Люди за неделю: сколько обращений и по каким категориям. Каждого можно
+    открыть и увидеть его сайты."""
     query = update.callback_query
     rows = await db.watch_summary(168)
     all_titles = await titles()
+
+    people = {}
+    for r in rows:
+        p = people.setdefault(r["key"], {"who": r["who"], "hits": 0, "cats": []})
+        p["hits"] += r["hits"]
+        p["cats"].append(all_titles.get(r["category"], r["category"]))
+
     lines = ["📊 **Мягкий контроль: за неделю**", ""]
-    if not rows:
+    kb = []
+    if not people:
         lines.append("Обращений пока нет.")
     else:
-        for r in rows[:30]:
-            cat = all_titles.get(r["category"], r["category"])
-            when = dt_to_moscow(r["last_at"]).strftime("%d.%m %H:%M") if r["last_at"] else ""
-            lines.append("• **%s** — %s: %d (посл. %s)"
-                         % (escape_md(r["who"] or "?"), escape_md(cat),
-                            r["hits"], when))
-    kb = [[InlineKeyboardButton("🔙 Мягкий контроль", callback_data="flt_watch")]]
+        lines.append("Нажмите на человека, чтобы увидеть сайты.")
+        for key, p in sorted(people.items(), key=lambda kv: -kv[1]["hits"])[:20]:
+            label = "%s — %d · %s" % (p["who"] or "?", p["hits"], ", ".join(p["cats"]))
+            kb.append([InlineKeyboardButton(label[:60], callback_data=f"flt_wper_{key}")])
+    kb.append([InlineKeyboardButton("🔙 Мягкий контроль", callback_data="flt_watch")])
     await show_screen(query, context, "\n".join(lines),
+                      reply_markup=InlineKeyboardMarkup(kb),
+                      parse_mode=ParseMode.MARKDOWN)
+
+
+async def watch_person_screen(update: Update, context: ContextTypes.DEFAULT_TYPE, key: str):
+    """Сайты одного человека в мягком режиме, свежие сверху."""
+    query = update.callback_query
+    rows = await db.watch_person(key, 168)
+    all_titles = await titles()
+    user = await db.get_user_by_uuid(key)
+    who = (user or {}).get("name") or key
+
+    lines = ["👁 **%s: за неделю**" % escape_md(who), ""]
+    if not rows:
+        lines.append("Обращений нет.")
+    for r in rows:
+        cat = all_titles.get(r["category"], r["category"])
+        when = dt_to_moscow(r["last_at"]).strftime("%d.%m %H:%M") if r["last_at"] else ""
+        lines.append("`%s` — %s, %d (посл. %s)"
+                     % (escape_md(r["domain"]), escape_md(cat), r["hits"], when))
+    kb = [[InlineKeyboardButton("🔙 Кто и куда ходит", callback_data="flt_wstat")]]
+    await show_screen(query, context, "\n".join(lines)[:4000],
                       reply_markup=InlineKeyboardMarkup(kb),
                       parse_mode=ParseMode.MARKDOWN)
 

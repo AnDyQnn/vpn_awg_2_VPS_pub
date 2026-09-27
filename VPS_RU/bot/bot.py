@@ -110,6 +110,7 @@ from handlers_dnsnames import (
 )
 from filters import (
     watch_screen as flt_watch, watch_toggle as flt_wtoggle, watch_stats as flt_wstat,
+    watch_person_screen as flt_wperson,
     common_screen as flt_common, common_toggle as flt_ctoggle,
     custom_add_request as flt_cadd, custom_add_entered as flt_centered,
     custom_list as flt_clist, custom_remove as flt_cremove,
@@ -1252,6 +1253,8 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Мягкий контроль: наблюдение без блокировки.
     if data == "flt_watch": await flt_watch(update, context); return
     if data == "flt_wstat": await flt_wstat(update, context); return
+    if data.startswith("flt_wper_"):
+        await flt_wperson(update, context, data[len("flt_wper_"):]); return
     if data.startswith("flt_wtog_"):
         await flt_wtoggle(update, context, data.split("_", 2)[2]); return
 

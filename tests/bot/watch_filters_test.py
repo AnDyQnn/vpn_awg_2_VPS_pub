@@ -88,9 +88,18 @@ async def main():
     print("\n=== сводка мягкого режима ===")
     summ = await db.watch_summary(168)
     row = [r for r in summ if r["who"] == "Вова" and r["category"] == "adult"]
-    assert row and row[0]["hits"] == 1, summ
+    assert row and row[0]["hits"] == 1 and row[0]["key"] == "w-uid", summ
     assert await db.watch_total(168) >= 1
     print("  сводка собирается: ок")
+
+    print("\n=== сайты человека ===")
+    await db.add_filter_hit(now - timedelta(minutes=5), "w-uid", "Вова", "10.13.13.9",
+                            None, "w-video.example", "streaming", "CCCC-3", watch=True)
+    sites = await db.watch_person("w-uid", 168)
+    doms = [s["domain"] for s in sites]
+    assert doms[0] == "w-porn.example" and "w-video.example" in doms, doms
+    assert "w-casino.example" not in doms, "запрет в сайты наблюдения не попадает"
+    print("  ", doms, "— свежие сверху, только наблюдение: ок")
 
     await db.execute("DELETE FROM filter_hits WHERE domain LIKE 'w-%'")
     await db.execute("DELETE FROM settings WHERE key IN ('filters_watch','filters_common')")

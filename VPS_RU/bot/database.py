@@ -813,12 +813,25 @@ class Database:
         """Сводка мягкого режима: кто, какая категория, сколько обращений и
         когда последнее. Для владельца — наблюдение, человек этого не видит."""
         rows = await self.fetch_all(
-            """SELECT COALESCE(name, tunnel_ip) AS who, category,
+            """SELECT COALESCE(user_uuid, tunnel_ip) AS key,
+                      MAX(COALESCE(name, tunnel_ip)) AS who, category,
                       COUNT(*) AS hits, MAX(happened_at) AS last_at
                FROM filter_hits
                WHERE watch = TRUE AND happened_at > NOW() - ($1 || ' hours')::interval
-               GROUP BY who, category
+               GROUP BY key, category
                ORDER BY hits DESC LIMIT 50""", str(int(hours)))
+        return [dict(r) for r in rows]
+
+    async def watch_person(self, key, hours=168, limit=40):
+        """Сайты одного человека в мягком режиме: домен, категория, сколько
+        раз и когда последний. Ключ — uuid человека или адрес в туннеле."""
+        rows = await self.fetch_all(
+            """SELECT domain, category, COUNT(*) AS hits, MAX(happened_at) AS last_at
+               FROM filter_hits
+               WHERE watch = TRUE AND COALESCE(user_uuid, tunnel_ip) = $1
+                 AND happened_at > NOW() - ($2 || ' hours')::interval
+               GROUP BY domain, category
+               ORDER BY last_at DESC LIMIT $3""", key, str(int(hours)), int(limit))
         return [dict(r) for r in rows]
 
     async def watch_total(self, hours=168):
