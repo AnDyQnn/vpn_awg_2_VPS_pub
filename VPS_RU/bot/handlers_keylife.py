@@ -147,8 +147,11 @@ async def do_extend(update: Update, context: ContextTypes.DEFAULT_TYPE,
         await query.answer(f"Узел не снял паузу: {e}", show_alert=True)
         return
 
-    await db.execute("UPDATE users SET is_active=TRUE, expires_at=$2 WHERE uuid=$1",
-                     uuid_val, expires)
+    # Отсчёт спячки начинается заново с продления. Без этого ключ, уснувший
+    # от простоя, засыпал снова при следующей же проверке — дата последней
+    # активности оставалась прежней, месячной давности.
+    await db.execute("UPDATE users SET is_active=TRUE, expires_at=$2, "
+                     "last_active_at=NOW() WHERE uuid=$1", uuid_val, expires)
     await db.resolve_decision(uuid_val, f"extended:{days}")
     await db.log_event("KeyLife",
                        f"Ключ {user['name']} продлён на "

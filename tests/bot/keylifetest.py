@@ -94,6 +94,32 @@ async def main():
     await db.execute("DELETE FROM settings WHERE key='dormant_days'")
     print("порог спячки берётся из настроек: ок")
 
+    # продление спящего ключа заново запускает отсчёт спячки: иначе он
+    # засыпает при следующей же проверке — дата активности старая
+    class Q:
+        async def answer(self, *a, **k):
+            pass
+
+    class U:
+        callback_query = Q()
+
+    class C:
+        class bot:
+            @staticmethod
+            async def send_message(*a, **k):
+                pass
+
+    async def nothing(*a, **k):
+        return None
+    kl.resume_peer = nothing
+    kl.policy_menu = nothing
+    await kl.do_extend(U(), C(), "kl-2", 0)
+    row = (await db.fetch_all(
+        "SELECT is_active, last_active_at FROM users WHERE uuid='kl-2'"))[0]
+    assert row["is_active"], row
+    assert (datetime.utcnow() - row["last_active_at"]).days < 1,         "после продления ключ снова уснёт при первой проверке"
+    print("продление сбрасывает отсчёт спячки: ок")
+
     # удаление ключа уносит и вопрос, и политику
     await db.set_key_policy("kl-2", "auto", 7)
     await db.execute("DELETE FROM users WHERE uuid='kl-2'")
