@@ -101,8 +101,39 @@ async def main():
     assert "w-casino.example" not in doms, "запрет в сайты наблюдения не попадает"
     print("  ", doms, "— свежие сверху, только наблюдение: ок")
 
+    print("\n=== свой срок у наблюдения, инциденты по своему ===")
     await db.execute("DELETE FROM filter_hits WHERE domain LIKE 'w-%'")
-    await db.execute("DELETE FROM settings WHERE key IN ('filters_watch','filters_common')")
+    old = now - timedelta(days=20)
+    await db.add_filter_hit(old, "w-uid", "Вова", "10.13.13.9", None,
+                            "w-old-watch.example", "social", "D-1", watch=True)
+    await db.add_filter_hit(old, "w-uid", "Вова", "10.13.13.9", None,
+                            "w-old-incident.example", "gambling", "D-2", watch=False)
+    await db.add_filter_hit(now, "w-uid", "Вова", "10.13.13.9", None,
+                            "w-new-watch.example", "social", "D-3", watch=True)
+    assert await db.watch_keep_days() == 14, "по умолчанию — две недели"
+    await db.cleanup_filter_hits()
+    doms = {r["domain"] for r in await db.fetch_all(
+        "SELECT domain FROM filter_hits WHERE domain LIKE 'w-%'")}
+    assert "w-old-watch.example" not in doms, "наблюдение старше 14 дней должно уйти"
+    assert "w-old-incident.example" in doms, "инцидент 20 дней — ещё в пределах своих 30"
+    assert "w-new-watch.example" in doms
+    print("  наблюдение 20 дн. убрано, инцидент 20 дн. оставлен, свежее цело: ок")
+
+    await db.set_watch_keep_days(30)
+    assert await db.watch_keep_days() == 30
+    print("  срок меняется: ок")
+
+    print("\n=== ручная очистка — только наблюдение ===")
+    n = await db.clear_watch_hits()
+    doms = {r["domain"] for r in await db.fetch_all(
+        "SELECT domain FROM filter_hits WHERE domain LIKE 'w-%'")}
+    assert n >= 1 and "w-new-watch.example" not in doms
+    assert "w-old-incident.example" in doms, "ручная очистка не трогает инциденты"
+    print("  удалено наблюдений: %d, инцидент на месте: ок" % n)
+
+    await db.execute("DELETE FROM filter_hits WHERE domain LIKE 'w-%'")
+    await db.execute("DELETE FROM settings WHERE key IN "
+                     "('filters_watch','filters_common','watch_keep_days')")
     print("\nВСЁ ПРОШЛО")
 
 

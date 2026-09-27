@@ -1835,16 +1835,41 @@ class Database:
         if new is not None:
             await self.set_setting("hits_keep_new", int(new))
 
+    # Мягкий контроль — свой срок. Наблюдений на порядок больше, чем
+    # инцидентов, и копить их месяцами незачем: это картина «кто куда ходит
+    # сейчас», а не архив.
+    WATCH_KEEP_DAYS = 14
+    WATCH_KEEP_CHOICES = (3, 7, 14, 30, 90)
+
+    async def watch_keep_days(self):
+        try:
+            return int(await self.get_setting("watch_keep_days") or self.WATCH_KEEP_DAYS)
+        except (TypeError, ValueError):
+            return self.WATCH_KEEP_DAYS
+
+    async def set_watch_keep_days(self, days):
+        await self.set_setting("watch_keep_days", int(days))
+
+    async def clear_watch_hits(self):
+        """Ручная очистка журнала мягкого контроля. Инциденты не трогает."""
+        n = await self.fetch_val("SELECT COUNT(*) FROM filter_hits WHERE watch") or 0
+        await self.execute("DELETE FROM filter_hits WHERE watch")
+        return n
+
     async def cleanup_filter_hits(self):
-        """Убирает старые инциденты. Возвращает, сколько убрано."""
+        """Убирает старые инциденты и наблюдения. Возвращает, сколько убрано."""
         seen_days, new_days = await self.hits_keep_days()
+        watch_days = await self.watch_keep_days()
         before = await self.fetch_val("SELECT COUNT(*) FROM filter_hits") or 0
         await self.execute(
-            "DELETE FROM filter_hits WHERE seen_at IS NOT NULL "
+            "DELETE FROM filter_hits WHERE NOT watch AND seen_at IS NOT NULL "
             "AND happened_at < NOW() - INTERVAL '%d DAYS'" % int(seen_days))
         await self.execute(
-            "DELETE FROM filter_hits WHERE seen_at IS NULL "
+            "DELETE FROM filter_hits WHERE NOT watch AND seen_at IS NULL "
             "AND happened_at < NOW() - INTERVAL '%d DAYS'" % int(new_days))
+        await self.execute(
+            "DELETE FROM filter_hits WHERE watch "
+            "AND happened_at < NOW() - INTERVAL '%d DAYS'" % int(watch_days))
         after = await self.fetch_val("SELECT COUNT(*) FROM filter_hits") or 0
         return before - after
 

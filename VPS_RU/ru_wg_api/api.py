@@ -209,7 +209,8 @@ class DnsFilters(BaseModel):
     except_clients: dict = {}
     # Свои пулы: ключ категории -> список доменов. Узел кладёт их в тот же кэш,
     # откуда читает встроенные, и дальше не различает их вовсе.
-    pools: dict = {}
+    # None — бот не смог прочитать группы: файлы групп тогда не трогаем.
+    pools: Optional[dict] = None
     bot_link: str = ""          # куда человеку идти с вопросом «почему закрыто»
 
 class DnsNames(BaseModel):
@@ -1053,6 +1054,50 @@ def save_pool_list(key, domains):
         print(f"Свой пул {safe}: {e}")
 
 
+def gc_dns_cache(pool_keys):
+    """Уборщик кэша списков. Удаляет:
+      • списки и сборки своих групп, которых больше нет;
+      • списки категорий, которых нет в коде (слитые в 8.66.6: scam,
+        ransomware, tracking — и что будет слито потом);
+      • сборки с устаревшим довеском (в имени отпечаток довеска);
+      • временные файлы сборки, брошенные больше часа назад.
+    Трогает только файлы кэша и только эти расширения. Возвращает список
+    удалённого."""
+    import dnsfilter
+    cache = f"{CONF_DIR}/cache/dns"
+    keep = set(dnsfilter.CATEGORIES) | {str(k) for k in (pool_keys or [])}
+    removed = []
+    try:
+        names = os.listdir(cache)
+    except OSError:
+        return removed
+    now = time.time()
+    for fn in names:
+        path = os.path.join(cache, fn)
+        if not os.path.isfile(path):
+            continue
+        drop = False
+        if fn.endswith(".tmp"):
+            try:
+                drop = now - os.path.getmtime(path) > 3600
+            except OSError:
+                drop = False
+        elif fn.endswith(".txt"):
+            drop = fn[:-4] not in keep
+        elif fn.endswith(".bin"):
+            cat = fn.split(".", 1)[0]
+            drop = cat not in keep or path != dnsfilter._bin_path_in(cache, cat)
+        if drop:
+            try:
+                os.remove(path)
+                removed.append(fn)
+            except OSError:
+                pass
+    if removed:
+        print(f"Кэш списков: убрано {len(removed)} — {', '.join(removed[:10])}")
+    return removed
+
+
 def save_dns_state(clients, bot_link="", common=None, custom=None,
                    allow_common=None, allow_clients=None, except_clients=None,
                    watch=None):
@@ -1336,6 +1381,11 @@ def set_dns_filters(req: DnsFilters):
         # и категории без файла он считает пустыми.
         for key, domains in (req.pools or {}).items():
             save_pool_list(str(key), [str(d) for d in domains if d])
+        # Заодно убираем мусор кэша: здесь, и только здесь, узел знает
+        # актуальный список своих групп. Не прислали список (бот не смог его
+        # прочитать) — группы не трогаем, иначе снесли бы их все.
+        if req.pools is not None:
+            gc_dns_cache(list(req.pools.keys()))
 
         save_dns_state(clients, req.bot_link or "", common, custom,
                        allow_common, allow_clients, except_clients, watch)

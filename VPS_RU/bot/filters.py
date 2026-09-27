@@ -170,7 +170,9 @@ async def apply_filters(reason: str = ""):
     try:
         pools = {p["key"]: p["domains"] for p in await db.list_filter_pools()}
     except Exception:
-        pools = {}
+        # Не прочитали — не шлём вовсе: узел по пустому списку решил бы, что
+        # групп нет, и убрал бы их файлы.
+        pools = None
 
     try:
         async with api_session() as session:
@@ -922,7 +924,6 @@ async def watch_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     watch = set(await db.get_watch_filters())
     common = set(await db.get_common_filters())
-    all_titles = await titles()
 
     lines = ["👁 **Мягкий контроль**", "",
              "Категория не блокируется — человек открывает сайт как обычно. "
@@ -941,10 +942,59 @@ async def watch_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if watch:
         kb.append([InlineKeyboardButton("📊 Кто и куда ходит",
                                         callback_data="flt_wstat")])
+    keep = await db.watch_keep_days()
+    kb.append([InlineKeyboardButton("🗓 Хранить: %d дн." % keep, callback_data="flt_wkeep"),
+               InlineKeyboardButton("🧹 Очистить журнал", callback_data="flt_wclr")])
     kb.append([InlineKeyboardButton("🔙 Фильтры", callback_data="flt_menu")])
     await show_screen(query, context, "\n".join(lines),
                       reply_markup=InlineKeyboardMarkup(kb),
                       parse_mode=ParseMode.MARKDOWN)
+
+
+async def watch_keep_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Сколько дней хранить журнал мягкого контроля. Старше — убирается сам,
+    раз в сутки."""
+    query = update.callback_query
+    keep = await db.watch_keep_days()
+    lines = ["🗓 **Сколько хранить журнал мягкого контроля**", "",
+             "Записи старше срока убираются сами, раз в сутки.",
+             "Сейчас: **%d дн.**" % keep]
+    kb = [[InlineKeyboardButton(("✅ " if d == keep else "") + "%d дн." % d,
+                                callback_data=f"flt_wkeep_{d}")
+           for d in db.WATCH_KEEP_CHOICES],
+          [InlineKeyboardButton("🔙 Мягкий контроль", callback_data="flt_watch")]]
+    await show_screen(query, context, "\n".join(lines),
+                      reply_markup=InlineKeyboardMarkup(kb),
+                      parse_mode=ParseMode.MARKDOWN)
+
+
+async def watch_keep_set(update: Update, context: ContextTypes.DEFAULT_TYPE, days: int):
+    if days not in db.WATCH_KEEP_CHOICES:
+        await update.callback_query.answer("Такого срока нет", show_alert=True)
+        return
+    await db.set_watch_keep_days(days)
+    gone = await db.cleanup_filter_hits()
+    await update.callback_query.answer("Готово" + (", убрано старых: %d" % gone if gone else ""))
+    await watch_keep_screen(update, context)
+
+
+async def watch_clear_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    total = await db.fetch_val("SELECT COUNT(*) FROM filter_hits WHERE watch") or 0
+    lines = ["🧹 **Очистить журнал мягкого контроля?**", "",
+             "Будут удалены все записи наблюдения: %d. Инциденты запрета "
+             "и настройки категорий не затрагиваются." % total]
+    kb = [[InlineKeyboardButton("✅ Очистить", callback_data="flt_wclr_do")],
+          [InlineKeyboardButton("🔙 Отмена", callback_data="flt_watch")]]
+    await show_screen(query, context, "\n".join(lines),
+                      reply_markup=InlineKeyboardMarkup(kb),
+                      parse_mode=ParseMode.MARKDOWN)
+
+
+async def watch_clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    n = await db.clear_watch_hits()
+    await update.callback_query.answer("Удалено записей: %d" % n)
+    await watch_screen(update, context)
 
 
 async def watch_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE, key: str):

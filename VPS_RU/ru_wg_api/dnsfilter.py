@@ -397,9 +397,13 @@ def _parse_list(text):
 def _bin_path(cat):
     """Готовый разобранный список категории. В имени — отпечаток встроенного
     довеска: поменяли довесок в новой версии — файл собирается заново."""
+    return _bin_path_in(CACHE_DIR, cat)
+
+
+def _bin_path_in(cache_dir, cat):
     extras = (CATEGORIES.get(cat) or {}).get("extra") or []
     tag = hashlib.blake2b("\n".join(extras).encode(), digest_size=4).hexdigest()
-    return os.path.join(CACHE_DIR, f"{cat}.{tag}.bin")
+    return os.path.join(cache_dir, f"{cat}.{tag}.bin")
 
 
 def build_bin(cat, txt_path, out_path):

@@ -110,7 +110,9 @@ from handlers_dnsnames import (
 )
 from filters import (
     watch_screen as flt_watch, watch_toggle as flt_wtoggle, watch_stats as flt_wstat,
-    watch_person_screen as flt_wperson,
+    watch_person_screen as flt_wperson, watch_keep_screen as flt_wkeep,
+    watch_keep_set as flt_wkeep_set, watch_clear_confirm as flt_wclr,
+    watch_clear as flt_wclr_do,
     common_screen as flt_common, common_toggle as flt_ctoggle,
     custom_add_request as flt_cadd, custom_add_entered as flt_centered,
     custom_list as flt_clist, custom_remove as flt_cremove,
@@ -1255,6 +1257,11 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "flt_wstat": await flt_wstat(update, context); return
     if data.startswith("flt_wper_"):
         await flt_wperson(update, context, data[len("flt_wper_"):]); return
+    if data == "flt_wkeep": await flt_wkeep(update, context); return
+    if data.startswith("flt_wkeep_"):
+        await flt_wkeep_set(update, context, int(data.rsplit("_", 1)[1])); return
+    if data == "flt_wclr": await flt_wclr(update, context); return
+    if data == "flt_wclr_do": await flt_wclr_do(update, context); return
     if data.startswith("flt_wtog_"):
         await flt_wtoggle(update, context, data.split("_", 2)[2]); return
 
