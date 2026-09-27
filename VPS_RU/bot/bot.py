@@ -19,7 +19,7 @@ from utils import (
     BOT_TOKEN, ADMIN_ID, WG_API_URL, DE_AGENT_URL, escape_md, state_data, stop_bg_tasks, deregister_menu,
     safe_delete, drop_screen, get_current_version, broadcast_message, extract_tg_id, check_admin, sanitize_name,
     env_change_applied,
-    analyze_resource, CONFIGS_DIR, show_screen
+    analyze_resource, CONFIGS_DIR, show_screen, peer_person_uuid
 )
 from database import db
 from backup_manager import fetch_de_backup, test_restore
@@ -155,7 +155,10 @@ async def sync_wg_config():
                         wg_pubkey = p.get('public_key')
                         
                         should_kill = False
-                        if wg_uuid and wg_uuid not in db_uuids:
+                        # Отработавший при перевыпуске пир — ключ живого
+                        # человека, а не призрак: его снимет очередь снятия,
+                        # когда человек подключится новым ключом.
+                        if wg_uuid and peer_person_uuid(wg_uuid) not in db_uuids:
                             should_kill = True
                         
                         if should_kill and wg_pubkey:

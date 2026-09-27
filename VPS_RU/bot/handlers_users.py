@@ -393,7 +393,7 @@ async def new_key_screen(context, name):
     access = (f"🛡 Доступ: **{escape_md(role_name)}**" if role_name
               else "🛡 Доступ: **без роли** — будет видеть всех в туннеле")
 
-    text = (f"Имя: **{escape_md(name)}**" + '\\n\\n' + note + '\\n\\n' + access + '\\n\\n'
+    text = (f"Имя: **{escape_md(name)}**\n\n" + note + "\n\n" + access + "\n\n"
             + "Выберите срок действия ключа:")
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("1 День", callback_data="set_exp_1"),

@@ -16,7 +16,7 @@ from database import db
 from utils import (
     api_session,
     get_moscow_now, dt_to_moscow, broadcast_message, DE_AGENT_URL, WG_API_URL,
-    is_agent,
+    is_agent, peer_person_uuid,
     ADMIN_ID, escape_md, GOSUSLUGI_APP_WARNING, analyze_resource, CONFIGS_DIR, ROUTING_VERSION,
     get_update_info
 )
@@ -437,14 +437,19 @@ async def alert_loop(app):
                 
                 is_ghost = False
                 is_paused_violation = False
-                
-                if uuid_val not in users_dict: is_ghost = True
-                elif not users_dict[uuid_val].get('is_active', True): is_paused_violation = True
-                    
+                # Отработавший при перевыпуске пир — ключ того же человека.
+                person = peer_person_uuid(uuid_val)
+                retired = person != uuid_val
+
+                if person not in users_dict: is_ghost = True
+                elif not users_dict[person].get('is_active', True): is_paused_violation = True
+
                 if is_ghost or is_paused_violation:
+                    # Старый ключ замороженного снимаем совсем: оставь его —
+                    # и заморозка обходилась бы старым конфигом.
                     try:
                         async with api_session() as kill_session:
-                            await kill_session.post(f"{WG_API_URL}/kill_ghost", json={"public_key": pubkey, "purge_config": is_ghost}, timeout=5)
+                            await kill_session.post(f"{WG_API_URL}/kill_ghost", json={"public_key": pubkey, "purge_config": is_ghost or retired}, timeout=5)
                     except Exception: pass
                     
                     if endpoint and endpoint != "(none)":
@@ -455,12 +460,18 @@ async def alert_loop(app):
                                 if ADMIN_ID: await notify_admin(app, text=msg, parse_mode="Markdown")
                                 await db.log_event("Security", f"Killed ghost connection from {endpoint}")
                         elif is_paused_violation:
-                            if uuid_val not in paused_cache or (now - paused_cache[uuid_val] > 3600):
-                                paused_cache[uuid_val] = now
-                                u_name = escape_md(users_dict[uuid_val]['name'])
+                            if person not in paused_cache or (now - paused_cache[person] > 3600):
+                                paused_cache[person] = now
+                                u_name = escape_md(users_dict[person]['name'])
                                 msg = f"🛡 **Блокировка доступа!**\n\nОтключенный пользователь **{u_name}** попытался подключиться.\n📱 IP: `{endpoint}`\n\n⛔️ Доступ отклонен."
                                 if ADMIN_ID: await notify_admin(app, text=msg, parse_mode="Markdown")
-                                await db.log_event("Security", f"Blocked access for paused user {users_dict[uuid_val]['name']}")
+                                await db.log_event("Security", f"Blocked access for paused user {users_dict[person]['name']}")
+                    continue
+
+                # Старый ключ перевыпуска живёт до перехода на новый и в учёт не
+                # идёт: иначе переход со старого на новый выглядел бы как два
+                # устройства на одном ключе — и детектор заморозил бы человека.
+                if retired:
                     continue
 
                 hostname = endpoint.split(":")[0] if endpoint and endpoint != "(none)" else ""

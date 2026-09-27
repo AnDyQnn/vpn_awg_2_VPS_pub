@@ -345,6 +345,19 @@ async def stop_bg_tasks():
 # всех остальных, поэтому в лимитах, подборе и сводке ему не место.
 AGENT_PEER_NAME = "DE_AGENT"
 
+# При перевыпуске старый пир не снимается сразу: он зовётся `retired-<uuid>` и
+# держит связь, пока человек не подключится новым ключом. Это ключ ТОГО ЖЕ
+# человека, а не чужой: сторож, не зная этого, объявлял его «призраком», убивал
+# через четыре секунды после перевыпуска и слал тревогу «несанкционированный
+# доступ» — с домашним адресом самого человека.
+RETIRED_PREFIX = "retired-"
+
+
+def peer_person_uuid(uid) -> str:
+    """uuid человека, которому принадлежит пир, — и для отработавшего тоже."""
+    uid = str(uid or "")
+    return uid[len(RETIRED_PREFIX):] if uid.startswith(RETIRED_PREFIX) else uid
+
 
 def is_agent(name) -> bool:
     return (name or "").strip().upper() == AGENT_PEER_NAME
