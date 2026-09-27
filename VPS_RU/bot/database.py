@@ -356,6 +356,11 @@ class Database:
                     UNIQUE (happened_at, tunnel_ip, domain)
                 );
             """)
+            # Мягкий режим: обращение отмечено, но не заблокировано. Отдельным
+            # признаком, чтобы не путать с настоящими срабатываниями запрета.
+            await self.execute(
+                "ALTER TABLE filter_hits ADD COLUMN IF NOT EXISTS watch BOOLEAN "
+                "NOT NULL DEFAULT FALSE")
             await self.execute(
                 "CREATE INDEX IF NOT EXISTS idx_hits_time ON filter_hits(happened_at DESC);")
             # Номер инцидента: его человек копирует со страницы отказа, а
@@ -623,6 +628,15 @@ class Database:
     async def set_common_filters(self, cats):
         await self.set_setting("filters_common", ",".join(sorted(set(cats))))
 
+    # Мягкий режим: категории, которые не режем, но отмечаем обращения к ним.
+    # Наблюдение для владельца; человек ничего не видит.
+    async def get_watch_filters(self):
+        raw = await self.get_setting("filters_watch")
+        return [c for c in (raw or "").split(",") if c]
+
+    async def set_watch_filters(self, cats):
+        await self.set_setting("filters_watch", ",".join(sorted(set(cats))))
+
     async def get_custom_blocks(self):
         raw = await self.get_setting("filters_custom")
         return [d for d in (raw or "").split(",") if d]
@@ -728,17 +742,17 @@ class Database:
         return dict(rows[0]) if rows else None
 
     async def add_filter_hit(self, happened_at, uuid_val, name, tunnel_ip,
-                             public_ip, domain, category, ref=None):
+                             public_ip, domain, category, ref=None, watch=False):
         """Повтор одного и того же события не плодит записей: узел отдаёт
         историю целиком, и при повторном заборе мы просто ничего не добавляем."""
         await self.execute(
             """INSERT INTO filter_hits
                    (happened_at, user_uuid, name, tunnel_ip, public_ip,
-                    domain, category, ref)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+                    domain, category, ref, watch)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
                ON CONFLICT (happened_at, tunnel_ip, domain) DO NOTHING""",
             happened_at, uuid_val, name, tunnel_ip, public_ip, domain,
-            category, ref)
+            category, ref, watch)
 
     HITS_MARK_KEY = "hits_taken_ts"
 
@@ -779,27 +793,52 @@ class Database:
         if ts > await self.last_filter_hit_ts():
             await self.set_setting(self.HITS_MARK_KEY, ts)
 
-    async def list_filter_hits(self, limit=20, offset=0, only_new=False):
-        where = "WHERE seen_at IS NULL" if only_new else ""
+    async def list_filter_hits(self, limit=20, offset=0, only_new=False, watch=False):
+        conds = ["watch = $3"]
+        if only_new:
+            conds.append("seen_at IS NULL")
+        where = "WHERE " + " AND ".join(conds)
         rows = await self.fetch_all(
             # ref обязателен: человек приходит с номером со страницы отказа,
             # и по списку он должен найтись глазами, а не только поиском.
             # Его тут не было — экран рисовал пустоту и молчал об этом.
             f"""SELECT id, happened_at, user_uuid, name, tunnel_ip, public_ip,
-                       domain, category, seen_at, ref
+                       domain, category, seen_at, ref, watch
                 FROM filter_hits {where}
-                ORDER BY happened_at DESC LIMIT $1 OFFSET $2""", limit, offset)
+                ORDER BY happened_at DESC LIMIT $1 OFFSET $2""",
+            limit, offset, watch)
         return [dict(r) for r in rows]
+
+    async def watch_summary(self, hours=168):
+        """Сводка мягкого режима: кто, какая категория, сколько обращений и
+        когда последнее. Для владельца — наблюдение, человек этого не видит."""
+        rows = await self.fetch_all(
+            """SELECT COALESCE(name, tunnel_ip) AS who, category,
+                      COUNT(*) AS hits, MAX(happened_at) AS last_at
+               FROM filter_hits
+               WHERE watch = TRUE AND happened_at > NOW() - ($1 || ' hours')::interval
+               GROUP BY who, category
+               ORDER BY hits DESC LIMIT 50""", str(int(hours)))
+        return [dict(r) for r in rows]
+
+    async def watch_total(self, hours=168):
+        return await self.fetch_val(
+            "SELECT COUNT(*) FROM filter_hits WHERE watch = TRUE "
+            "AND happened_at > NOW() - ($1 || ' hours')::interval",
+            str(int(hours))) or 0
 
     async def get_filter_hit(self, hit_id):
         rows = await self.fetch_all(
             "SELECT * FROM filter_hits WHERE id=$1", int(hit_id))
         return dict(rows[0]) if rows else None
 
-    async def count_filter_hits(self, only_new=False):
-        where = "WHERE seen_at IS NULL" if only_new else ""
+    async def count_filter_hits(self, only_new=False, watch=False):
+        conds = ["watch = $1"]
+        if only_new:
+            conds.append("seen_at IS NULL")
+        where = "WHERE " + " AND ".join(conds)
         return await self.fetch_val(
-            f"SELECT COUNT(*) FROM filter_hits {where}") or 0
+            f"SELECT COUNT(*) FROM filter_hits {where}", watch) or 0
 
     # --- Сообщения бота владельцу: их номера, чтобы убрать в конце дня ------
     #
@@ -839,7 +878,7 @@ class Database:
         rows = await self.fetch_all(
             """SELECT id, happened_at, user_uuid, name, tunnel_ip,
                       domain, category, ref
-               FROM filter_hits WHERE id > $1
+               FROM filter_hits WHERE id > $1 AND watch = FALSE
                ORDER BY id LIMIT $2""", int(since_id), int(limit))
         return [dict(r) for r in rows]
 

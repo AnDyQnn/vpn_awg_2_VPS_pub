@@ -416,6 +416,8 @@ class Filters:
         self.except_clients = {}   # ip -> какие ОБЩИЕ категории ему не применять
         self.domains = {}          # категория -> set(доменов)
         self.common = []           # категории, включённые сразу всем
+        self.watch = []            # категории «мягкого режима»: не режем, но
+        #                            отмечаем обращение — наблюдение для владельца
         self.custom = set()        # свой список доменов владельца
         self.bot_link = ""         # куда идти с вопросом «почему закрыто»
         self._mtime = 0
@@ -461,6 +463,9 @@ class Filters:
         # Общие категории и свой список — то же самое, но без разбора, кому
         # именно: они действуют на всех, кто ходит через узел.
         self.common = _canon(state.get("common") or [])
+        # Мягкий режим действует на всех и ничего не режет: список нужен, чтобы
+        # узнать обращение. Что уже режется общей категорией, наблюдать незачем.
+        self.watch = [c for c in _canon(state.get("watch") or []) if c not in self.common]
         self.custom = {str(d).lower().strip(".") for d in (state.get("custom") or []) if d}
         self.bot_link = state.get("bot_link") or ""
         self._load_domains()
@@ -477,6 +482,7 @@ class Filters:
         до перезапуска."""
         needed = {c for cats in self.clients.values() for c in cats}
         needed |= set(self.common)
+        needed |= set(self.watch)          # мягкий режим тоже читает списки
         for cat in list(self.domains):
             if cat not in needed:
                 del self.domains[cat]            # освобождаем память
@@ -568,6 +574,28 @@ class Filters:
                 continue
             # Проверяем и сам домен, и родительские: в списке example.com, а
             # спрашивают ads.example.com.
+            for i in range(len(parts) - 1):
+                if _has(domains, ".".join(parts[i:])):
+                    return cat
+        return None
+
+    def watched(self, ip, name):
+        """Мягкий режим: категория, к которой человек обратился, хотя фильтр не
+        режет. Вызывается только когда blocked() уже вернул None, поэтому здесь
+        не про запрет, а про наблюдение. Разрешения владельца учитываем: что он
+        явно открыл, то и наблюдать незачем."""
+        if not self.watch:
+            return None
+        parts = name.split(".")
+        own_allow = self.allow_clients.get(ip)
+        if own_allow and self._covers(own_allow, parts):
+            return None
+        if self.allow_common and self._covers(self.allow_common, parts):
+            return None
+        for cat in self.watch:
+            domains = self.domains.get(cat)
+            if not domains:
+                continue
             for i in range(len(parts) - 1):
                 if _has(domains, ".".join(parts[i:])):
                     return cat
@@ -671,22 +699,27 @@ def hit_ref(client_ip, name, ts):
     return digest[:4] + "-" + digest[4:]
 
 
-def record_hit(client_ip, name, category):
+def record_hit(client_ip, name, category, watch=False):
     now = time.time()
-    key = (client_ip, name)
+    # Наблюдение и запрет считаем врозь: иначе одно молчаливое обращение к
+    # мягкой категории закрыло бы на минуту запись настоящего запрета того же
+    # человека к тому же домену (или наоборот).
+    key = (client_ip, name, watch)
     if now - _hit_seen.get(key, 0) < HIT_QUIET_SECONDS:
         return
     _hit_seen[key] = now
     ref = hit_ref(client_ip, name, now)
-    # Запоминаем выданный номер: страницу человек открывает не в ту же секунду,
-    # что браузер спросил адрес, и пересчёт по времени дал бы ДРУГОЙ номер —
-    # тот, которого нет ни в одном журнале. Искать по такому владелец будет
-    # долго и безуспешно.
-    _hit_refs[key] = ref
+    # Номер нужен странице отказа (запрет), у наблюдения страницы нет. Ключ —
+    # по паре, как его ищет HTTP-обработчик.
+    if not watch:
+        # Запоминаем выданный номер: страницу человек открывает не в ту же
+        # секунду, что браузер спросил адрес, и пересчёт по времени дал бы
+        # ДРУГОЙ номер — тот, которого нет ни в одном журнале.
+        _hit_refs[(client_ip, name)] = ref
     if len(_hit_seen) > 4096:                       # не растим память бесконечно
         for k in sorted(_hit_seen, key=_hit_seen.get)[:2048]:
             del _hit_seen[k]
-            _hit_refs.pop(k, None)
+            _hit_refs.pop((k[0], k[1]), None)
     try:
         if os.path.exists(HITS_FILE) and os.path.getsize(HITS_FILE) > HITS_MAX_BYTES:
             # Половину старых отбрасываем: журнал — для разбора недавнего, а не
@@ -698,7 +731,7 @@ def record_hit(client_ip, name, category):
         with open(HITS_FILE, "a", encoding="utf-8") as f:
             f.write(json.dumps({"ts": int(now), "ip": client_ip,
                                 "domain": name, "category": category,
-                                "ref": ref},
+                                "ref": ref, "watch": bool(watch)},
                                ensure_ascii=False) + chr(10))
     except OSError as e:
         print(f"Журнал попыток: {e}", flush=True)
@@ -753,6 +786,10 @@ class DnsProtocol(asyncio.DatagramProtocol):
                 record_hit(addr[0], name, cat)
                 self.transport.sendto(build_block_response(data, qend, qtype), addr)
                 return
+            # Мягкий режим: не режем, но отмечаем обращение и отвечаем как обычно.
+            wcat = FILTERS.watched(addr[0], name)
+            if wcat:
+                record_hit(addr[0], name, wcat, watch=True)
             if qtype == AAAA:
                 # Наверх за шестёркой не ходим: отдавать её всё равно нельзя.
                 self.transport.sendto(build_no_records(data, qend), addr)
@@ -809,8 +846,12 @@ async def handle_tcp(reader, writer):
                 answer = build_a_response(data, qend, qtype, own)
             elif _tcp_blocked(ip, name):
                 answer = build_block_response(data, qend, qtype)
-            elif qtype == AAAA:
-                answer = build_no_records(data, qend)
+            else:
+                wcat = FILTERS.watched(ip, name)
+                if wcat:
+                    record_hit(ip, name, wcat, watch=True)
+                if qtype == AAAA:
+                    answer = build_no_records(data, qend)
         if answer is None:
             try:
                 answer = await forward(data, upstream=NAMES.upstream_for(ip))

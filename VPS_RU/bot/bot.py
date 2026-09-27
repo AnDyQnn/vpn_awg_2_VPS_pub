@@ -109,6 +109,7 @@ from handlers_dnsnames import (
     delete_name as dnm_delete, apply_now as dnm_apply,
 )
 from filters import (
+    watch_screen as flt_watch, watch_toggle as flt_wtoggle, watch_stats as flt_wstat,
     common_screen as flt_common, common_toggle as flt_ctoggle,
     custom_add_request as flt_cadd, custom_add_entered as flt_centered,
     custom_list as flt_clist, custom_remove as flt_cremove,
@@ -1247,6 +1248,12 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data.startswith("flt_cpg_"):
         await flt_clist(update, context, int(data.split("_")[-1])); return
     if data == "flt_apply": await filters_apply_now(update, context); return
+
+    # Мягкий контроль: наблюдение без блокировки.
+    if data == "flt_watch": await flt_watch(update, context); return
+    if data == "flt_wstat": await flt_wstat(update, context); return
+    if data.startswith("flt_wtog_"):
+        await flt_wtoggle(update, context, data.split("_", 2)[2]); return
 
     # Свои пулы фильтров.
     if data == "flt_pool_list": await flt_pools(update, context); return

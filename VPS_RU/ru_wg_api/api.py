@@ -197,6 +197,7 @@ class AclApply(BaseModel):
 class DnsFilters(BaseModel):
     clients: dict = {}          # адрес пира -> список категорий
     common: list = []           # категории, включённые сразу всем
+    watch: list = []            # мягкий режим: не режем, но отмечаем обращение
     custom: list = []           # свой список доменов владельца
     # Исключения: разрешено вопреки категории. Общие — всем, личные — адресу.
     allow_common: list = []
@@ -1053,11 +1054,13 @@ def save_pool_list(key, domains):
 
 
 def save_dns_state(clients, bot_link="", common=None, custom=None,
-                   allow_common=None, allow_clients=None, except_clients=None):
+                   allow_common=None, allow_clients=None, except_clients=None,
+                   watch=None):
     try:
         with open(DNS_STATE_FILE, "w") as f:
             json.dump({"clients": clients, "bot_link": bot_link,
                        "common": list(common or []), "custom": list(custom or []),
+                       "watch": list(watch or []),
                        # Разрешения проверяются раньше запретов: исключение,
                        # которое смотрят после, исключением не является.
                        "allow_common": list(allow_common or []),
@@ -1080,13 +1083,14 @@ def read_dns_state():
     return {}
 
 
-def refresh_dns_lists(clients, common=None):
+def refresh_dns_lists(clients, common=None, watch=None):
     """Тянет списки только включённых категорий, в фоне — загрузка не должна
     задерживать ответ панели.
 
     Общие категории сюда тоже входят: без их списков общий запрет не сработал
     бы, а причина была бы не видна — фильтр просто не нашёл бы доменов."""
-    cats = sorted({c for v in (clients or {}).values() for c in v} | set(common or []))
+    cats = sorted({c for v in (clients or {}).values() for c in v}
+                  | set(common or []) | set(watch or []))
     if not cats:
         return
     subprocess.Popen(f"bash /app/update_dns_lists.sh '{' '.join(cats)}'",
@@ -1096,7 +1100,8 @@ def refresh_dns_lists(clients, common=None):
 def rebuild_dns_filters():
     state = read_dns_full_state()
     apply_dns_filters(read_dns_state(),
-                      everyone=bool(state.get("common") or state.get("custom")))
+                      everyone=bool(state.get("common") or state.get("custom")
+                                    or state.get("watch")))
     # Файл состояния читает и сам процесс фильтра — ссылка на бота лежит там же
     # и переживает перезапуск вместе с раскладкой.
 
@@ -1326,17 +1331,19 @@ def set_dns_filters(req: DnsFilters):
                          for k, v in (req.allow_clients or {}).items()}
         except_clients = {str(k): [str(c) for c in v if c]
                           for k, v in (req.except_clients or {}).items()}
+        watch = [str(c) for c in (req.watch or [])]
         # Свои пулы пишем в кэш до применения: резолвер читает списки оттуда,
         # и категории без файла он считает пустыми.
         for key, domains in (req.pools or {}).items():
             save_pool_list(str(key), [str(d) for d in domains if d])
 
         save_dns_state(clients, req.bot_link or "", common, custom,
-                       allow_common, allow_clients, except_clients)
-        # Общие правила и свой список действуют на всех, поэтому заворачивать
-        # DNS надо всем, а не только тем, у кого включены личные категории.
-        count = apply_dns_filters(clients, everyone=bool(common or custom))
-        refresh_dns_lists(clients, common)
+                       allow_common, allow_clients, except_clients, watch)
+        # Общие правила, свой список и мягкий режим действуют на всех, поэтому
+        # заворачивать DNS надо всем, а не только тем, у кого включены личные
+        # категории: без заворота узел не увидит ни запрета, ни обращения.
+        count = apply_dns_filters(clients, everyone=bool(common or custom or watch))
+        refresh_dns_lists(clients, common, watch)
         return {"status": "ok", "filtered": count}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

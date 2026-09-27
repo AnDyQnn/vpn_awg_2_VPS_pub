@@ -94,7 +94,7 @@ async def collect_hits():
                 datetime.utcfromtimestamp(ts),
                 uuid_val, name, ip, public,
                 (row.get("domain") or "").lower(), row.get("category"),
-                row.get("ref"))
+                row.get("ref"), bool(row.get("watch")))
             added += 1
         except Exception:
             pass

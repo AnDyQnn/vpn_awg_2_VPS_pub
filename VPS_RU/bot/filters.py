@@ -20,7 +20,8 @@ from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
 from database import db
-from utils import exit_kb, escape_md, WG_API_URL, api_session, show_screen
+from utils import (exit_kb, escape_md, WG_API_URL, api_session, show_screen,
+                   dt_to_moscow)
 
 # Адрес бота узел сам не знает: он живёт в сети, а не в Telegram. Бот сообщает
 # его вместе с раскладкой фильтров, чтобы на странице отказа было куда написать.
@@ -135,6 +136,13 @@ async def apply_filters(reason: str = ""):
     except Exception:
         common, custom = [], []
 
+    # Мягкий режим: категории, которые не режем, но отмечаем. Что уже режется
+    # общей категорией, из наблюдения убираем — там и так запрет.
+    try:
+        watch = [c for c in await db.get_watch_filters() if c not in common]
+    except Exception:
+        watch = []
+
     # Исключения — вопреки категории. Личные привязаны к ключу, а узел знает
     # только адреса, поэтому здесь же переводим одно в другое.
     try:
@@ -173,6 +181,7 @@ async def apply_filters(reason: str = ""):
                                           "custom": custom,
                                           "allow_common": allow_common,
                                           "allow_clients": allow_clients,
+                                          "watch": watch,
                                           "pools": pools,
                                           "bot_link": BOT_LINK["url"]}, timeout=10) as resp:
                 if resp.status != 200:
@@ -287,9 +296,17 @@ async def filters_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines += ["", "⚠️ _В браузере с DNS-over-HTTPS фильтр обходится: там "
                       "запрос уходит внутри HTTPS и на уровне DNS его не видно._"]
 
+    watch = await db.get_watch_filters()
+    if watch:
+        total = await db.watch_total(168)
+        lines.append("")
+        lines.append("👁 **Мягкий контроль:** %s · обращений за неделю: %d"
+                     % (", ".join(TITLES_ALL.get(c, c) for c in watch), total))
+
     kb = [[InlineKeyboardButton("🌍 Общие правила", callback_data="flt_common")],
           [InlineKeyboardButton("🟢 Исключения из запретов",
                                 callback_data="flt_alw_all")],
+          [InlineKeyboardButton("👁 Мягкий контроль", callback_data="flt_watch")],
           [InlineKeyboardButton("📦 Группы фильтров", callback_data="flt_pool_list")],
           [InlineKeyboardButton("👤 Выбрать человека", callback_data="flt_pick_0")]]
     if by_uuid:
@@ -896,6 +913,68 @@ async def common_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE, key:
     await update.callback_query.answer(msg if ok else f"Не вышло: {msg}",
                                        show_alert=not ok)
     await common_screen(update, context)
+
+
+# --- МЯГКИЙ КОНТРОЛЬ ------------------------------------------------------
+# Категория не режется, но обращения к ней отмечаются. Наблюдение для
+# владельца; человек по-прежнему открывает сайт и ничего не замечает.
+async def watch_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    watch = set(await db.get_watch_filters())
+    common = set(await db.get_common_filters())
+    all_titles = await titles()
+
+    lines = ["👁 **Мягкий контроль**", "",
+             "Категория не блокируется — человек открывает сайт как обычно. "
+             "Мы лишь отмечаем обращения к ней и сводим их для вас.", ""]
+    total = await db.watch_total(168)
+    lines.append("Обращений за неделю: %d" % total)
+
+    kb = []
+    for key, title in await all_categories():
+        if key in common:
+            # То, что уже режется всем, наблюдать нечем: туда и так не пройти.
+            continue
+        mark = "👁" if key in watch else ""
+        kb.append([InlineKeyboardButton(f"{mark} {title}".strip(),
+                                        callback_data=f"flt_wtog_{key}")])
+    if watch:
+        kb.append([InlineKeyboardButton("📊 Кто и куда ходит",
+                                        callback_data="flt_wstat")])
+    kb.append([InlineKeyboardButton("🔙 Фильтры", callback_data="flt_menu")])
+    await show_screen(query, context, "\n".join(lines),
+                      reply_markup=InlineKeyboardMarkup(kb),
+                      parse_mode=ParseMode.MARKDOWN)
+
+
+async def watch_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE, key: str):
+    watch = set(await db.get_watch_filters())
+    watch.symmetric_difference_update({key})
+    await db.set_watch_filters(watch)
+    ok, msg = await apply_filters("мягкий контроль")
+    await update.callback_query.answer(msg if ok else f"Не вышло: {msg}",
+                                       show_alert=not ok)
+    await watch_screen(update, context)
+
+
+async def watch_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    rows = await db.watch_summary(168)
+    all_titles = await titles()
+    lines = ["📊 **Мягкий контроль: за неделю**", ""]
+    if not rows:
+        lines.append("Обращений пока нет.")
+    else:
+        for r in rows[:30]:
+            cat = all_titles.get(r["category"], r["category"])
+            when = dt_to_moscow(r["last_at"]).strftime("%d.%m %H:%M") if r["last_at"] else ""
+            lines.append("• **%s** — %s: %d (посл. %s)"
+                         % (escape_md(r["who"] or "?"), escape_md(cat),
+                            r["hits"], when))
+    kb = [[InlineKeyboardButton("🔙 Мягкий контроль", callback_data="flt_watch")]]
+    await show_screen(query, context, "\n".join(lines),
+                      reply_markup=InlineKeyboardMarkup(kb),
+                      parse_mode=ParseMode.MARKDOWN)
 
 
 async def custom_add_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
