@@ -152,6 +152,30 @@ write_state() {
 JSON
 }
 
+# --- кто грузит процессор -----------------------------------------------
+# Бот живёт в контейнере и процессов хоста не видит: оповещение «высокая
+# нагрузка» приходило без причины, и не понять было, это трафик VPN, сборка
+# при выкладке или обновление системы. Когда нагрузка выше числа ядер,
+# записываем топ процессов по ТЕКУЩЕМУ проценту (второй проход top, а не
+# среднее за всю жизнь процесса, как у ps). Файл лежит в общей с ботом папке.
+LOAD_TOP="$FLAGS_DIR/load_top.json"
+sample_load() {
+    local l1 l5 cores items
+    read -r l1 l5 _ < /proc/loadavg
+    cores=$(nproc 2>/dev/null || echo 1)
+    awk -v l="$l1" -v c="$cores" 'BEGIN{exit !(l >= c)}' || return 0
+    items=$(top -b -n 2 -d 1 -o %CPU -w 200 2>/dev/null \
+        | awk '/^ *PID/{n++; next} n==2 && NF>=12 {print $9" "$12}' \
+        | head -5 \
+        | while read -r pct comm; do
+              comm=$(printf '%s' "$comm" | tr -cd 'A-Za-z0-9._:+-')
+              printf '{"comm":"%s","cpu":%s},' "$comm" "${pct:-0}"
+          done)
+    printf '{"ts":%s,"load1":%s,"load5":%s,"cores":%s,"top":[%s]}\n' \
+        "$(date +%s)" "$l1" "$l5" "$cores" "${items%,}" > "$LOAD_TOP.tmp" \
+        && mv "$LOAD_TOP.tmp" "$LOAD_TOP"
+}
+
 # --- основной цикл -------------------------------------------------------
 fails=0
 level=0
@@ -193,6 +217,7 @@ while true; do
         write_state false "$problem" "$fails" "$level" "$last_action"
     fi
 
+    sample_load
     trim_log
     sleep "$INTERVAL"
 done

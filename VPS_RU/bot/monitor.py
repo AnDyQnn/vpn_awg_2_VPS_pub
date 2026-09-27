@@ -327,6 +327,54 @@ def _overloaded(load1, cores):
         return False
 
 
+# Сколько проверок подряд узел перегружен. Тревога — со второй подряд, то есть
+# нагрузка держится больше пяти минут: короткий пик от выкладки, обновления
+# системы или копии — не повод будить владельца. Раньше хватало одного замера,
+# и на одноядерных узлах оповещения приходили «периодически».
+_overload_streak = {"RU": 0, "DE": 0}
+OVERLOAD_STREAK_TO_ALERT = 2
+
+# Кто грузит процессор хоста — пишет сторож на хосте (бот процессов хоста не
+# видит). Файл свежий, только пока нагрузка высокая.
+LOAD_TOP_FILE = "/volumes/flags/load_top.json"
+
+# Плановая работа: сборка образов при выкладке, обновления системы, копии,
+# сертификат. Если грузит она — это ожидаемо, тревогу не шлём, только в журнал.
+MAINTENANCE_PROCS = {
+    "dockerd", "containerd", "containerd-shim", "buildkitd", "runc", "docker",
+    "docker-compose", "apt", "apt-get", "apt-check", "dpkg", "unattended-upgr",
+    "http", "gpgv", "certbot", "tar", "gzip", "pigz", "xz", "pg_dump",
+    "e2scrub", "fstrim", "mandb", "man-db", "update-motd", "snapd",
+    "cc1", "gcc", "pip", "git",
+}
+
+
+def load_top(max_age=900):
+    """Последний снимок «кто грузит» от сторожа, если он свежий."""
+    try:
+        with open(LOAD_TOP_FILE) as f:
+            data = json.load(f)
+        if time.time() - float(data.get("ts", 0)) <= max_age:
+            return data
+    except Exception:
+        pass
+    return None
+
+
+def describe_load(top):
+    """(кто грузит строкой, плановая ли это работа)."""
+    procs = [p for p in (top or {}).get("top") or [] if p.get("comm")]
+    if not procs:
+        return "", False
+    main = procs[0]["comm"]
+    who = ", ".join("%s %.0f%%" % (p["comm"], float(p.get("cpu") or 0)) for p in procs[:3])
+    planned = main in MAINTENANCE_PROCS
+    if main == "wireguard-go":
+        who += ("\n_wireguard-go — шифрование трафика VPN: кто-то много качает. "
+                "Одно ядро узла — предел пропускной способности._")
+    return who, planned
+
+
 async def resource_monitor_loop(app):
     global _de_misses
     while True:
@@ -354,8 +402,19 @@ async def resource_monitor_loop(app):
         ram_ru = psutil.virtual_memory().percent
         disk_ru = psutil.disk_usage("/").percent
 
-        if _overloaded(load1, cores) and should_alert("RU_CPU"):
-            load_alerts.append(f"🇷🇺 **Мастер:** среднее за минуту {load1:.2f} на {cores} ядр.")
+        _overload_streak["RU"] = _overload_streak["RU"] + 1 if _overloaded(load1, cores) else 0
+        if _overload_streak["RU"] >= OVERLOAD_STREAK_TO_ALERT:
+            who, planned = describe_load(load_top())
+            try:
+                await db.log_event("Load", "Мастер: нагрузка %.2f на %d ядр. держится %d проверки; %s"
+                                   % (load1, cores, _overload_streak["RU"], who or "кто — неизвестно"))
+            except Exception:
+                pass
+            if not planned and should_alert("RU_CPU"):
+                load_alerts.append(
+                    f"🇷🇺 **Мастер:** среднее за минуту {load1:.2f} на {cores} ядр., "
+                    f"держится больше 5 минут"
+                    + (f"\nГрузят: {who}" if who else ""))
         if ram_ru > 95 and should_alert("RU_RAM"):
             load_alerts.append(f"🇷🇺 **Мастер, память:** {ram_ru}%")
         if disk_ru > 90 and should_alert("RU_DISK"):
@@ -375,9 +434,12 @@ async def resource_monitor_loop(app):
             # выдумываем тревогу из мгновенного замера.
             load_de = de_data.get("load1")
             cores_de = de_data.get("cores", 1)
-            if load_de is not None and _overloaded(load_de, cores_de) and should_alert("DE_CPU"):
+            over_de = load_de is not None and _overloaded(load_de, cores_de)
+            _overload_streak["DE"] = _overload_streak["DE"] + 1 if over_de else 0
+            if _overload_streak["DE"] >= OVERLOAD_STREAK_TO_ALERT and should_alert("DE_CPU"):
                 load_alerts.append(
-                    f"🇩🇪 **Германия:** среднее за минуту {float(load_de):.2f} на {cores_de} ядр.")
+                    f"🇩🇪 **Германия:** среднее за минуту {float(load_de):.2f} на {cores_de} ядр., "
+                    f"держится больше 5 минут")
             if ram_de > 95 and should_alert("DE_RAM"):
                 load_alerts.append(f"🇩🇪 **Германия, память:** {ram_de}%")
             if disk_de > 90 and should_alert("DE_DISK"):
