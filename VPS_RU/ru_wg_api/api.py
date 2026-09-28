@@ -821,6 +821,12 @@ def apply_acl_web(peers):
     Запрос после заворота адресован уже самому узлу и уходит в INPUT, поэтому
     запрет в FORWARD его не касается — порядок таблиц тут работает на нас."""
     _acl_web_ensure_chain()
+    # Сам узел — не закрытый сервис: на нём DNS и эта же страница. Без
+    # исключения запрос человека с ролью на адрес узла (браузер, проверка
+    # связи в приложении) заворачивался «на отказ» и писался инцидентом
+    # «доступы» — тревога о том, что ничего не закрыто.
+    subprocess.run(f"iptables -t nat -A {ACL_WEB_CHAIN} -d {BLOCK_PAGE_IP} -j RETURN",
+                   shell=True, stderr=subprocess.DEVNULL)
     for peer in peers:
         ip = peer.get("ip")
         if not ip:

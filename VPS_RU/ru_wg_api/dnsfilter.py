@@ -1245,7 +1245,10 @@ async def handle_http(reader, writer):
         # Номер берём тот же, что записан в журнале: человек копирует его со
         # страницы, владелец ищет по нему инцидент.
         ref = ""
-        if ip and host:
+        # Запрос на адрес самого узла — не попытка попасть в закрытое: там
+        # нечего закрывать. Страницу показываем, инцидент не пишем.
+        host_is_node = host == BLOCK_IP
+        if ip and host and not host_is_node:
             # Запись делаем и здесь: закрытый доступ к своему сервису режется
             # не фильтром, а правилами, и в журнал он до сих пор не попадал —
             # инцидента с этим номером просто не существовало бы. Повтора не
@@ -1257,7 +1260,8 @@ async def handle_http(reader, writer):
             ref = _hit_refs.get((ip[0], host.lower())) or hit_ref(
                 ip[0], host.lower(), time.time())
         # По http — перенаправляем на своё имя, если есть куда.
-        target = "" if tls else redirect_target(host, category or "доступы", ref)
+        target = "" if tls or host_is_node else redirect_target(
+            host, category or "доступы", ref)
         if target:
             writer.write(b"HTTP/1.1 302 Found\r\n"
                          b"Location: " + target.encode("ascii", "ignore") + b"\r\n"

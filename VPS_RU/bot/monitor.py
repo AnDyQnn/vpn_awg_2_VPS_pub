@@ -922,12 +922,14 @@ async def retire_watch_loop(app):
         try:
             pending = await db.get_pending_retire()
             if pending:
-                handshakes = {}
+                handshakes, endpoints = {}, {}
                 async with api_session() as session:
                     async with session.get(f"{WG_API_URL}/peers", timeout=10) as r:
                         if r.status == 200:
                             for p in await r.json():
                                 handshakes[p.get("uuid")] = int(p.get("latest_handshake") or 0)
+                                ep = p.get("endpoint") or ""
+                                endpoints[p.get("uuid")] = "" if ep == "(none)" else ep.split(":")[0]
 
                 now = datetime.utcnow()
                 for row in pending:
@@ -940,6 +942,17 @@ async def retire_watch_loop(app):
                             "Client Regen",
                             f"Новый ключ {name} вышел на связь, старый снимется через "
                             f"{RETIRE_CONFIRM_MINUTES} мин.")
+                        # «Новое подключение» уходит владельцу только при самом
+                        # первом подключении человека. После перевыпуска человек
+                        # тот же, и переход на новый ключ проходил молча.
+                        if ADMIN_ID:
+                            ep = endpoints.get(new_uuid, "")
+                            await notify_admin(app, text=(
+                                f"🔄 **Подключение по новому ключу**\n\n"
+                                f"👤 {escape_md(name)}\n"
+                                + (f"📱 `{ep}`\n" if ep else "")
+                                + f"Старый ключ снимется сам через "
+                                f"{RETIRE_CONFIRM_MINUTES} мин."), parse_mode="Markdown")
                         continue
 
                     first = row["first_handshake_at"]
