@@ -87,6 +87,26 @@ async def main():
     assert "400" in caption
     print("  файл %s — все %d адресов: ок" % (name, len(big)))
 
+    print("\n=== подсети в группе ===")
+    got = filters._parse_domains(
+        "169.136.158.0/24\n164.90.66.7\nlikee.video\n10.0.0.0/8\n0.0.0.0/0\n"
+        "https://www.like.video/x\n169.136.159.131/24")
+    assert "169.136.158.0/24" in got and "164.90.66.7/32" in got, got
+    assert "169.136.159.0/24" in got, "адрес с маской приводится к сети"
+    assert "likee.video" in got and "like.video" in got, got
+    assert not any(x.startswith("10.") or x.startswith("0.0.0.0") for x in got), \
+        "частные и слишком широкие сети брать нельзя"
+    print("  подсети приняты, частные и /0 отброшены, домены как были: ок")
+
+    await db.save_filter_pool("pool_tmix_cc33", "Смешанная",
+                              ["likee.video", "169.136.158.0/24", "164.90.66.0/24"])
+    u, c = Upd(), Ctx()
+    await filters.pool_open(u, c, "pool_tmix_cc33")
+    assert "Доменов: **1** · подсетей: **2**" in u.callback_query.text, \
+        u.callback_query.text[:200]
+    print("  на экране домены и подсети посчитаны раздельно: ок")
+    await db.delete_filter_pool("pool_tmix_cc33")
+
     for k in ("pool_tsmall_aa11", "pool_tbig_bb22"):
         await db.delete_filter_pool(k)
     print("\nВСЁ ПРОШЛО")

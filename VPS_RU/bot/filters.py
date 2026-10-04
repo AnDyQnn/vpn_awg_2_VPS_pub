@@ -221,7 +221,12 @@ async def apply_filters(reason: str = ""):
 
 async def list_sizes():
     """Сколько доменов реально загружено по категориям — чтобы на экране было
-    видно, работает фильтр или список ещё не подтянулся."""
+    видно, работает фильтр или список ещё не подтянулся.
+
+    None — узел не ответил. Это не то же самое, что «списков нет»: во время
+    выкладки одно ядро узла занято сборкой, и ответ идёт по двадцать секунд.
+    Раньше молчание читалось как пустые списки, и экран советовал жать
+    «Применить» — при живых фильтрах и без того занятом узле."""
     try:
         async with api_session() as session:
             async with session.get(f"{WG_API_URL}/dns/filters", timeout=5) as resp:
@@ -229,7 +234,7 @@ async def list_sizes():
                     return (await resp.json()).get("lists", {})
     except Exception:
         pass
-    return {}
+    return None
 
 
 async def filters_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -285,7 +290,11 @@ async def filters_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     on_now = set(common)
     for cats in by_uuid.values():
         on_now.update(cats)
-    empty = sorted(c for c in on_now if not sizes.get(c))
+    if sizes is None and on_now:
+        lines += ["", "⏳ _Узел сейчас не ответил — проверить, загружены ли "
+                      "списки, не вышло. Фильтры при этом работают как работали; "
+                      "загляните через минуту._"]
+    empty = sorted(c for c in on_now if sizes is not None and not sizes.get(c))
     if empty:
         lines += ["", "⚠️ **Списки не загрузились: "
                   + ", ".join(TITLES_ALL.get(c, c) for c in empty)
@@ -596,8 +605,10 @@ async def pool_open(update: Update, context: ContextTypes.DEFAULT_TYPE, key):
     # владельца. Раньше показывались первые двенадцать адресов по одному.
     domains = pool["domains"]
     shown = _fit_domains(domains)
+    n_nets = sum(1 for d in domains if is_net(d))
     lines = [f"📦 **{escape_md(pool['title'])}**", "",
-             f"Доменов: **{len(domains)}**", ""]
+             f"Доменов: **{len(domains) - n_nets}**"
+             + (f" · подсетей: **{n_nets}**" if n_nets else ""), ""]
     if shown:
         lines += ["```", "\n".join(shown), "```"]
     if len(domains) > len(shown):
@@ -628,7 +639,10 @@ ASK_DOMAINS = (
     "`www.example.com`\n"
     "`example.com`\n"
     "`0.0.0.0 example.com`\n\n"
-    "_Схему, `www`, порт и путь срежу сам. Повторы уберу._")
+    "_Схему, `www`, порт и путь срежу сам. Повторы уберу._\n\n"
+    "Можно и подсети: `169.136.66.0/24`. Их закрывает уже не DNS, а "
+    "файрвол — для приложений, которые при закрытых доменах идут на "
+    "зашитые адреса.")
 
 
 async def pool_add_request(update: Update, context: ContextTypes.DEFAULT_TYPE,
@@ -674,6 +688,23 @@ async def pool_name_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode=ParseMode.MARKDOWN)
 
 
+def _parse_net(value):
+    """«169.136.66.0/24» или «169.136.66.7» → подсеть; иначе None."""
+    import ipaddress
+    try:
+        net = ipaddress.ip_network(value.strip(), strict=False)
+    except ValueError:
+        return None
+    if net.version != 4 or net.prefixlen < 8 or not net.is_global:
+        return None
+    return str(net)
+
+
+def is_net(entry):
+    """Строка группы — подсеть, а не домен."""
+    return "/" in entry and _parse_net(entry) is not None
+
+
 def _parse_domains(raw):
     """Приводит присланное к именам доменов.
 
@@ -684,11 +715,23 @@ def _parse_domains(raw):
 
     Поэтому срезаем схему, `www`, порт, путь и точку на конце. Остаётся имя.
     """
+    import re
     out = []
     for part in (raw or "").replace(",", "\n").replace(";", "\n").split("\n"):
         value = part.strip().lower()
         if not value or value.startswith("#"):
             continue
+
+        # Подсеть или адрес IPv4 — тоже годится: её закрывает не DNS, а
+        # файрвол узла. Нужно для приложений, которые при закрытых доменах идут
+        # на зашитые адреса (Likee — в сеть Bigo). Частные сети и слишком
+        # широкие (шире /8) не берём: одна опечатка закрыла бы человеку всё.
+        net = _parse_net(value)
+        if net:
+            out.append(net)
+            continue
+        if re.match(r"^\d{1,3}(\.\d{1,3}){3}(/\d{1,2})?$", value):
+            continue                             # отвергнутая сеть — не домен
 
         chunks = value.split()
         if len(chunks) > 1 and chunks[0] in ("0.0.0.0", "127.0.0.1", "::1"):

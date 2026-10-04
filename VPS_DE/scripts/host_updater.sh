@@ -142,7 +142,11 @@ while true; do
         # --volumes убран: он сносит неиспользуемые именованные тома.
         # Сейчас данные лежат в bind-mount и не страдают, но это мина
         # под ноги на будущее. Недельная уборка делает то же самое.
-        docker system prune -af
+        if [ -f "$(dirname "$NODE_DIR")/scripts/docker_gc.sh" ]; then
+            bash "$(dirname "$NODE_DIR")/scripts/docker_gc.sh"
+        else
+            docker system prune -af
+        fi
         journalctl --vacuum-time=3d
     fi
 

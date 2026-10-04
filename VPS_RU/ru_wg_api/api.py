@@ -1041,23 +1041,127 @@ def read_dns_names():
         return {}
 
 
-def save_pool_list(key, domains):
+def _pool_net(entry):
+    """Подсеть IPv4 из строки группы — или None, если это домен."""
+    try:
+        net = ipaddress.ip_network(str(entry).strip(), strict=False)
+    except ValueError:
+        return None
+    return str(net) if net.version == 4 else None
+
+
+def save_pool_list(key, entries):
     """Свой пул — обычный файл категории в кэше узла.
 
     Так резолверу не нужно знать, что пул чем-то отличается от встроенной
     категории: он и не отличается, кроме того, что список пришёл от владельца,
     а не скачан.
+
+    Подсети из той же группы лежат отдельным файлом <ключ>.nets: их режет не
+    резолвер, а файрвол. Нужно для приложений, которые при закрытом DNS идут
+    на зашитые в них адреса, — Likee так и делает.
     """
     safe = "".join(c for c in key if c.isalnum() or c in "-_")[:40]
     if not safe:
         return
+    nets = sorted({n for n in (_pool_net(e) for e in entries) if n})
+    domains = [e for e in entries if not _pool_net(e)]
     path = f"{CONF_DIR}/cache/dns/{safe}.txt"
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
             f.write("\n".join(domains))
+        npath = f"{CONF_DIR}/cache/dns/{safe}.nets"
+        if nets:
+            with open(npath, "w", encoding="utf-8") as f:
+                f.write("\n".join(nets))
+        elif os.path.exists(npath):
+            os.remove(npath)
     except OSError as e:
         print(f"Свой пул {safe}: {e}")
+
+
+POOL_NET_CHAIN = "FLT_NETS"
+
+
+def _pool_set_name(key):
+    """Имя ipset для группы: у ipset предел 31 знак, ключ бывает длиннее."""
+    import hashlib
+    return "fn_" + hashlib.blake2b(key.encode(), digest_size=6).hexdigest()
+
+
+def read_pool_nets():
+    """Ключ группы → её подсети, как они лежат в кэше."""
+    cache = f"{CONF_DIR}/cache/dns"
+    out = {}
+    try:
+        names = os.listdir(cache)
+    except OSError:
+        return out
+    for fn in names:
+        if not fn.endswith(".nets"):
+            continue
+        try:
+            with open(os.path.join(cache, fn), encoding="utf-8") as f:
+                nets = [l.strip() for l in f if _pool_net(l)]
+        except OSError:
+            continue
+        if nets:
+            out[fn[:-5]] = nets
+    return out
+
+
+def apply_pool_nets(clients, common=None, except_clients=None):
+    """Закрывает подсети групп по IP тем, кому группа включена.
+
+    Фильтр по DNS не видит приложение, которое ходит на зашитые адреса:
+    Likee при закрытых доменах подключается к сети Bigo напрямую. Здесь те же
+    люди, что под группой в DNS, получают запрет и на её подсети. Исключения
+    из общей категории действуют и тут. Возвращает число правил."""
+    nets = read_pool_nets()
+    common = [c for c in (common or []) if c in nets]
+    except_clients = except_clients or {}
+
+    subprocess.run(f"iptables -N {POOL_NET_CHAIN}", shell=True, stderr=subprocess.DEVNULL)
+    subprocess.run(f"iptables -F {POOL_NET_CHAIN}", shell=True, stderr=subprocess.DEVNULL)
+
+    for key, lst in nets.items():
+        name = _pool_set_name(key)
+        batch = [f"create {name} hash:net -exist", f"flush {name}"]
+        batch += [f"add {name} {n} -exist" for n in lst]
+        subprocess.run("ipset restore", shell=True, input="\n".join(batch) + "\n",
+                       text=True, stderr=subprocess.DEVNULL)
+
+    rules = 0
+
+    def add(spec):
+        nonlocal rules
+        subprocess.run(f"iptables -A {POOL_NET_CHAIN} {spec}", shell=True,
+                       stderr=subprocess.DEVNULL)
+        rules += 1
+
+    # Клиент-сервер несёт трафик всех остальных — его не трогаем никогда.
+    add(f"-s {DE_AGENT_IP} -j RETURN")
+    for ip, cats in (clients or {}).items():
+        for key in cats:
+            if key in nets:
+                add(f"-s {ip} -m set --match-set {_pool_set_name(key)} dst -j REJECT")
+    for key in common:
+        for ip, cats in except_clients.items():
+            if key in cats:
+                add(f"-s {ip} -m set --match-set {_pool_set_name(key)} dst -j RETURN")
+        add(f"-s {TUNNEL_NET} -m set --match-set {_pool_set_name(key)} dst -j REJECT")
+
+    _insert_before_accept("FORWARD", f"-i wg0 -j {POOL_NET_CHAIN}")
+
+    # Наборы групп, которых больше нет, — после того как на них не осталось правил.
+    live = {_pool_set_name(k) for k in nets}
+    sets = subprocess.run("ipset list -n", shell=True, capture_output=True,
+                          text=True).stdout.split()
+    for name in sets:
+        if name.startswith("fn_") and name not in live:
+            subprocess.run(f"ipset destroy {name}", shell=True, stderr=subprocess.DEVNULL)
+    return rules
 
 
 def gc_dns_cache(pool_keys):
@@ -1090,6 +1194,8 @@ def gc_dns_cache(pool_keys):
                 drop = False
         elif fn.endswith(".txt"):
             drop = fn[:-4] not in keep
+        elif fn.endswith(".nets"):
+            drop = fn[:-5] not in keep
         elif fn.endswith(".bin"):
             cat = fn.split(".", 1)[0]
             drop = cat not in keep or path != dnsfilter._bin_path_in(cache, cat)
@@ -1153,6 +1259,10 @@ def rebuild_dns_filters():
     apply_dns_filters(read_dns_state(),
                       everyone=bool(state.get("common") or state.get("custom")
                                     or state.get("watch")))
+    # Подсети групп — тоже из сохранённого: после перезапуска контейнера
+    # правил файрвола нет, а запрет должен остаться.
+    apply_pool_nets(read_dns_state(), state.get("common") or [],
+                    state.get("except_clients") or {})
     # Файл состояния читает и сам процесс фильтра — ссылка на бота лежит там же
     # и переживает перезапуск вместе с раскладкой.
 
@@ -1399,6 +1509,7 @@ def set_dns_filters(req: DnsFilters):
         # заворачивать DNS надо всем, а не только тем, у кого включены личные
         # категории: без заворота узел не увидит ни запрета, ни обращения.
         count = apply_dns_filters(clients, everyone=bool(common or custom or watch))
+        apply_pool_nets(clients, common, except_clients)
         refresh_dns_lists(clients, common, watch)
         return {"status": "ok", "filtered": count}
     except Exception as e:
