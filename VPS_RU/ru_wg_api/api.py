@@ -1580,6 +1580,106 @@ def get_acl():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# --- ПОИСК МАСОК -------------------------------------------------------------
+# Приложение, которое прячет свой трафик, в начале шифрованного соединения
+# называет чужой сайт (Likee — nalog.ru, ya.ru) и идёт при этом не на 443, а на
+# порт вроде 21278. Узел минуту смотрит на начала соединений одного устройства
+# и отдаёт такие имена — владелец добавляет их в группу масками одной кнопкой.
+#
+# Что видно и что нет. Смотрятся только первые пакеты новых соединений, и
+# отдаются только имена на нестандартных портах — обычные сайты на 443 в ответ
+# не попадают вовсе. Ни содержимого, ни истории.
+
+# Порты, где имя чужого сайта — норма, а не маскировка: почта, DNS поверх TLS,
+# пуш-уведомления Google и Apple, второй HTTPS.
+SNIFF_SKIP_PORTS = {80, 443, 853, 993, 995, 465, 587, 5223, 5228, 5229, 5230, 8443}
+SNIFF_MAX_SECONDS = 90
+_sniff_busy = {"on": False}
+
+
+class SniffReq(BaseModel):
+    ip: str
+    seconds: int = 60
+
+
+def _hello_sni(payload):
+    """Имя из начала TLS (ClientHello) — или None."""
+    import struct
+    try:
+        if payload[0] != 0x16 or payload[5] != 1:
+            return None
+        i = 9 + 2 + 32
+        i += 1 + payload[i]
+        i += 2 + struct.unpack("!H", payload[i:i + 2])[0]
+        i += 1 + payload[i]
+        end = i + 2 + struct.unpack("!H", payload[i:i + 2])[0]
+        i += 2
+        while i + 4 <= end:
+            t, ln = struct.unpack("!HH", payload[i:i + 4])
+            i += 4
+            if t == 0:
+                n = struct.unpack("!H", payload[i + 3:i + 5])[0]
+                return payload[i + 5:i + 5 + n].decode("ascii", "replace").lower()
+            i += ln
+    except Exception:
+        return None
+    return None
+
+
+def sniff_masks(ip, seconds, iface="wg0"):
+    """Имена на нестандартных портах из начал соединений устройства ip."""
+    import socket
+    import struct
+    src = socket.inet_aton(ip)
+    found = {}
+    s = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(0x0003))
+    try:
+        s.bind((iface, 0))
+        s.settimeout(1)
+        end = time.time() + seconds
+        while time.time() < end:
+            try:
+                p = s.recv(65535)
+            except socket.timeout:
+                continue
+            if len(p) < 40 or p[0] >> 4 != 4 or p[9] != 6 or p[12:16] != src:
+                continue
+            ihl = (p[0] & 15) * 4
+            dport = struct.unpack("!H", p[ihl + 2:ihl + 4])[0]
+            if dport in SNIFF_SKIP_PORTS:
+                continue
+            name = _hello_sni(p[ihl + ((p[ihl + 12] >> 4) * 4):])
+            if not name or not re.match(r"^[a-z0-9-]+(\.[a-z0-9-]+)+$", name):
+                continue
+            rec = found.setdefault(name, {"hits": 0, "ports": set()})
+            rec["hits"] += 1
+            rec["ports"].add(dport)
+    finally:
+        s.close()
+    return [{"name": n, "hits": r["hits"], "ports": sorted(r["ports"])[:5]}
+            for n, r in sorted(found.items(), key=lambda kv: -kv[1]["hits"])]
+
+
+@app.post("/api/dns/sniff")
+def sniff_endpoint(req: SniffReq):
+    """Ищет маски у одного устройства. Одновременно — только один поиск."""
+    try:
+        addr = ipaddress.ip_address(req.ip)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="не адрес")
+    if addr not in ipaddress.ip_network(TUNNEL_NET) or str(addr) == DE_AGENT_IP:
+        raise HTTPException(status_code=400, detail="адрес не из туннеля")
+    if _sniff_busy["on"]:
+        raise HTTPException(status_code=409, detail="поиск уже идёт")
+    _sniff_busy["on"] = True
+    try:
+        seconds = max(10, min(int(req.seconds or 60), SNIFF_MAX_SECONDS))
+        return {"status": "ok", "seconds": seconds,
+                "candidates": sniff_masks(str(addr), seconds)}
+    finally:
+        _sniff_busy["on"] = False
+
+
 @app.post("/api/dns/filters")
 def set_dns_filters(req: DnsFilters):
     """Принимает готовую раскладку «кому какие категории» и применяет её.

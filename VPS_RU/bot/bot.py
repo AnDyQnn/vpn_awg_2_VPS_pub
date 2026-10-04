@@ -121,6 +121,7 @@ from filters import (
     pool_name_request as flt_pool_new,
     pool_add_request as flt_pool_add, pool_domains_entered as flt_pool_doms,
     pool_remove_request as flt_pool_rm, pool_remove_entered as flt_pool_rm_doms,
+    pool_mask_pick as flt_pool_mpick, pool_mask_run as flt_pool_mrun, pool_mask_add as flt_pool_madd,
     pool_title_entered as flt_pool_title, pool_delete as flt_pool_del,
     allow_screen as flt_allow, allow_add_request as flt_allow_add,
     allow_add_entered as flt_allow_entered, allow_remove as flt_allow_del,
@@ -1275,6 +1276,12 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await flt_pool_file(update, context, data.split("flt_pool_f_")[1]); return
     if data.startswith("flt_pool_o_"):
         await flt_pool_open(update, context, data.split("flt_pool_o_")[1]); return
+    if data == "flt_pmadd":
+        await flt_pool_madd(update, context); return
+    if data.startswith("flt_pm_"):
+        await flt_pool_mrun(update, context, int(data.split("flt_pm_")[1])); return
+    if data.startswith("flt_pool_m_"):
+        await flt_pool_mpick(update, context, data.split("flt_pool_m_")[1]); return
     if data.startswith("flt_pool_r_"):
         await flt_pool_rm(update, context, data.split("flt_pool_r_")[1]); return
     if data.startswith("flt_pool_a_"):

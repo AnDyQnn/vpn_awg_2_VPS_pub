@@ -616,13 +616,17 @@ async def pool_open(update: Update, context: ContextTypes.DEFAULT_TYPE, key):
     if len(domains) > len(shown):
         lines.append(f"…и ещё {len(domains) - len(shown)} — весь список файлом "
                      f"по кнопке ниже.")
-    lines += ["", "_Включается человеку так же, как встроенная категория._"]
+    lines += ["", "_Включается человеку так же, как встроенная категория._",
+              "_Домены закрываются и в DNS, и по имени в начале соединения; "
+              "подсети — по адресу; маски — имена чужих сайтов, под которые "
+              "приложение прячет свой трафик (ищутся кнопкой «🎭 Найти маски»)._"]
 
     kb = [[InlineKeyboardButton("➕ Добавить адреса",
                                 callback_data=f"flt_pool_a_{key}")]]
     if domains:
         kb[0].append(InlineKeyboardButton("➖ Убрать",
                                           callback_data=f"flt_pool_r_{key}"))
+    kb.append([InlineKeyboardButton("🎭 Найти маски", callback_data=f"flt_pool_m_{key}")])
     if len(domains) > len(shown):
         kb.append([InlineKeyboardButton("📄 Весь список файлом",
                                         callback_data=f"flt_pool_f_{key}")])
@@ -794,6 +798,136 @@ def _parse_domains(raw):
             out.append(value)
     # Порядок не важен, а повторы в присланных списках бывают всегда.
     return sorted(set(out))
+
+
+# --- Поиск масок -------------------------------------------------------------
+#
+# Маску можно вписать руками, но откуда её взять? Приложение не говорит, под
+# какой сайт прячется. Здесь узел минуту смотрит на начала соединений одного
+# устройства, пока на нём открыто приложение, и отдаёт имена сайтов на
+# нестандартных портах — это и есть маскировка. Обычные сайты на 443 в ответ не
+# попадают, так что истории человека владелец не видит.
+
+MASK_SNIFF_SECONDS = 60
+
+
+async def _online_peers():
+    """Кто сейчас на связи: [(адрес в туннеле, имя)], свежие сверху."""
+    import time as _t
+    from utils import peer_person_uuid
+    try:
+        async with api_session() as session:
+            async with session.get(f"{WG_API_URL}/peers", timeout=5) as resp:
+                peers = await resp.json() if resp.status == 200 else []
+    except Exception:
+        peers = []
+    names = {u["uuid"]: u["name"] for u in await db.get_all_users()}
+    now = _t.time()
+    out = []
+    for p in sorted(peers, key=lambda p: -(p.get("latest_handshake") or 0)):
+        hs = int(p.get("latest_handshake") or 0)
+        uid = p.get("uuid") or ""
+        ip = (p.get("allowed_ips") or "").split(",")[0].split("/")[0].strip()
+        name = names.get(peer_person_uuid(uid))
+        if hs and now - hs < 180 and ip and name:
+            out.append((ip, name))
+    return out[:10]
+
+
+async def pool_mask_pick(update: Update, context: ContextTypes.DEFAULT_TYPE, key):
+    """Шаг 1: на каком устройстве открыть приложение."""
+    query = update.callback_query
+    pool = await db.get_filter_pool(key)
+    if not pool:
+        await query.answer("Группы нет", show_alert=True)
+        return await pool_list(update, context)
+    peers = await _online_peers()
+    context.user_data["mask_pick"] = {"key": key, "peers": peers}
+    lines = [f"🎭 **Найти маски для «{escape_md(pool['title'])}»**", "",
+             "Некоторые приложения прячут свой трафик под чужой сайт: Likee "
+             "называет себя nalog.ru, но идёт на свой сервер и на порт вроде "
+             "21278. Такое имя и есть маска.", "",
+             "Выберите устройство, на котором откроете приложение. Узел минуту "
+             "посмотрит на начала его соединений и покажет имена на "
+             "нестандартных портах. Обычные сайты в ответ не попадают.", ""]
+    if not peers:
+        lines.append("_Сейчас никто не на связи — подключитесь и откройте снова._")
+    kb = [[InlineKeyboardButton(f"📱 {name}", callback_data=f"flt_pm_{i}")]
+          for i, (ip, name) in enumerate(peers)]
+    kb.append([InlineKeyboardButton("🔙 К группе", callback_data=f"flt_pool_o_{key}")])
+    await show_screen(query, context, "\n".join(lines),
+                      reply_markup=InlineKeyboardMarkup(kb),
+                      parse_mode=ParseMode.MARKDOWN)
+
+
+async def pool_mask_run(update: Update, context: ContextTypes.DEFAULT_TYPE, idx):
+    """Шаг 2: минута наблюдения и найденные маски."""
+    query = update.callback_query
+    pick = context.user_data.get("mask_pick") or {}
+    key, peers = pick.get("key"), pick.get("peers") or []
+    if not key or not (0 <= idx < len(peers)):
+        await query.answer("Выбор устарел — откройте поиск заново", show_alert=True)
+        return
+    ip, name = peers[idx]
+    await query.answer()
+    await show_screen(
+        query, context,
+        f"⏳ **Смотрю на «{escape_md(name)}» {MASK_SNIFF_SECONDS} секунд.**\n\n"
+        "Откройте приложение прямо сейчас: перезапустите его полностью, "
+        "полистайте ленту, включите трансляцию.",
+        parse_mode=ParseMode.MARKDOWN)
+    try:
+        async with api_session() as session:
+            async with session.post(f"{WG_API_URL}/dns/sniff",
+                                    json={"ip": ip, "seconds": MASK_SNIFF_SECONDS},
+                                    timeout=MASK_SNIFF_SECONDS + 30) as resp:
+                data = await resp.json() if resp.status == 200 else {
+                    "error": (await resp.text())[:200]}
+    except Exception as e:
+        data = {"error": str(e)}
+
+    pool = await db.get_filter_pool(key) or {"title": "", "domains": []}
+    have = {d[len("маска:"):] for d in pool["domains"] if is_mask(d)}
+    found = [c for c in data.get("candidates", []) if c["name"] not in have]
+    context.user_data["mask_found"] = {"key": key, "names": [c["name"] for c in found]}
+
+    kb = []
+    if data.get("error"):
+        text = f"⚠️ Поиск не удался: `{escape_md(str(data['error']))}`"
+    elif not found:
+        text = ("🎭 **Новых масок не нашлось.**\n\n"
+                + ("Те, что уже в группе, приложение использует — они работают."
+                   if data.get("candidates") else
+                   "Либо приложение не открывали, либо оно не маскируется."))
+    else:
+        rows = "\n".join("%s  · порты %s · %d раз" % (
+            c["name"], ", ".join(map(str, c["ports"])), c["hits"]) for c in found)
+        text = ("🎭 **Найдены маски** — имена сайтов на нестандартных портах:\n\n"
+                f"```\n{rows}\n```\n"
+                "Добавленная маска закрывает только такие соединения: сам сайт "
+                "на 443 продолжит открываться.")
+        kb.append([InlineKeyboardButton(f"➕ Добавить в группу ({len(found)})",
+                                        callback_data="flt_pmadd")])
+    kb.append([InlineKeyboardButton("🔙 К группе", callback_data=f"flt_pool_o_{key}")])
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb),
+                                  parse_mode=ParseMode.MARKDOWN)
+
+
+async def pool_mask_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Шаг 3: найденное — в группу, и сразу на узел."""
+    query = update.callback_query
+    found = context.user_data.pop("mask_found", None) or {}
+    key, names = found.get("key"), found.get("names") or []
+    pool = await db.get_filter_pool(key) if key else None
+    if not pool or not names:
+        await query.answer("Нечего добавлять", show_alert=True)
+        return
+    merged = sorted(set(pool["domains"]) | {"маска:" + n for n in names})
+    await db.save_filter_pool(key, pool["title"], merged)
+    ok, msg = await apply_filters("найдены маски")
+    await query.answer(("Добавлено масок: %d" % len(names)) if ok else msg,
+                       show_alert=not ok)
+    await pool_open(update, context, key)
 
 
 async def pool_remove_request(update: Update, context: ContextTypes.DEFAULT_TYPE, key):
