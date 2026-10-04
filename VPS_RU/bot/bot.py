@@ -109,6 +109,7 @@ from handlers_dnsnames import (
     delete_name as dnm_delete, apply_now as dnm_apply,
 )
 from filters import (
+    split_cat_uuid,
     watch_screen as flt_watch, watch_toggle as flt_wtoggle, watch_stats as flt_wstat,
     watch_person_screen as flt_wperson, watch_keep_screen as flt_wkeep,
     watch_keep_set as flt_wkeep_set, watch_clear_confirm as flt_wclr,
@@ -1291,16 +1292,17 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await filters_pick_user(update, context, int(data.split("_")[-1])); return
     if data.startswith("flt_user_"):
         await user_filters_screen(update, context, data.split("_", 2)[2]); return
+    # Категория и uuid — через split_cat_uuid: в ключе своей группы есть «_»,
+    # и разбор слева направо принимал его хвост за начало uuid.
     if data.startswith("flt_xa_"):
-        parts = data.split("_", 3)          # flt | xa | категория | uuid
-        await toggle_exempt(update, context, parts[3], parts[2],
-                            back="allow"); return
+        uid, cat = await split_cat_uuid(data, "flt_xa_")
+        await toggle_exempt(update, context, uid, cat, back="allow"); return
     if data.startswith("flt_exc_"):
-        parts = data.split("_", 3)          # flt | exc | категория | uuid
-        await toggle_exempt(update, context, parts[3], parts[2]); return
+        uid, cat = await split_cat_uuid(data, "flt_exc_")
+        await toggle_exempt(update, context, uid, cat); return
     if data.startswith("flt_set_"):
-        parts = data.split("_", 3)          # flt | set | категория | uuid
-        await toggle_filter(update, context, parts[3], parts[2]); return
+        uid, cat = await split_cat_uuid(data, "flt_set_")
+        await toggle_filter(update, context, uid, cat); return
     if data.startswith("kd_open_"):
         await decision_screen(update, context, data.split("_", 2)[2]); return
     if data.startswith("kd_ext_"):

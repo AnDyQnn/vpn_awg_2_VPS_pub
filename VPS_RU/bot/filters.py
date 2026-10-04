@@ -395,7 +395,7 @@ async def allow_screen(update: Update, context: ContextTypes.DEFAULT_TYPE,
                 mark = "🟢 " if key in exempt else "🌍 "
                 kb.append([InlineKeyboardButton(
                     mark + titles.get(key, key),
-                    callback_data=f"flt_xa_{key}_{uuid_val}")])
+                    callback_data=f"flt_xa_{cat_token(key)}_{uuid_val}")])
 
     lines += ["", "_Разрешение сильнее запрета, а личное сильнее общего: "
                   "правило про конкретного человека заведомо осознаннее._"]
@@ -480,6 +480,36 @@ async def allow_remove(update: Update, context: ContextTypes.DEFAULT_TYPE,
 # Готовые категории собраны чужими людьми по чужим соображениям: в них нет
 # российских ресурсов и нет того, что владелец считает лишним именно у себя.
 # Пул — это категория, собранная им самим: список доменов и название.
+
+def cat_token(key):
+    """Категория в данных кнопки.
+
+    Своя группа зовётся ключом вида pool_<имя>_<хвост> — с подчёркиваниями и
+    длиной до 26 знаков. В кнопке она стоит рядом с uuid человека, и вышло
+    две беды: разбор по «_» принимал хвост ключа за начало uuid (группа не
+    вешалась — база отказывала), а длинное имя выводило данные кнопки за 64
+    байта, после чего Telegram не показывал экран вовсе. Поэтому в кнопку идёт
+    короткий знак: P и хвост ключа."""
+    if key.startswith("pool_"):
+        return "P" + key.rsplit("_", 1)[-1]
+    return key
+
+
+async def cat_from_token(tok):
+    """Обратно из знака в ключ. Полный ключ (старые кнопки в чате) — как есть."""
+    if len(tok) == 5 and tok[0] == "P":
+        for pool in await db.list_filter_pools():
+            if pool["key"].rsplit("_", 1)[-1] == tok[1:]:
+                return pool["key"]
+    return tok
+
+
+async def split_cat_uuid(data, prefix):
+    """«<префикс><категория>_<uuid>» → (uuid, категория). uuid подчёркиваний
+    не содержит, поэтому режем справа: в ключе группы они есть."""
+    tok, uuid_val = data[len(prefix):].rsplit("_", 1)
+    return uuid_val, await cat_from_token(tok)
+
 
 def _pool_key(title):
     """Короткий ключ из названия. По нему пул знают узел и база, поэтому только
@@ -801,13 +831,13 @@ async def user_filters_screen(update: Update, context: ContextTypes.DEFAULT_TYPE
     kb = []
     for key, title in await all_categories():
         if key in mine:
-            mark, cb = "🚫 ", f"flt_set_{key}_{uuid_val}"
+            mark, cb = "🚫 ", f"flt_set_{cat_token(key)}_{uuid_val}"
         elif key in common and key in exempt:
-            mark, cb = "🟢 ", f"flt_exc_{key}_{uuid_val}"
+            mark, cb = "🟢 ", f"flt_exc_{cat_token(key)}_{uuid_val}"
         elif key in common:
-            mark, cb = "🌍 ", f"flt_exc_{key}_{uuid_val}"
+            mark, cb = "🌍 ", f"flt_exc_{cat_token(key)}_{uuid_val}"
         else:
-            mark, cb = "", f"flt_set_{key}_{uuid_val}"
+            mark, cb = "", f"flt_set_{cat_token(key)}_{uuid_val}"
         kb.append([InlineKeyboardButton(mark + title, callback_data=cb)])
 
     kb.append([InlineKeyboardButton("🔙 К человеку",
