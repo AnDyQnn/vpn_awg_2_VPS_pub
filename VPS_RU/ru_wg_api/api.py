@@ -1050,6 +1050,20 @@ def _pool_net(entry):
     return str(net) if net.version == 4 else None
 
 
+MASK_PREFIXES = ("маска:", "mask:")
+
+
+def _pool_mask(entry):
+    """Имя-маска из строки группы («маска:nalog.ru») — или None."""
+    e = str(entry).strip().lower()
+    for p in MASK_PREFIXES:
+        if e.startswith(p):
+            name = e[len(p):].strip().strip(".")
+            if re.match(r"^[a-z0-9-]+(\.[a-z0-9-]+)+$", name) and len(name) < 200:
+                return name
+    return None
+
+
 def save_pool_list(key, entries):
     """Свой пул — обычный файл категории в кэше узла.
 
@@ -1060,23 +1074,31 @@ def save_pool_list(key, entries):
     Подсети из той же группы лежат отдельным файлом <ключ>.nets: их режет не
     резолвер, а файрвол. Нужно для приложений, которые при закрытом DNS идут
     на зашитые в них адреса, — Likee так и делает.
+
+    Маски («маска:nalog.ru») — в файле <ключ>.masks. Это имя, которым
+    приложение представляется в начале шифрованного соединения, хотя идёт на
+    свой сервер: Likee называет себя nalog.ru и ya.ru на портах вроде 21278.
+    Настоящие сайты так не делают — они на 443.
     """
     safe = "".join(c for c in key if c.isalnum() or c in "-_")[:40]
     if not safe:
         return
     nets = sorted({n for n in (_pool_net(e) for e in entries) if n})
-    domains = [e for e in entries if not _pool_net(e)]
+    masks = sorted({m for m in (_pool_mask(e) for e in entries) if m})
+    domains = [e for e in entries if not _pool_net(e) and not _pool_mask(e)
+               and not str(e).strip().lower().startswith(MASK_PREFIXES)]
     path = f"{CONF_DIR}/cache/dns/{safe}.txt"
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
             f.write("\n".join(domains))
-        npath = f"{CONF_DIR}/cache/dns/{safe}.nets"
-        if nets:
-            with open(npath, "w", encoding="utf-8") as f:
-                f.write("\n".join(nets))
-        elif os.path.exists(npath):
-            os.remove(npath)
+        for ext, items in (("nets", nets), ("masks", masks)):
+            xpath = f"{CONF_DIR}/cache/dns/{safe}.{ext}"
+            if items:
+                with open(xpath, "w", encoding="utf-8") as f:
+                    f.write("\n".join(items))
+            elif os.path.exists(xpath):
+                os.remove(xpath)
     except OSError as e:
         print(f"Свой пул {safe}: {e}")
 
@@ -1090,8 +1112,8 @@ def _pool_set_name(key):
     return "fn_" + hashlib.blake2b(key.encode(), digest_size=6).hexdigest()
 
 
-def read_pool_nets():
-    """Ключ группы → её подсети, как они лежат в кэше."""
+def _read_pool_files(ext, valid):
+    """Ключ группы → строки из её файла <ключ>.<ext>, прошедшие проверку."""
     cache = f"{CONF_DIR}/cache/dns"
     out = {}
     try:
@@ -1099,16 +1121,36 @@ def read_pool_nets():
     except OSError:
         return out
     for fn in names:
-        if not fn.endswith(".nets"):
+        if not fn.endswith("." + ext):
             continue
         try:
             with open(os.path.join(cache, fn), encoding="utf-8") as f:
-                nets = [l.strip() for l in f if _pool_net(l)]
+                items = [l.strip() for l in f if valid(l.strip())]
         except OSError:
             continue
-        if nets:
-            out[fn[:-5]] = nets
+        if items:
+            out[fn[:-len(ext) - 1]] = items
     return out
+
+
+def read_pool_nets():
+    """Ключ группы → её подсети, как они лежат в кэше."""
+    return _read_pool_files("nets", _pool_net)
+
+
+def read_pool_masks():
+    """Ключ группы → её маски (имена без приставки)."""
+    return _read_pool_files(
+        "masks", lambda s: bool(re.match(r"^[a-z0-9-]+(\.[a-z0-9-]+)+$", s)))
+
+
+def _mask_spec(name):
+    """Совпадение «соединение не на 443 представляется этим именем».
+
+    Имя ищется в начале TLS ровно в том виде, в каком оно лежит в поле SNI:
+    тип 0, два байта длины, само имя. Так «ya.ru» не совпадёт с «maya.ru»."""
+    return ("-p tcp ! --dport 443 -m string --algo bm --from 40 --to 1500 "
+            f"--hex-string '|00 00 {len(name):02x}|{name}'")
 
 
 def apply_pool_nets(clients, common=None, except_clients=None):
@@ -1117,9 +1159,16 @@ def apply_pool_nets(clients, common=None, except_clients=None):
     Фильтр по DNS не видит приложение, которое ходит на зашитые адреса:
     Likee при закрытых доменах подключается к сети Bigo напрямую. Здесь те же
     люди, что под группой в DNS, получают запрет и на её подсети. Исключения
-    из общей категории действуют и тут. Возвращает число правил."""
+    из общей категории действуют и тут.
+
+    Маски группы режут здесь же: соединение не на 443, которое в начале
+    называет себя именем из маски, сбрасывается. Это бьёт по маскировке,
+    а не по хостингу: сервер Likee может переехать на любую машину в облаке,
+    а представляться nalog.ru на порту 21278 будет всё так же. Возвращает
+    число правил."""
     nets = read_pool_nets()
-    common = [c for c in (common or []) if c in nets]
+    masks = read_pool_masks()
+    common = [c for c in (common or []) if c in nets or c in masks]
     except_clients = except_clients or {}
 
     subprocess.run(f"iptables -N {POOL_NET_CHAIN}", shell=True, stderr=subprocess.DEVNULL)
@@ -1142,15 +1191,25 @@ def apply_pool_nets(clients, common=None, except_clients=None):
 
     # Клиент-сервер несёт трафик всех остальных — его не трогаем никогда.
     add(f"-s {DE_AGENT_IP} -j RETURN")
+    def specs(key):
+        """Совпадения группы: её подсети и её маски."""
+        out = []
+        if key in nets:
+            out.append((f"-m set --match-set {_pool_set_name(key)} dst", "REJECT"))
+        for m in masks.get(key, []):
+            out.append((_mask_spec(m), "REJECT --reject-with tcp-reset"))
+        return out
+
     for ip, cats in (clients or {}).items():
         for key in cats:
-            if key in nets:
-                add(f"-s {ip} -m set --match-set {_pool_set_name(key)} dst -j REJECT")
+            for spec, verdict in specs(key):
+                add(f"-s {ip} {spec} -j {verdict}")
     for key in common:
-        for ip, cats in except_clients.items():
-            if key in cats:
-                add(f"-s {ip} -m set --match-set {_pool_set_name(key)} dst -j RETURN")
-        add(f"-s {TUNNEL_NET} -m set --match-set {_pool_set_name(key)} dst -j REJECT")
+        for spec, verdict in specs(key):
+            for ip, cats in except_clients.items():
+                if key in cats:
+                    add(f"-s {ip} {spec} -j RETURN")
+            add(f"-s {TUNNEL_NET} {spec} -j {verdict}")
 
     _insert_before_accept("FORWARD", f"-i wg0 -j {POOL_NET_CHAIN}")
 
@@ -1196,6 +1255,8 @@ def gc_dns_cache(pool_keys):
             drop = fn[:-4] not in keep
         elif fn.endswith(".nets"):
             drop = fn[:-5] not in keep
+        elif fn.endswith(".masks"):
+            drop = fn[:-6] not in keep
         elif fn.endswith(".bin"):
             cat = fn.split(".", 1)[0]
             drop = cat not in keep or path != dnsfilter._bin_path_in(cache, cat)

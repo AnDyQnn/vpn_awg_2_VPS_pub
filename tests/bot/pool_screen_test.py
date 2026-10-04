@@ -98,6 +98,10 @@ async def main():
         "частные и слишком широкие сети брать нельзя"
     print("  подсети приняты, частные и /0 отброшены, домены как были: ок")
 
+    got = filters._parse_domains("маска:nalog.ru\nMASK:Ya.Ru\nмаска:кривая имя\nlikee.video")
+    assert got == ["likee.video", "маска:nalog.ru", "маска:ya.ru"], got
+    print("  маски приняты в одном виде, кривая отброшена: ок")
+
     await db.save_filter_pool("pool_tmix_cc33", "Смешанная",
                               ["likee.video", "169.136.158.0/24", "164.90.66.0/24"])
     u, c = Upd(), Ctx()

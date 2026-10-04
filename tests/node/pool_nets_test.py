@@ -23,14 +23,15 @@ import time
 
 SRC = "/app/api.py"
 FUNCS = {"_pool_net", "save_pool_list", "_pool_set_name", "read_pool_nets",
+         "_pool_mask", "_read_pool_files", "read_pool_masks", "_mask_spec",
          "apply_pool_nets", "_insert_before_accept"}
-CONSTS = {"CONF_DIR", "POOL_NET_CHAIN", "DE_AGENT_IP", "TUNNEL_NET", "VPN_SUBNET"}
+CONSTS = {"CONF_DIR", "POOL_NET_CHAIN", "MASK_PREFIXES", "DE_AGENT_IP", "TUNNEL_NET", "VPN_SUBNET"}
 tree = ast.parse(io.open(SRC, encoding="utf-8").read())
 picked = [n for n in tree.body
           if (isinstance(n, ast.FunctionDef) and n.name in FUNCS)
           or (isinstance(n, ast.Assign)
               and {t.id for t in n.targets if isinstance(t, ast.Name)} & CONSTS)]
-ns = {"os": os, "subprocess": subprocess, "ipaddress": ipaddress, "json": json,
+ns = {"os": os, "subprocess": subprocess, "ipaddress": ipaddress, "json": json, "re": __import__("re"),
       "time": time}
 exec(compile(ast.Module(body=picked, type_ignores=[]), SRC, "exec"), ns)
 
@@ -101,6 +102,78 @@ check("файл подсетей убран", not os.path.exists(cache + "/pool_
 ns["apply_pool_nets"](clients, [], {})
 check("набор группы удалён", setname not in sh("ipset list -n").split())
 check("запретов не осталось", "REJECT" not in sh("iptables -S FLT_NETS"))
+
+print("\n=== маски: файл и правила ===")
+ns["save_pool_list"]("pool_likee_78c9", ["likee.video", "маска:nalog.ru",
+                                         "mask:ya.ru", "маска:кривая"])
+txt = io.open(cache + "/pool_likee_78c9.txt", encoding="utf-8").read().split()
+masks = io.open(cache + "/pool_likee_78c9.masks", encoding="utf-8").read().split()
+check("маски не попали в список DNS", txt == ["likee.video"], txt)
+check("маски отдельно, кривая отброшена", masks == ["nalog.ru", "ya.ru"], masks)
+ns["apply_pool_nets"](clients, [], {})
+chain = sh("iptables -S FLT_NETS")
+check("правило маски встало (модуль string есть)",
+      # iptables показывает имя в шестнадцатеричном виде
+      "-s 10.13.13.8/32" in chain and "nalog.ru".encode().hex() in chain
+      and "! --dport 443" in chain,
+      chain[-300:])
+check("сброс, а не тишина", "tcp-reset" in chain)
+
+print("\n=== маска на деле: тот же разбор, на петле ===")
+# Правило узла стоит в FORWARD, а здесь проверяем само совпадение: ловит ли
+# оно имя в начале TLS не на 443 и пропускает ли на 443.
+import socket
+import ssl
+import threading
+
+spec = ns["_mask_spec"]("nalog.ru")
+subprocess.run("iptables -I OUTPUT -o lo %s -j REJECT --reject-with tcp-reset" % spec,
+               shell=True)
+got = {}
+
+
+def serve(port):
+    srv = socket.socket()
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind(("127.0.0.1", port))
+    srv.listen(1)
+    srv.settimeout(5)
+    try:
+        conn, _ = srv.accept()
+        conn.settimeout(3)
+        got[port] = conn.recv(2048)
+    except Exception:
+        got[port] = b""
+    srv.close()
+
+
+def hello(port, name):
+    t = threading.Thread(target=serve, args=(port,))
+    t.start()
+    time.sleep(0.2)
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    s = socket.create_connection(("127.0.0.1", port), timeout=3)
+    result = "прошло"
+    try:
+        ctx.wrap_socket(s, server_hostname=name, do_handshake_on_connect=False).do_handshake()
+    except ConnectionResetError:
+        result = "сброшено"
+    except Exception:
+        pass
+    t.join()
+    return result, got.get(port, b"")
+
+
+r1, data1 = hello(21278, "nalog.ru")
+check("nalog.ru на 21278 — сброшено", r1 == "сброшено" and b"nalog.ru" not in data1, r1)
+r2, data2 = hello(443, "nalog.ru")
+check("nalog.ru на 443 — проходит", b"nalog.ru" in data2, r2)
+r3, data3 = hello(21279, "maya.ru")
+check("чужое имя на высоком порту — проходит", b"maya.ru" in data3, r3)
+subprocess.run("iptables -D OUTPUT -o lo %s -j REJECT --reject-with tcp-reset" % spec,
+               shell=True)
 
 print()
 print("ВСЁ ПРОШЛО" if ok else "ЕСТЬ ПРОВАЛЫ")

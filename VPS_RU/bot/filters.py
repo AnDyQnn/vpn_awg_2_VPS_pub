@@ -606,9 +606,11 @@ async def pool_open(update: Update, context: ContextTypes.DEFAULT_TYPE, key):
     domains = pool["domains"]
     shown = _fit_domains(domains)
     n_nets = sum(1 for d in domains if is_net(d))
+    n_masks = sum(1 for d in domains if is_mask(d))
     lines = [f"📦 **{escape_md(pool['title'])}**", "",
-             f"Доменов: **{len(domains) - n_nets}**"
-             + (f" · подсетей: **{n_nets}**" if n_nets else ""), ""]
+             f"Доменов: **{len(domains) - n_nets - n_masks}**"
+             + (f" · подсетей: **{n_nets}**" if n_nets else "")
+             + (f" · масок: **{n_masks}**" if n_masks else ""), ""]
     if shown:
         lines += ["```", "\n".join(shown), "```"]
     if len(domains) > len(shown):
@@ -642,7 +644,10 @@ ASK_DOMAINS = (
     "_Схему, `www`, порт и путь срежу сам. Повторы уберу._\n\n"
     "Можно и подсети: `169.136.66.0/24`. Их закрывает уже не DNS, а "
     "файрвол — для приложений, которые при закрытых доменах идут на "
-    "зашитые адреса.")
+    "зашитые адреса.\n\n"
+    "И маски: `маска:nalog.ru` — если приложение прячет свой трафик под "
+    "чужой сайт на нестандартном порту. Настоящий сайт не пострадает: "
+    "он работает на 443.")
 
 
 async def pool_add_request(update: Update, context: ContextTypes.DEFAULT_TYPE,
@@ -705,6 +710,31 @@ def is_net(entry):
     return "/" in entry and _parse_net(entry) is not None
 
 
+MASK_PREFIXES = ("маска:", "mask:")
+
+
+def _parse_mask(value):
+    """«маска:nalog.ru» → «маска:nalog.ru»; не маска или кривая — None.
+
+    Маска — имя, которым приложение представляется в начале шифрованного
+    соединения, идя при этом на свой сервер. Likee называет себя nalog.ru и
+    ya.ru на портах вроде 21278. Узел режет такое соединение, если оно не на
+    443: настоящие сайты на других портах себя так не называют."""
+    import re
+    v = value.strip().lower()
+    for p in MASK_PREFIXES:
+        if v.startswith(p):
+            name = v[len(p):].strip().strip(".")
+            if re.match(r"^[a-z0-9-]+(\.[a-z0-9-]+)+$", name):
+                return "маска:" + name
+            return None
+    return None
+
+
+def is_mask(entry):
+    return str(entry).startswith("маска:")
+
+
 def _parse_domains(raw):
     """Приводит присланное к именам доменов.
 
@@ -726,6 +756,12 @@ def _parse_domains(raw):
         # файрвол узла. Нужно для приложений, которые при закрытых доменах идут
         # на зашитые адреса (Likee — в сеть Bigo). Частные сети и слишком
         # широкие (шире /8) не берём: одна опечатка закрыла бы человеку всё.
+        if value.startswith(MASK_PREFIXES):
+            mask = _parse_mask(value)
+            if mask:
+                out.append(mask)
+            continue                             # кривая маска — не домен
+
         net = _parse_net(value)
         if net:
             out.append(net)
