@@ -552,6 +552,38 @@ async def pool_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
                       parse_mode=ParseMode.MARKDOWN)
 
 
+# Сколько знаков списка кладём в сообщение. Предел Telegram — 4096 на всё
+# сообщение вместе с заголовком и подписью, поэтому с запасом.
+POOL_INLINE_CHARS = 3200
+
+
+def _fit_domains(domains, limit=POOL_INLINE_CHARS):
+    """Сколько адресов с начала списка влезает в сообщение целиком."""
+    out, size = [], 0
+    for d in domains:
+        size += len(d) + 1
+        if size > limit:
+            break
+        out.append(d)
+    return out
+
+
+async def pool_file(update: Update, context: ContextTypes.DEFAULT_TYPE, key):
+    """Весь список группы файлом — для длинных, что не влезли в сообщение."""
+    import io
+    query = update.callback_query
+    pool = await db.get_filter_pool(key)
+    if not pool:
+        await query.answer("Группы нет", show_alert=True)
+        return await pool_list(update, context)
+    await query.answer()
+    buf = io.BytesIO(("\n".join(pool["domains"]) + "\n").encode("utf-8"))
+    buf.name = "%s.txt" % (key[len("pool_"):] if key.startswith("pool_") else key)
+    await context.bot.send_document(
+        chat_id=query.message.chat_id, document=buf,
+        caption="📦 %s — %d доменов" % (pool["title"], len(pool["domains"])))
+
+
 async def pool_open(update: Update, context: ContextTypes.DEFAULT_TYPE, key):
     query = update.callback_query
     pool = await db.get_filter_pool(key)
@@ -559,18 +591,27 @@ async def pool_open(update: Update, context: ContextTypes.DEFAULT_TYPE, key):
         await query.answer("Группы нет", show_alert=True)
         return await pool_list(update, context)
 
-    shown = pool["domains"][:12]
+    # Список — одним блоком кода: Telegram копирует его целиком одним нажатием,
+    # и его можно сразу переслать или вставить в такую же группу у другого
+    # владельца. Раньше показывались первые двенадцать адресов по одному.
+    domains = pool["domains"]
+    shown = _fit_domains(domains)
     lines = [f"📦 **{escape_md(pool['title'])}**", "",
-             f"Доменов: **{len(pool['domains'])}**", ""]
-    lines += [f"  `{escape_md(d)}`" for d in shown]
-    if len(pool["domains"]) > len(shown):
-        lines.append(f"  …и ещё {len(pool['domains']) - len(shown)}")
+             f"Доменов: **{len(domains)}**", ""]
+    if shown:
+        lines += ["```", "\n".join(shown), "```"]
+    if len(domains) > len(shown):
+        lines.append(f"…и ещё {len(domains) - len(shown)} — весь список файлом "
+                     f"по кнопке ниже.")
     lines += ["", "_Включается человеку так же, как встроенная категория._"]
 
     kb = [[InlineKeyboardButton("➕ Добавить адреса",
-                                callback_data=f"flt_pool_a_{key}")],
-          [InlineKeyboardButton("🗑 Удалить группу", callback_data=f"flt_pool_d_{key}")],
-          [InlineKeyboardButton("🔙 К группам", callback_data="flt_pool_list")]]
+                                callback_data=f"flt_pool_a_{key}")]]
+    if len(domains) > len(shown):
+        kb.append([InlineKeyboardButton("📄 Весь список файлом",
+                                        callback_data=f"flt_pool_f_{key}")])
+    kb += [[InlineKeyboardButton("🗑 Удалить группу", callback_data=f"flt_pool_d_{key}")],
+           [InlineKeyboardButton("🔙 К группам", callback_data="flt_pool_list")]]
     await show_screen(query, context, "\n".join(lines),
                       reply_markup=InlineKeyboardMarkup(kb),
                       parse_mode=ParseMode.MARKDOWN)

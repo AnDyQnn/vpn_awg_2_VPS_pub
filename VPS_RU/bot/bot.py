@@ -117,7 +117,7 @@ from filters import (
     common_screen as flt_common, common_toggle as flt_ctoggle,
     custom_add_request as flt_cadd, custom_add_entered as flt_centered,
     custom_list as flt_clist, custom_remove as flt_cremove,
-    pool_list as flt_pools, pool_open as flt_pool_open,
+    pool_list as flt_pools, pool_open as flt_pool_open, pool_file as flt_pool_file,
     pool_name_request as flt_pool_new,
     pool_add_request as flt_pool_add, pool_domains_entered as flt_pool_doms,
     pool_title_entered as flt_pool_title, pool_delete as flt_pool_del,
@@ -1269,6 +1269,8 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Свои пулы фильтров.
     if data == "flt_pool_list": await flt_pools(update, context); return
     if data == "flt_pool_new": await flt_pool_new(update, context); return
+    if data.startswith("flt_pool_f_"):
+        await flt_pool_file(update, context, data.split("flt_pool_f_")[1]); return
     if data.startswith("flt_pool_o_"):
         await flt_pool_open(update, context, data.split("flt_pool_o_")[1]); return
     if data.startswith("flt_pool_a_"):
