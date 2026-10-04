@@ -24,8 +24,9 @@ import time
 SRC = "/app/api.py"
 FUNCS = {"_pool_net", "save_pool_list", "_pool_set_name", "read_pool_nets",
          "_pool_mask", "_read_pool_files", "read_pool_masks", "_mask_spec",
+         "read_pool_domains", "_sni_spec",
          "apply_pool_nets", "_insert_before_accept"}
-CONSTS = {"CONF_DIR", "POOL_NET_CHAIN", "MASK_PREFIXES", "DE_AGENT_IP", "TUNNEL_NET", "VPN_SUBNET"}
+CONSTS = {"CONF_DIR", "POOL_NET_CHAIN", "MASK_PREFIXES", "SNI_MAX_DOMAINS", "DE_AGENT_IP", "TUNNEL_NET", "VPN_SUBNET"}
 tree = ast.parse(io.open(SRC, encoding="utf-8").read())
 picked = [n for n in tree.body
           if (isinstance(n, ast.FunctionDef) and n.name in FUNCS)
@@ -101,7 +102,9 @@ ns["save_pool_list"]("pool_likee_78c9", ["likee.video"])
 check("файл подсетей убран", not os.path.exists(cache + "/pool_likee_78c9.nets"))
 ns["apply_pool_nets"](clients, [], {})
 check("набор группы удалён", setname not in sh("ipset list -n").split())
-check("запретов не осталось", "REJECT" not in sh("iptables -S FLT_NETS"))
+# Домены группы остаются — по ним теперь есть правило по имени, а вот
+# запретов по подсетям не должно остаться ни одного.
+check("запретов по подсетям не осталось", "match-set" not in sh("iptables -S FLT_NETS"))
 
 print("\n=== маски: файл и правила ===")
 ns["save_pool_list"]("pool_likee_78c9", ["likee.video", "маска:nalog.ru",
@@ -174,6 +177,30 @@ r3, data3 = hello(21279, "maya.ru")
 check("чужое имя на высоком порту — проходит", b"maya.ru" in data3, r3)
 subprocess.run("iptables -D OUTPUT -o lo %s -j REJECT --reject-with tcp-reset" % spec,
                shell=True)
+
+print("\n=== домены группы ловятся и по имени в начале соединения ===")
+# Likee узнаёт адреса своим резолвером и идёт в общий CloudFront — DNS узла
+# этого не видит, а имя в начале соединения он всё равно называет.
+ns["save_pool_list"]("pool_likee_78c9", ["likee.video", "маска:nalog.ru"])
+ns["apply_pool_nets"](clients, [], {})
+chain = sh("iptables -S FLT_NETS")
+check("правило по имени встало", "connbytes" in chain and "likee.video" in chain,
+      chain[-200:])
+spec = ns["_sni_spec"]("likee.video")
+subprocess.run("iptables -I OUTPUT -o lo %s -j REJECT --reject-with tcp-reset" % spec,
+               shell=True)
+r4, d4 = hello(443, "bstream.likee.video")
+check("bstream.likee.video на 443 — сброшено", r4 == "сброшено" and not d4, r4)
+r5, d5 = hello(443, "example.com")
+check("чужое имя на 443 — проходит", b"example.com" in d5, r5)
+subprocess.run("iptables -D OUTPUT -o lo %s -j REJECT --reject-with tcp-reset" % spec,
+               shell=True)
+
+big = ["d%d.example" % i for i in range(ns["SNI_MAX_DOMAINS"] + 1)]
+ns["save_pool_list"]("pool_huge_0000", big)
+check("большую группу по имени не ловим (одно ядро)",
+      "pool_huge_0000" not in ns["read_pool_domains"]())
+os.remove(cache + "/pool_huge_0000.txt")
 
 print()
 print("ВСЁ ПРОШЛО" if ok else "ЕСТЬ ПРОВАЛЫ")

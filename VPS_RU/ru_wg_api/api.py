@@ -1144,6 +1144,50 @@ def read_pool_masks():
         "masks", lambda s: bool(re.match(r"^[a-z0-9-]+(\.[a-z0-9-]+)+$", s)))
 
 
+# Сколько доменов группы ловить ещё и по имени в начале соединения. Больше —
+# много правил на одно ядро; свои группы обычно десятки строк, не тысячи.
+SNI_MAX_DOMAINS = 300
+
+
+def read_pool_domains():
+    """Ключ группы → её домены (для ловли по имени), только небольшие группы.
+
+    Читаем только файлы своих групп: списки встроенных категорий лежат рядом
+    и весят сотни мегабайт — разбирать их на каждое применение нельзя."""
+    cache = f"{CONF_DIR}/cache/dns"
+    out = {}
+    try:
+        names = [fn for fn in os.listdir(cache)
+                 if fn.startswith("pool_") and fn.endswith(".txt")]
+    except OSError:
+        return out
+    for fn in names:
+        try:
+            with open(os.path.join(cache, fn), encoding="utf-8") as f:
+                items = [l.strip() for l in f
+                         if re.match(r"^[a-z0-9-]+(\.[a-z0-9-]+)+$", l.strip())
+                         and not _pool_net(l.strip())]
+        except OSError:
+            continue
+        if items and len(items) <= SNI_MAX_DOMAINS:
+            out[fn[:-4]] = items
+    return out
+
+
+def _sni_spec(domain):
+    """Имя домена в первых пакетах соединения — на любом адресе и порту.
+
+    Фильтр по DNS не видит приложение со своим резолвером: Likee узнаёт адреса
+    через собственный HTTP DNS и идёт, например, в общий CloudFront. Но в
+    начале шифрованного соединения он всё равно называет настоящее имя
+    (bstream.…, *.likee.video) — по нему и ловим. Смотрим только первые
+    пакеты соединения: дальше имени не бывает, а одно ядро узла не тратится
+    на разбор всего потока."""
+    return ("-p tcp -m connbytes --connbytes 0:5 --connbytes-dir original "
+            "--connbytes-mode packets -m string --algo bm --from 40 --to 1500 "
+            f"--string '{domain}'")
+
+
 def _mask_spec(name):
     """Совпадение «соединение не на 443 представляется этим именем».
 
@@ -1168,7 +1212,8 @@ def apply_pool_nets(clients, common=None, except_clients=None):
     число правил."""
     nets = read_pool_nets()
     masks = read_pool_masks()
-    common = [c for c in (common or []) if c in nets or c in masks]
+    snis = read_pool_domains()
+    common = [c for c in (common or []) if c in nets or c in masks or c in snis]
     except_clients = except_clients or {}
 
     subprocess.run(f"iptables -N {POOL_NET_CHAIN}", shell=True, stderr=subprocess.DEVNULL)
@@ -1198,6 +1243,8 @@ def apply_pool_nets(clients, common=None, except_clients=None):
             out.append((f"-m set --match-set {_pool_set_name(key)} dst", "REJECT"))
         for m in masks.get(key, []):
             out.append((_mask_spec(m), "REJECT --reject-with tcp-reset"))
+        for d in snis.get(key, []):
+            out.append((_sni_spec(d), "REJECT --reject-with tcp-reset"))
         return out
 
     for ip, cats in (clients or {}).items():
