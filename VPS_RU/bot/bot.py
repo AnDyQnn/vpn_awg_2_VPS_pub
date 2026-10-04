@@ -120,6 +120,7 @@ from filters import (
     pool_list as flt_pools, pool_open as flt_pool_open, pool_file as flt_pool_file,
     pool_name_request as flt_pool_new,
     pool_add_request as flt_pool_add, pool_domains_entered as flt_pool_doms,
+    pool_remove_request as flt_pool_rm, pool_remove_entered as flt_pool_rm_doms,
     pool_title_entered as flt_pool_title, pool_delete as flt_pool_del,
     allow_screen as flt_allow, allow_add_request as flt_allow_add,
     allow_add_entered as flt_allow_entered, allow_remove as flt_allow_del,
@@ -461,12 +462,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
     # Свои пулы: список доменов и название для него.
-    if state in ("awaiting_pool_domains", "awaiting_pool_title"):
+    if state in ("awaiting_pool_domains", "awaiting_pool_title", "awaiting_pool_remove"):
         if not check_admin(update.effective_user.id):
             context.user_data["state"] = None
             return
-        handler = (flt_pool_doms if state == "awaiting_pool_domains"
-                   else flt_pool_title)
+        handler = {"awaiting_pool_domains": flt_pool_doms,
+                   "awaiting_pool_title": flt_pool_title,
+                   "awaiting_pool_remove": flt_pool_rm_doms}[state]
         if await handler(update, context):
             return
 
@@ -1273,6 +1275,8 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await flt_pool_file(update, context, data.split("flt_pool_f_")[1]); return
     if data.startswith("flt_pool_o_"):
         await flt_pool_open(update, context, data.split("flt_pool_o_")[1]); return
+    if data.startswith("flt_pool_r_"):
+        await flt_pool_rm(update, context, data.split("flt_pool_r_")[1]); return
     if data.startswith("flt_pool_a_"):
         await flt_pool_add(update, context, data.split("flt_pool_a_")[1]); return
     if data.startswith("flt_pool_d_"):

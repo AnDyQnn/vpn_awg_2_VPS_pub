@@ -620,6 +620,9 @@ async def pool_open(update: Update, context: ContextTypes.DEFAULT_TYPE, key):
 
     kb = [[InlineKeyboardButton("➕ Добавить адреса",
                                 callback_data=f"flt_pool_a_{key}")]]
+    if domains:
+        kb[0].append(InlineKeyboardButton("➖ Убрать",
+                                          callback_data=f"flt_pool_r_{key}"))
     if len(domains) > len(shown):
         kb.append([InlineKeyboardButton("📄 Весь список файлом",
                                         callback_data=f"flt_pool_f_{key}")])
@@ -791,6 +794,61 @@ def _parse_domains(raw):
             out.append(value)
     # Порядок не важен, а повторы в присланных списках бывают всегда.
     return sorted(set(out))
+
+
+async def pool_remove_request(update: Update, context: ContextTypes.DEFAULT_TYPE, key):
+    """Просит строки, которые убрать из группы.
+
+    Раньше из группы можно было только дописывать: ошибочную маску или
+    подсеть приходилось лечить удалением всей группы."""
+    query = update.callback_query
+    pool = await db.get_filter_pool(key)
+    if not pool:
+        await query.answer("Группы нет", show_alert=True)
+        return await pool_list(update, context)
+    context.user_data["state"] = "awaiting_pool_remove"
+    context.user_data["pool_key"] = key
+    await show_screen(
+        query, context,
+        f"➖ **Убрать из группы «{escape_md(pool['title'])}»**\n\n"
+        "Пришлите строки, которые убрать, — по одной в строке, в том же виде, "
+        "что и при добавлении: домен, подсеть или `маска:имя`. Список с экрана "
+        "группы можно скопировать и оставить в нём только лишнее.",
+        reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton("✖️ Отмена", callback_data=f"flt_pool_o_{key}")]]),
+        parse_mode=ParseMode.MARKDOWN)
+
+
+async def pool_remove_entered(update, context):
+    """Вычёркивает присланные строки из группы и применяет на узле."""
+    key = context.user_data.get("pool_key")
+    context.user_data["state"] = None
+    chat_id = update.message.chat_id
+    pool = await db.get_filter_pool(key) if key else None
+    back = InlineKeyboardMarkup([[InlineKeyboardButton(
+        "📦 К группе" if pool else "📦 К группам",
+        callback_data=f"flt_pool_o_{key}" if pool else "flt_pool_list")]])
+    if not pool:
+        await context.bot.send_message(chat_id=chat_id, reply_markup=back,
+                                       text="⚠️ Группа не найдена.")
+        return True
+
+    drop = set(_parse_domains(update.message.text or ""))
+    left = [d for d in pool["domains"] if d not in drop]
+    gone = len(pool["domains"]) - len(left)
+    if not gone:
+        await context.bot.send_message(chat_id=chat_id, reply_markup=back,
+                                       text="Ничего из присланного в группе не нашлось.")
+        return True
+
+    await db.save_filter_pool(key, pool["title"], left)
+    ok, msg = await apply_filters("из пула убраны адреса")
+    await context.bot.send_message(
+        chat_id=chat_id, parse_mode=ParseMode.MARKDOWN, reply_markup=back,
+        text=(f"➖ Из группы «{escape_md(pool['title'])}» убрано **{gone}**, "
+              f"осталось **{len(left)}**.\n\n"
+              + ("Применено на узле." if ok else f"⚠️ Узел: {msg}")))
+    return True
 
 
 async def pool_domains_entered(update, context):

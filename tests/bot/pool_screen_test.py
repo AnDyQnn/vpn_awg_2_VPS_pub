@@ -109,6 +109,49 @@ async def main():
     assert "Доменов: **1** · подсетей: **2**" in u.callback_query.text, \
         u.callback_query.text[:200]
     print("  на экране домены и подсети посчитаны раздельно: ок")
+    assert "flt_pool_r_pool_tmix_cc33" in buttons(u.callback_query)
+
+    print("\n=== из группы можно убрать строки ===")
+    await db.save_filter_pool("pool_tmix_cc33", "Смешанная",
+                              ["likee.video", "169.136.158.0/24", "маска:nalog.ru",
+                               "маска:ya.ru"])
+
+    class TMsg:
+        chat_id = 4242
+
+        def __init__(self, text):
+            self.text = text
+
+    class TUpd:
+        def __init__(self, text):
+            self.message = TMsg(text)
+
+    sent = []
+
+    class TBot:
+        async def send_message(self, chat_id=None, text=None, **kw):
+            sent.append(text)
+
+    class TCtx:
+        def __init__(self):
+            self.user_data = {"pool_key": "pool_tmix_cc33",
+                              "state": "awaiting_pool_remove"}
+            self.bot = TBot()
+
+    async def fake_apply(reason=""):
+        return True, "ок"
+    filters.apply_filters = fake_apply
+
+    ctx = TCtx()
+    await filters.pool_remove_entered(TUpd("маска:YA.ru\n169.136.158.0/24\nнет.такого"), ctx)
+    left = (await db.get_filter_pool("pool_tmix_cc33"))["domains"]
+    assert sorted(left) == ["likee.video", "маска:nalog.ru"], left
+    assert "убрано **2**" in sent[-1] and ctx.user_data["state"] is None, sent[-1]
+    print("  маска и подсеть убраны, остальное на месте: ок")
+
+    await filters.pool_remove_entered(TUpd("нет.такого"), TCtx())
+    assert "не нашлось" in sent[-1]
+    print("  лишнее не трогается, сказано честно: ок")
     await db.delete_filter_pool("pool_tmix_cc33")
 
     for k in ("pool_tsmall_aa11", "pool_tbig_bb22"):
