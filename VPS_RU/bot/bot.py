@@ -88,6 +88,7 @@ from delivery import delivery_screen
 from handlers_protocols import protocols_menu, awg_up as proto_awg_up
 from handlers_hits import (
     hits_screen, hit_open, hits_seen_all, hits_loop,
+    client_hits_screen,
     hit_find_request, hit_find_entered,
     keep_screen as hits_keep_screen, keep_set as hits_keep_set,
     keep_now as hits_keep_now,
@@ -1040,6 +1041,8 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "client_check_all": await client_check_all_handler(update, context); return
     if data.startswith("check_conn_"): await check_connection_handler(update, context, data.replace("check_conn_", "")); return
     
+    if data == "myhits": await client_hits_screen(update, context); return
+    if data.startswith("myhits_"): await client_hits_screen(update, context, int(data.split("myhits_")[1])); return
     if data == "client_stats": await client_stats_handler(update, context); return
     if data == "client_bypass_info": await client_bypass_info_handler(update, context); return
     if data == "client_report_site": await client_report_site_handler(update, context); return

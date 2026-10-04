@@ -905,6 +905,32 @@ class Database:
     async def hits_max_id(self):
         return int(await self.fetch_val("SELECT MAX(id) FROM filter_hits") or 0)
 
+    async def client_hits(self, uuids, limit=8, offset=0, skip_categories=()):
+        """Инциденты по ключам одного человека — для его личного экрана.
+
+        Только его ключи и только запреты (watch=FALSE): мягкий контроль —
+        функция владельца, человек о нём знать не должен. Рекламу и трекеры
+        прячем так же, как в сводке владельца: туда браузер ходит сам."""
+        if not uuids:
+            return []
+        rows = await self.fetch_all(
+            """SELECT id, happened_at, domain, category, ref
+               FROM filter_hits
+               WHERE user_uuid = ANY($1) AND watch = FALSE
+                 AND COALESCE(category,'') <> ALL($2)
+               ORDER BY happened_at DESC LIMIT $3 OFFSET $4""",
+            list(uuids), list(skip_categories), int(limit), int(offset))
+        return [dict(r) for r in rows]
+
+    async def count_client_hits(self, uuids, skip_categories=()):
+        if not uuids:
+            return 0
+        return await self.fetch_val(
+            """SELECT COUNT(*) FROM filter_hits
+               WHERE user_uuid = ANY($1) AND watch = FALSE
+                 AND COALESCE(category,'') <> ALL($2)""",
+            list(uuids), list(skip_categories)) or 0
+
     async def mark_filter_hit_seen(self, hit_id):
         await self.execute(
             "UPDATE filter_hits SET seen_at=NOW() WHERE id=$1", int(hit_id))

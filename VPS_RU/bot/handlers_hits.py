@@ -246,9 +246,178 @@ async def hits_loop(app):
         try:
             await collect_hits()
             await notify_new(app)
+            await notify_users(app)
         except Exception as e:
             print(f"Попытки на закрытое: {e}")
         await asyncio.sleep(HITS_POLL_SECONDS)
+
+
+# --- Уведомление человека о его блокировке ----------------------------------
+#
+# На странице отказа номер инцидента видит только тот, кто открыл сайт в
+# браузере. Но закрытое чаще дёргает приложение, а не браузер, и тогда человек
+# видит лишь «нет сети» и не понимает, что это фильтр. Поэтому дублируем ему
+# тем же сообщением в бот — с тем же номером, что в журнале.
+#
+# Три границы, которые важно держать:
+#   • мягкий контроль НЕ доходит до человека никогда. hits_since отдаёт только
+#     watch=FALSE, так что наблюдение сюда просто не попадает;
+#   • владельцу его собственные ключи вторым сообщением не шлём: у него есть
+#     сводка. Поэтому из получателей убираем ADMIN_ID;
+#   • один сайт не спамит: на пару «ключ+домен» стоит тихое окно.
+
+USER_LAST_KEY = "hits_user_notified_id"
+USER_QUIET_SECONDS = 180
+_user_quiet = {}
+
+
+def _user_incident_text(items, titles):
+    """Сообщение человеку: что закрыто и с каким номером. Как на странице."""
+    lines = ["🚫 **Доступ ограничен**", "",
+             "Эти адреса закрыты фильтром:"]
+    for it in items[:NOTIFY_LINES]:
+        cat = titles.get(it["category"], it["category"] or "правила доступа")
+        ref = (" · №%s" % it["ref"]) if it.get("ref") else ""
+        lines.append("• `%s` — %s%s" % (escape_md(it["domain"]), escape_md(cat), ref))
+    if len(items) > NOTIFY_LINES:
+        lines.append("_…и ещё %d._" % (len(items) - NOTIFY_LINES))
+    lines += ["", "_Если это ошибка — напишите в поддержку._"]
+    return chr(10).join(lines)
+
+
+def _user_kb():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🆘 Поддержка", callback_data="support_start"),
+         InlineKeyboardButton("🧾 Мои инциденты", callback_data="myhits")],
+        [InlineKeyboardButton("🏠 Личный кабинет", callback_data="client_menu")]])
+
+
+async def notify_users(app):
+    """Шлёт каждому человеку его свежие блокировки. По одному сообщению за
+    проход: всё, что набралось за HITS_POLL_SECONDS, уходит одной сводкой."""
+    from utils import ADMIN_ID
+    import time as _time
+
+    try:
+        last_id = int(await db.get_setting(USER_LAST_KEY) or 0)
+    except (TypeError, ValueError):
+        last_id = 0
+    # Первый запуск: не вываливаем историю, запоминаем точку.
+    if not last_id:
+        await db.set_setting(USER_LAST_KEY, await db.hits_max_id())
+        return 0
+
+    rows = await db.hits_since(last_id)          # watch уже отсечён
+    if not rows:
+        return 0
+    await db.set_setting(USER_LAST_KEY, rows[-1]["id"])
+
+    now = _time.time()
+    # Чистим старое тихое окно, чтобы словарь не рос.
+    for k in [k for k, t in _user_quiet.items() if now - t > USER_QUIET_SECONDS]:
+        _user_quiet.pop(k, None)
+
+    titles = {}
+    try:
+        from filters import titles as _titles
+        titles = await _titles()
+    except Exception:
+        pass
+
+    by_uuid = {}
+    for r in rows:
+        uuid_val = r.get("user_uuid")
+        if not uuid_val or (r.get("category") or "") in QUIET_CATEGORIES:
+            continue                              # чужой ключ или шум трекеров
+        qk = (uuid_val, r["domain"])
+        if now - _user_quiet.get(qk, 0) < USER_QUIET_SECONDS:
+            continue
+        _user_quiet[qk] = now
+        by_uuid.setdefault(uuid_val, []).append(r)
+
+    sent = 0
+    for uuid_val, items in by_uuid.items():
+        try:
+            user = await db.get_user_by_uuid(uuid_val)
+        except Exception:
+            user = None
+        if not user:
+            continue
+        # Себе владелец вторую копию не получает — у него сводка.
+        targets = [t for t in (user.get("tg_ids") or []) if t != ADMIN_ID]
+        if not targets:
+            continue
+        text = _user_incident_text(items, titles)
+        for tid in targets:
+            try:
+                await app.bot.send_message(chat_id=tid, text=text,
+                                           parse_mode=ParseMode.MARKDOWN,
+                                           reply_markup=_user_kb(),
+                                           disable_web_page_preview=True)
+                sent += 1
+            except Exception:
+                pass                              # заблокировал бота — его право
+    return sent
+
+
+# Рекламу и трекеры человеку тоже не показываем: это тот же шум, что и в сводке
+# владельца.
+CLIENT_SKIP = tuple(QUIET_CATEGORIES)
+
+
+async def client_hits_screen(update: Update, context: ContextTypes.DEFAULT_TYPE, page=0):
+    """Личный экран человека: его инциденты по его ключам. Чужого не видит,
+    мягкий контроль не видит — только свои запреты."""
+    query = update.callback_query
+    uid = update.effective_user.id
+    try:
+        keys = await db.get_users_by_tg_id(uid)
+    except Exception:
+        keys = []
+    uuids = [k["uuid"] for k in keys]
+
+    total = await db.count_client_hits(uuids, CLIENT_SKIP)
+    page = max(0, int(page))
+    rows = await db.client_hits(uuids, limit=PER_PAGE, offset=page * PER_PAGE,
+                                skip_categories=CLIENT_SKIP)
+    titles = {}
+    try:
+        from filters import titles as _titles
+        titles = await _titles()
+    except Exception:
+        pass
+
+    lines = ["🧾 **Мои инциденты**", ""]
+    if not uuids:
+        lines.append("У вас нет привязанных ключей.")
+    elif not rows:
+        lines.append("Заблокированных обращений нет — доступ ни по чему "
+                     "закрытому не стучался.")
+    else:
+        lines.append("Сюда попадают ваши обращения к закрытым фильтром "
+                     "адресам. Номер — тот же, что на странице отказа.")
+        lines.append("")
+        for r in rows:
+            cat = titles.get(r["category"], r["category"] or "правила доступа")
+            when = dt_to_moscow(r["happened_at"]).strftime("%d.%m %H:%M")
+            ref = ("№%s" % r["ref"]) if r.get("ref") else "—"
+            lines.append("`%s` · %s" % (escape_md(r["domain"]), escape_md(cat)))
+            lines.append("     %s · %s МСК" % (ref, when))
+
+    pages = max(1, (total + PER_PAGE - 1) // PER_PAGE)
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton("⬅️", callback_data=f"myhits_{page-1}"))
+    if page + 1 < pages:
+        nav.append(InlineKeyboardButton("➡️", callback_data=f"myhits_{page+1}"))
+    kb = []
+    if nav:
+        kb.append(nav)
+    kb.append([InlineKeyboardButton("🆘 Поддержка", callback_data="support_start")])
+    kb.append([InlineKeyboardButton("🏠 Личный кабинет", callback_data="client_menu")])
+    await show_screen(query, context, chr(10).join(lines),
+                      reply_markup=InlineKeyboardMarkup(kb),
+                      parse_mode=ParseMode.MARKDOWN)
 
 
 async def notify_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
