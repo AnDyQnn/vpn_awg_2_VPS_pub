@@ -84,11 +84,11 @@ async def donate_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines.append("")
         lines.append("👤 *Кнопка у людей:* "
                      + ("**включена**" if on else "выключена"))
-        lines.append("🔔 *Напоминание после обновлений:* "
+        lines.append("🔔 *Напоминание людям:* "
                      + (f"раз в {days} дн." if rem else "выключено"))
         if rem:
-            lines.append("     _Идёт следом за «что нового» и только тем, кому "
-                         "оно ушло._")
+            lines.append("     _Уходит само по таймеру, срок считается на "
+                         "каждого человека. Текст — тот, что в «Текст обращения»._")
 
     kb = []
     if rows:
@@ -110,6 +110,8 @@ async def donate_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if rem:
             kb.append([InlineKeyboardButton(f"⏱ Периодичность · {days} дн.",
                                             callback_data="don_period")])
+        kb.append([InlineKeyboardButton("📨 Разослать сейчас",
+                                        callback_data="don_send_now")])
         kb.append([InlineKeyboardButton("👁 Предпросмотр",
                                         callback_data="don_preview")])
     kb.append([InlineKeyboardButton("🔙 Администрирование", callback_data="svc_menu")])
@@ -137,6 +139,54 @@ async def donate_reminder_toggle(update: Update, context: ContextTypes.DEFAULT_T
     await donate_menu(update, context)
 
 
+async def send_reminders(app, ignore_gate=False):
+    """Рассылает напоминание о поддержке. Текст — ТОЛЬКО тот, что владелец задал
+    в админке (`donate.text()`); ничего зашитого в код.
+
+    По умолчанию — лишь тем, кому пора (раз в N дней, свой счётчик на человека).
+    `ignore_gate=True` — всем сразу, это кнопка «разослать сейчас». Реквизиты
+    обязательны в обоих случаях: просить деньги, не сказав куда, нельзя.
+    """
+    if not await donate.visible():
+        return 0
+    if not ignore_gate and not await donate.reminder_enabled():
+        return 0
+    try:
+        body = await donate.text()
+        tg_ids = await db.get_all_tg_ids()
+    except Exception as e:
+        print(f"Напоминание о поддержке: подготовка не удалась: {e}")
+        return 0
+    kb = InlineKeyboardMarkup(
+        [[InlineKeyboardButton("❤️ Поддержать проект", callback_data="client_donate")]])
+    n = 0
+    for tg_id in tg_ids or []:
+        try:
+            if not ignore_gate and not await donate.should_remind(tg_id):
+                continue
+            # Текст владельца — как есть, без разметки: в нём бывают скобки,
+            # звёздочки и прочее, что Markdown принял бы за форматирование.
+            await app.bot.send_message(chat_id=tg_id, text=body, reply_markup=kb)
+            await db.set_donate_reminded_at(tg_id)
+            n += 1
+        except Exception as e:
+            print(f"Напоминание о поддержке: {tg_id} не получил: {e}")
+    return n
+
+
+async def donate_send_now(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Разослать напоминание сейчас — всем, не дожидаясь срока."""
+    query = update.callback_query
+    if not await donate.visible():
+        await query.answer("Сначала заведите реквизиты и включите кнопку",
+                           show_alert=True)
+        return
+    n = await send_reminders(context.application, ignore_gate=True)
+    await db.log_event("Донаты", f"Напоминание разослано вручную: {n} чел.")
+    await query.answer("Отправлено: %d" % n, show_alert=True)
+    await donate_menu(update, context)
+
+
 async def donate_period(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Как часто напоминать. Цифра здесь — не про вежливость, а про то, сколько
     раз подряд человек готов услышать одну и ту же просьбу."""
@@ -145,10 +195,9 @@ async def donate_period(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text = ("⏱ **Как часто напоминать**", "",
             f"Сейчас: **раз в {now} дн.**", "",
-            "Напоминание уходит следом за «что нового» и только тому, кому это "
-            "«что нового» реально пришло. Срок считается по каждому человеку "
-            "отдельно, а не по проекту: подключился сегодня — отсчёт с "
-            "сегодня.")
+            "Напоминание уходит само по таймеру. Срок считается по каждому "
+            "человеку отдельно, а не по проекту: подключился сегодня — отсчёт "
+            "с сегодня. Текст берётся из «Текст обращения».")
     kb = []
     row = []
     for days in donate.PERIOD_CHOICES:
