@@ -239,36 +239,44 @@ async def notify_users_whats_new(app):
         return
 
     sent = 0
+    nudged = 0
     for tg_id in tg_ids or []:
+        # «Что нового» — только тому, у кого есть непрочитанное.
         try:
             seen = await db.get_seen_version(tg_id)
             body = user_text(since_version=seen)
-            if not body:
-                continue
-            await app.bot.send_message(chat_id=tg_id, text=fit(body, 3500),
-                                       parse_mode=ParseMode.MARKDOWN)
-            await db.set_seen_version(tg_id, version)
-            sent += 1
-            # Напоминание о поддержке — отдельным сообщением и не каждому:
-            # внутри списка изменений просьба о деньгах читается как ещё один
-            # пункт списка, а несколько раз за день — как попрошайничество.
-            try:
-                import donate
-                if await donate.should_remind(tg_id):
-                    await app.bot.send_message(
-                        chat_id=tg_id, text=donate.REMINDER_TEXT,
-                        reply_markup=InlineKeyboardMarkup(
-                            [[InlineKeyboardButton("❤️ Поддержать проект",
-                                                   callback_data="client_donate")]]))
-                    await db.set_donate_reminded_at(tg_id)
-            except Exception as e:
-                print(f"Напоминание о поддержке: {tg_id} не получил: {e}")
+            if body:
+                await app.bot.send_message(chat_id=tg_id, text=fit(body, 3500),
+                                           parse_mode=ParseMode.MARKDOWN)
+                await db.set_seen_version(tg_id, version)
+                sent += 1
         except Exception as e:
             # Заблокировал бота или закрыл личку — не повод останавливать рассылку
             # и не повод считать, что он прочитал.
             print(f"Что нового: {tg_id} не получил: {e}")
-    if sent:
-        await db.log_event("System", f"«Что нового» отправлено: {sent} чел.")
+
+        # Напоминание о поддержке — отдельным сообщением и НЕЗАВИСИМО от того,
+        # было ли что-то новое. Раньше оно стояло внутри ветки «есть непрочитанное»
+        # и после continue, поэтому тех, кто список изменений уже видел,
+        # напоминание не доходило вовсе — а это как раз большинство. Свой
+        # день-гейт (should_remind) не даёт слать чаще раза в N дней, так что
+        # к списку изменений его привязывать не нужно.
+        try:
+            import donate
+            if await donate.should_remind(tg_id):
+                await app.bot.send_message(
+                    chat_id=tg_id, text=donate.REMINDER_TEXT,
+                    reply_markup=InlineKeyboardMarkup(
+                        [[InlineKeyboardButton("❤️ Поддержать проект",
+                                               callback_data="client_donate")]]))
+                await db.set_donate_reminded_at(tg_id)
+                nudged += 1
+        except Exception as e:
+            print(f"Напоминание о поддержке: {tg_id} не получил: {e}")
+    if sent or nudged:
+        await db.log_event(
+            "System",
+            f"«Что нового» отправлено: {sent} чел., напоминаний о поддержке: {nudged}")
 
 
 async def check_update_completion(app):
