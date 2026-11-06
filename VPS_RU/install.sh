@@ -6,6 +6,13 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Пока идёт установка, сторож узла не вмешивается. Без этой метки он лечил
+# недостроенный узел: перезапускал docker посреди сборки, а мог и перезагрузить
+# сервер. Метка снимается на выходе, даже если установка упала.
+mkdir -p "$APP_DIR/volumes/flags"
+touch "$APP_DIR/volumes/flags/installing"
+trap 'rm -f "$APP_DIR/volumes/flags/installing"' EXIT
 echo "🚀 Установка VPN Dashboard в: $APP_DIR"
 
 echo "🛡️ Базовая настройка безопасности и обновление системы..."

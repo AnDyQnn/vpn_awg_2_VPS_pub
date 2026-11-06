@@ -52,9 +52,15 @@ WG_CONF_PATH = Path("/volumes/wireguard/wg0.conf")
 class Database:
     def __init__(self):
         self.pool = None
-        self.database_url = os.getenv("DATABASE_URL", "postgres://vpn:vpnpass@postgres:5432/vpndb")
+        # Логин и пароль базы — только из .env (compose собирает из них
+        # DATABASE_URL). Запасного адреса с паролем в коде нет: репозиторий
+        # публичный, и вшитые сюда учётные данные видел бы каждый.
+        self.database_url = os.getenv("DATABASE_URL")
 
     async def connect(self):
+        if not self.database_url:
+            raise RuntimeError("DATABASE_URL не задан — заполните POSTGRES_USER, "
+                               "POSTGRES_PASSWORD и POSTGRES_DB в .env")
         for i in range(5):
             try:
                 self.pool = await asyncpg.create_pool(dsn=self.database_url)

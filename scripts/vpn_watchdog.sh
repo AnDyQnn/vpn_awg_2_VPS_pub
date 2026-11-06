@@ -176,6 +176,36 @@ sample_load() {
         && mv "$LOAD_TOP.tmp" "$LOAD_TOP"
 }
 
+# --- когда НЕ лечить -----------------------------------------------------
+# Сторож запускается при установке раньше контейнеров. Раньше он видел «контейнер
+# не запущен», шёл по лестнице и перезапускал docker посреди сборки (сборка
+# падала с «rpc error … EOF»), а дальше мог перезагрузить сервер прямо во время
+# установки. На свежем RU, пока Германия не подключена, рукопожатия нет вообще —
+# и он перезагружал бы узел каждые шесть часов. Поэтому два правила:
+#   • идёт установка, выкладка или сборка — не вмешиваемся;
+#   • узел ни разу не был здоров — только наблюдаем. Лечить можно то, что
+#     работало и сломалось, а не то, что ещё не достроено.
+ARMED="$FLAGS_DIR/watchdog.armed"       # появляется при первом здоровом проходе
+busy() {
+    [ -f "$FLAGS_DIR/installing" ] && return 0
+    systemctl is-active --quiet vpn-deploy 2>/dev/null && return 0
+    # «build» и «up» — отдельными словами: иначе совпало бы любое «group» или «setup».
+    pgrep -f "docker[- ]compose( [^ ]+)* (build|up)( |\$)" >/dev/null 2>&1 && return 0
+    pgrep -f "docker (buildx )?build( |\$)" >/dev/null 2>&1 && return 0
+    return 1
+}
+# Узел, который уже работал до обновления сторожа, не ждёт первого прохода:
+# прошлое состояние было здоровым — значит, лечить можно сразу.
+if [ ! -f "$ARMED" ] && grep -q '"healthy": true' "$STATE" 2>/dev/null; then
+    touch "$ARMED"
+fi
+quiet_note=""
+note_once() {   # одна строка в журнал, а не каждые полминуты
+    [ "$quiet_note" = "$1" ] && return
+    quiet_note="$1"
+    log "$1"
+}
+
 # --- основной цикл -------------------------------------------------------
 fails=0
 level=0
@@ -196,8 +226,18 @@ while true; do
         if [ "$fails" -gt 0 ] || [ "$level" -gt 0 ]; then
             log "Восстановлено. Проверки снова проходят."
         fi
+        [ -f "$ARMED" ] || { touch "$ARMED"; log "Узел впервые здоров — сторож начинает лечить сбои."; }
+        quiet_note=""
         fails=0; level=0; last_action="нет"
         write_state true "" 0 0 "$last_action"
+    elif busy; then
+        note_once "Идёт установка или сборка — не вмешиваюсь ($problem)."
+        fails=0; level=0
+        write_state false "$problem" 0 0 "ждёт конца сборки"
+    elif [ ! -f "$ARMED" ]; then
+        note_once "Узел ещё ни разу не был здоров — только наблюдаю ($problem)."
+        fails=0; level=0
+        write_state false "$problem" 0 0 "наблюдает, узел не достроен"
     else
         fails=$((fails + 1))
         log "Проблема: $problem (подряд: $fails)"
