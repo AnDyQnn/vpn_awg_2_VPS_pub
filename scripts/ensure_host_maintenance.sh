@@ -16,6 +16,30 @@
 
 set -u
 
+# 0. МОДУЛИ ЯДРА ДЛЯ ФАЙРВОЛА УЗЛА.
+# Узел внутри контейнера работает со старым iptables (legacy) и при нужде сам
+# подгружает модули. На новых Ubuntu модули ядра сжаты в .zst, а modprobe из
+# контейнера (Alpine) такой формат не читает: «invalid module format», таблица
+# nat «не существует» — и узел падает на старте. modprobe хоста .zst читает,
+# поэтому грузим здесь и прописываем в автозагрузку. Чего в ядре нет — молча
+# пропускаем: на старых системах всё это и так было загружено.
+NETFILTER_MODULES="ip_tables iptable_filter iptable_nat iptable_mangle iptable_raw
+ip6_tables ip6table_filter ip6table_nat nf_nat nf_conntrack
+ip_set ip_set_hash_net ip_set_hash_ip xt_set
+xt_conntrack xt_mark xt_connmark xt_MASQUERADE xt_REDIRECT xt_nat
+ipt_REJECT ip6t_REJECT xt_TCPMSS xt_tcpmss xt_limit xt_recent xt_string
+xt_connbytes xt_comment xt_multiport xt_addrtype xt_tcpudp xt_LOG xt_hl ip6t_rt"
+: > /etc/modules-load.d/vpn-netfilter.conf
+NF_OK=0; NF_ALL=0
+for m in $NETFILTER_MODULES; do
+    NF_ALL=$((NF_ALL + 1))
+    if modprobe -q "$m" 2>/dev/null; then
+        NF_OK=$((NF_OK + 1))
+        echo "$m" >> /etc/modules-load.d/vpn-netfilter.conf
+    fi
+done
+echo "[maintenance] Модули файрвола: загружено $NF_OK из $NF_ALL, прописаны в автозагрузку."
+
 # 1. unattended-upgrades установлен и включён (авто-установка обновлений).
 if ! dpkg -s unattended-upgrades >/dev/null 2>&1; then
     DEBIAN_FRONTEND=noninteractive apt-get install -y unattended-upgrades >/dev/null 2>&1 || true
