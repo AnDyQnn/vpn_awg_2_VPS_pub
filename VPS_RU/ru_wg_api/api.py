@@ -239,6 +239,40 @@ def run_cmd(cmd):
         err_msg = e.stderr.decode().strip() if e.stderr else str(e)
         raise RuntimeError(err_msg)
 
+def wg_feed(subcmd, text):
+    """`wg setconf|addconf wg0` без временного файла в /tmp.
+
+    В новых Ubuntu (24.10+) у хоста есть профиль AppArmor для /usr/bin/wg: он
+    цепляется к программе по пути, действует и внутри контейнера и не даёт
+    `wg` читать файлы вне /etc/wireguard. Узел клал конфиг в /tmp, получал
+    «fopen: Permission denied» и падал на старте — вместе с ним и бот.
+
+    Поэтому конфиг отдаём через стандартный ввод — так же, как это делает
+    wg-quick, который профиль пропускает. Не вышло и так — пишем файл туда,
+    куда профилю wg читать можно, и сразу убираем.
+    """
+    try:
+        subprocess.run(["wg", subcmd, "wg0", "/dev/stdin"], input=text.encode(),
+                       check=True, capture_output=True)
+        return
+    except subprocess.CalledProcessError as e:
+        first = (e.stderr or b"").decode().strip()
+    os.makedirs("/etc/wireguard", exist_ok=True)
+    path = f"/etc/wireguard/wg0_{subcmd}.conf"
+    with open(path, "w") as f:
+        f.write(text)
+    os.chmod(path, 0o600)
+    try:
+        run_cmd(["wg", subcmd, "wg0", path])
+    except RuntimeError as e:
+        raise RuntimeError(f"{e} (через stdin: {first})")
+    finally:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+
 def get_public_ip():
     try:
         return urllib.request.urlopen('https://ifconfig.me/ip').read().decode('utf8').strip()
@@ -288,10 +322,7 @@ def setup_network():
     server_ip_cidr = f"{VPN_SUBNET.rsplit('.', 1)[0]}.1/24"
     run_cmd(["ip", "address", "add", server_ip_cidr, "dev", "wg0"])
     
-    temp_conf = f"/tmp/wg0_init.conf"
-    with open(temp_conf, "w") as f: f.write(interface_block)
-    
-    run_cmd(["wg", "setconf", "wg0", temp_conf])
+    wg_feed("setconf", interface_block)
     run_cmd(["ip", "link", "set", "mtu", "1280", "up", "dev", "wg0"])
 
     # --- ФИКС rp_filter ДЛЯ АСИММЕТРИЧНОЙ МАРШРУТИЗАЦИИ ---
@@ -1412,10 +1443,7 @@ def restore_peers():
     if not os.path.exists(CONF_FILE): return
     try:
         blocks = read_config_blocks()
-        with open("/tmp/wg0_restore.conf", "w") as f:
-            for b in blocks:
-                if b.strip().startswith("[Peer]"): f.write(b)
-        run_cmd(["wg", "addconf", "wg0", "/tmp/wg0_restore.conf"])
+        wg_feed("addconf", "".join(b for b in blocks if b.strip().startswith("[Peer]")))
     except Exception as e:
         print(f"Restore warning: {e}")
 
