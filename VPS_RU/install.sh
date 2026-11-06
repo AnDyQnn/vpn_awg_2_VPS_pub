@@ -49,6 +49,62 @@ bash "$(dirname "$APP_DIR")/scripts/ensure_swap.sh" || true
 # .env остаётся стоковым, руками ничего дописывать не нужно.
 
 echo ""
+echo "🔑 Проверка OpenSSH..."
+# На «минимальных» образах хостеров sshd нет вовсе: сервер доступен только из
+# консоли хостера, а смена порта ниже правила конфиг, который некому читать.
+# Ставим, восстанавливаем, что нужно для старта, и проверяем, что он слушает.
+SSH_FRESH=0
+if [ ! -x /usr/sbin/sshd ]; then
+    echo "--> sshd не найден, ставлю openssh-server..."
+    apt-get install -y openssh-server || echo "❌ openssh-server не поставился."
+    SSH_FRESH=1
+fi
+if [ -x /usr/sbin/sshd ]; then
+    # Пакет стоит, а основного конфига нет — без него sshd не стартует и не
+    # читает sshd_config.d. Берём штатный из пакета.
+    if [ ! -f /etc/ssh/sshd_config ] && [ -f /usr/share/openssh/sshd_config ]; then
+        cp /usr/share/openssh/sshd_config /etc/ssh/sshd_config
+        echo "--> Восстановлен /etc/ssh/sshd_config из пакета."
+    fi
+    if [ -f /etc/ssh/sshd_config ] && ! grep -qE '^Include /etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config; then
+        sed -i '1i Include /etc/ssh/sshd_config.d/*.conf' /etc/ssh/sshd_config
+    fi
+    mkdir -p /etc/ssh/sshd_config.d /run/sshd
+    ssh-keygen -A >/dev/null 2>&1 || true            # ключи хоста, если их нет
+    # Свежий openssh в Ubuntu пускает root только по ключу (prohibit-password),
+    # а на новом сервере у root есть лишь пароль от хостера — после установки
+    # войти было бы нечем. Только для свежей установки: чужие настройки не трогаем.
+    if [ "$SSH_FRESH" = "1" ]; then
+        printf 'PermitRootLogin yes\nPasswordAuthentication yes\n' > /etc/ssh/sshd_config.d/05-vpn-access.conf
+    fi
+    if sshd -t 2>/tmp/sshd_check.err; then
+        # Сокет-активацию (Ubuntu 24.04) не трогаем: она и так слушает порт.
+        # Блок смены порта ниже, если нужно, переведёт на обычный sshd.
+        if ! systemctl is-active --quiet ssh.socket 2>/dev/null; then
+            systemctl enable ssh 2>/dev/null || systemctl enable sshd 2>/dev/null || true
+            systemctl restart ssh 2>/dev/null || systemctl restart sshd 2>/dev/null || true
+        fi
+        sleep 1
+        SSH_CUR_PORT=$(sshd -T 2>/dev/null | awk '/^port /{print $2; exit}')
+        SSH_CUR_PORT=${SSH_CUR_PORT:-22}
+        if ss -ltnH "sport = :$SSH_CUR_PORT" 2>/dev/null | grep -q .; then
+            echo "✅ OpenSSH работает, слушает порт $SSH_CUR_PORT."
+        else
+            echo "❌ sshd установлен, но порт $SSH_CUR_PORT никто не слушает:"
+            systemctl status ssh --no-pager -n 5 2>/dev/null || systemctl status sshd --no-pager -n 5 2>/dev/null || true
+        fi
+    else
+        echo "❌ Конфиг sshd с ошибкой, sshd не перезапускаю:"
+        cat /tmp/sshd_check.err
+    fi
+    rm -f /tmp/sshd_check.err
+    # fail2ban стартовал раньше sshd — перечитываем, чтобы защита SSH включилась.
+    systemctl restart fail2ban 2>/dev/null || true
+else
+    echo "❌ sshd нет: зайти на сервер можно будет только из консоли хостера."
+fi
+
+echo ""
 echo "🚨 ЗАЩИТА ОТ БРУТФОРСА (Смена порта SSH)"
 read -p "Введите новый порт для SSH (рекомендуется от 10000 до 65000) или нажмите Enter, чтобы оставить 22: " SSH_PORT
 SSH_PORT=${SSH_PORT:-22}
@@ -83,8 +139,10 @@ if [ "$SSH_PORT" != "22" ]; then
     systemctl restart ssh 2>/dev/null || systemctl restart sshd 2>/dev/null || true
     # Проверяем, на каком порту sshd слушает НА САМОМ ДЕЛЕ. Не перешёл — оставляем
     # 22 открытым: иначе после включения файрвола доступ к серверу пропал бы.
+    sleep 1
     NOW_PORT=$(sshd -T 2>/dev/null | awk '/^port /{print $2; exit}')
-    if [ "$NOW_PORT" = "$SSH_PORT" ]; then
+    # Порт в конфиге — ещё не порт в работе: смотрим, что его реально слушают.
+    if [ "$NOW_PORT" = "$SSH_PORT" ] && ss -ltnH "sport = :$SSH_PORT" 2>/dev/null | grep -q .; then
         echo "✅ Порт SSH → $SSH_PORT (обычный sshd, из sshd_config — не слетит после апдейтов)."
     else
         echo "⚠️ sshd не перешёл на $SSH_PORT (сейчас: ${NOW_PORT:-неизвестно}). Оставляю 22 открытым,"
