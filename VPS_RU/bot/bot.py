@@ -1736,6 +1736,33 @@ async def post_init(application):
     ]
     state_data["bg_tasks"].update(tasks)
 
+async def on_error(update, context):
+    """Общий обработчик ошибок бота.
+
+    Без него библиотека писала каждую ошибку полной простынёй «No error
+    handlers are registered», и в журнале было не разглядеть настоящее:
+      • «Message is not modified» — нажали кнопку, а экран остался тем же. Это
+        не сбой; гасим молча и останавливаем «часики» на кнопке;
+      • таймаут и обрыв сети до Telegram — одной строкой;
+      • всё остальное — коротко, с хвостом трейсбека, чтобы было что искать.
+    """
+    from telegram.error import BadRequest, NetworkError, TimedOut
+    err = context.error
+    if isinstance(err, BadRequest) and "not modified" in str(err).lower():
+        try:
+            if update is not None and getattr(update, "callback_query", None):
+                await update.callback_query.answer()
+        except Exception:
+            pass
+        return
+    if isinstance(err, (TimedOut, NetworkError)):
+        print(f"Telegram: сеть — {type(err).__name__}: {err}")
+        return
+    import traceback
+    tb = "".join(traceback.format_exception(type(err), err, err.__traceback__))
+    print(f"Ошибка обработчика: {type(err).__name__}: {err}\n{tb[-1500:]}")
+
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.WARNING)
     # Подписи кнопок из плоского конфига проекта. Ставится ДО всего остального:
@@ -1776,6 +1803,7 @@ if __name__ == "__main__":
     app.add_handler(MessageHandler(~filters.COMMAND & ~filters.Document.ALL, handle_message))
     app.add_handler(MessageHandler(filters.COMMAND, unknown_command))
     app.add_handler(CallbackQueryHandler(button_router))
+    app.add_error_handler(on_error)
     
     print("Бот успешно запущен (Dual Node System Enabled)...")
     app.run_polling()
