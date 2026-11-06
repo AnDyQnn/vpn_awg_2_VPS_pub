@@ -240,7 +240,9 @@ echo "🏷  Версия проекта: $APP_VERSION (тег образов)"
 # десятки раз в секунду. В терминале это одна строка, а в журнале —
 # отдельная запись на каждую перерисовку: на узле выхода за один деплой
 # так набежало 2,5 миллиона строк и полгигабайта syslog при диске в 10 ГБ.
-# `--progress plain` пишет по строке на шаг, а не на кадр.
+# Построчный вывод задаём переменной BUILDKIT_PROGRESS=plain, а не флагом:
+# у `docker compose up` флага --progress на многих версиях нет, и установка
+# падала с «unknown flag». Переменную старая версия просто не заметит.
 
 # --- BBR: УПРАВЛЕНИЕ ПЕРЕГРУЗКОЙ TCP --------------------------------------
 # Кому помогает: соединениям, которые терминируются на самом узле (бот, свои
@@ -262,15 +264,44 @@ else
     echo "   Модуль недоступен — остаёмся на прежнем способе."
 fi
 
-docker compose up -d --build --progress plain --remove-orphans
+BUILDKIT_PROGRESS=plain docker compose up -d --build --remove-orphans
 
-echo "⏳ Ожидание инициализации базы данных и API (15 секунд)..."
-sleep 15
+# --- КЛЮЧ ДЛЯ ГЕРМАНИИ (DE_AGENT) ------------------------------------------
+# Ключ выпускает бот: просит панель узла (vpn_wireguard) завести пир и пишет
+# его в базу. Бот живёт в сетевом пространстве vpn_wireguard, поэтому:
+#   • пока узел не поднялся, ни панели, ни базы бот не видит;
+#   • если узел на старте перезапустился, бот остаётся в старом, пустом
+#     сетевом пространстве («Network is unreachable») — его надо перезапустить.
+# Раньше здесь было слепое «sleep 15» и одна попытка: не успел узел —
+# ошибка печаталась, установка шла дальше, а ключа не было.
+echo "⏳ Жду, пока узел устойчиво поднимется..."
+UP_STREAK=0
+for i in $(seq 1 60); do                       # до 5 минут
+    if [ "$(docker inspect -f '{{.State.Running}}' vpn_wireguard 2>/dev/null)" = "true" ] \
+       && [ "$(docker inspect -f '{{.State.Restarting}}' vpn_wireguard 2>/dev/null)" = "false" ]; then
+        UP_STREAK=$((UP_STREAK + 1))
+        [ "$UP_STREAK" -ge 3 ] && break        # 15 секунд подряд без перезапуска
+    else
+        UP_STREAK=0
+    fi
+    sleep 5
+done
+# Узел мог перезапуститься уже после старта бота — переподключаем бота к сети.
+docker restart vpn_bot >/dev/null
+sleep 10
 
-echo "🤖 Автоматическая генерация ключа DE_AGENT..."
-docker exec vpn_bot python init_de_agent.py
+echo "🤖 Генерация ключа для Германии (DE_AGENT)..."
+DE_OK=0
+for i in $(seq 1 12); do                       # до 2 минут: база и панель стартуют не сразу
+    if docker exec vpn_bot python init_de_agent.py; then
+        DE_OK=1
+        break
+    fi
+    echo "   узел ещё поднимается, повтор через 10 с ($i/12)..."
+    sleep 10
+done
 
-if [ -f "$APP_DIR/volumes/DE_AGENT_CONFIG.txt" ]; then
+if [ "$DE_OK" = 1 ] && [ -f "$APP_DIR/volumes/DE_AGENT_CONFIG.txt" ]; then
     mv "$APP_DIR/volumes/DE_AGENT_CONFIG.txt" "$APP_DIR/DE_AGENT_CONFIG.txt"
     echo "================================================================"
     echo "🎉 КЛЮЧ ДЛЯ СЕРВЕРА В ГЕРМАНИИ УСПЕШНО СГЕНЕРИРОВАН!"
@@ -278,6 +309,16 @@ if [ -f "$APP_DIR/volumes/DE_AGENT_CONFIG.txt" ]; then
     echo "Скопируй его в Германию по пути: /volumes/wireguard/wg0.conf"
     echo ""
     echo "Токен панелей выдаст бот — он напомнит при первом запуске."
+    echo "================================================================"
+else
+    echo "================================================================"
+    echo "❌ КЛЮЧ ДЛЯ ГЕРМАНИИ НЕ СГЕНЕРИРОВАЛСЯ."
+    echo "Остальное установлено. Повторить вручную:"
+    echo "   cd $APP_DIR"
+    echo "   docker restart vpn_bot && sleep 15"
+    echo "   docker exec vpn_bot python init_de_agent.py"
+    echo "   cp volumes/configs/DE_AGENT.conf DE_AGENT_CONFIG.txt"
+    echo "Если не выходит — посмотри: docker ps -a; docker logs vpn_wireguard --tail 30"
     echo "================================================================"
 fi
 

@@ -230,7 +230,7 @@ if [ -n "$problem" ] && [ -n "$PREV_HASH" ]; then
     cd "$PROJECT_ROOT" && git reset --hard "$PREV_HASH"
     [ ! -f "$NODE_DIR/.env" ] && [ -f "$ENV_BAK" ] && cp -f "$ENV_BAK" "$NODE_DIR/.env"
     cd "$NODE_DIR"
-    docker compose up -d --build --progress plain --remove-orphans
+    BUILDKIT_PROGRESS=plain docker compose up -d --build --remove-orphans
     echo "${PREV_HASH:0:7}" > "$NODE_DIR/volumes/VERSION"
     docker image prune -f
     echo "[Deploy] ✅ Откат выполнен — DE снова на рабочей версии ${PREV_HASH:0:7}."
