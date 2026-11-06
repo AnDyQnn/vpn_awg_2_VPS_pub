@@ -62,14 +62,35 @@ if [ "$SSH_PORT" != "22" ]; then
     # пускает → лок-аут). Поэтому глушим и МАСКИРУЕМ ssh.socket (чтобы апдейт не включил его
     # обратно) и отдаём порт обычному sshd.service из sshd_config — порт задаётся ОДИН раз и
     # держится всегда, без кастомных сокет-конфигов.
-    sed -i "s/^#*Port .*/Port $SSH_PORT/" /etc/ssh/sshd_config
+    # На новых Ubuntu основного /etc/ssh/sshd_config может не быть — тогда порт
+    # кладём отдельным файлом в sshd_config.d. Если в основном файле нет строки
+    # Port, sed молча ничего не менял, и порт оставался 22.
+    if [ -f /etc/ssh/sshd_config ]; then
+        if grep -qE '^#*Port ' /etc/ssh/sshd_config; then
+            sed -i "s/^#*Port .*/Port $SSH_PORT/" /etc/ssh/sshd_config
+        else
+            echo "Port $SSH_PORT" >> /etc/ssh/sshd_config
+        fi
+    else
+        mkdir -p /etc/ssh/sshd_config.d
+        echo "Port $SSH_PORT" > /etc/ssh/sshd_config.d/10-vpn-port.conf
+    fi
     rm -f /etc/systemd/system/ssh.socket.d/port.conf 2>/dev/null   # старый drop-in — источник конфликта
     systemctl disable --now ssh.socket 2>/dev/null || true
     systemctl mask ssh.socket 2>/dev/null || true
     systemctl daemon-reload 2>/dev/null || true
     systemctl enable ssh 2>/dev/null || systemctl enable sshd 2>/dev/null || true
     systemctl restart ssh 2>/dev/null || systemctl restart sshd 2>/dev/null || true
-    echo "✅ Порт SSH → $SSH_PORT (обычный sshd, из sshd_config — не слетит после апдейтов)."
+    # Проверяем, на каком порту sshd слушает НА САМОМ ДЕЛЕ. Не перешёл — оставляем
+    # 22 открытым: иначе после включения файрвола доступ к серверу пропал бы.
+    NOW_PORT=$(sshd -T 2>/dev/null | awk '/^port /{print $2; exit}')
+    if [ "$NOW_PORT" = "$SSH_PORT" ]; then
+        echo "✅ Порт SSH → $SSH_PORT (обычный sshd, из sshd_config — не слетит после апдейтов)."
+    else
+        echo "⚠️ sshd не перешёл на $SSH_PORT (сейчас: ${NOW_PORT:-неизвестно}). Оставляю 22 открытым,"
+        echo "   чтобы не потерять доступ. Поменяйте порт вручную позже."
+        ufw limit 22/tcp
+    fi
 else
     echo "⚠️ Порт SSH оставлен стандартным (22). Включаем защиту..."
     ufw limit 22/tcp
