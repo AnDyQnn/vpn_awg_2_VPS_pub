@@ -401,10 +401,12 @@ async def auto_backup_loop(app):
 # --- ОСНОВНЫЕ РОУТЕРЫ СООБЩЕНИЙ ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+    from handlers_client import drop_previous_screen, command_screen
+    context.user_data["state"] = None
     if check_admin(user_id):
-        context.user_data["state"] = None
-        await stop_bg_tasks()
-        await safe_delete(context, update.effective_chat.id, update.message.message_id)
+        # Команда и прежний экран уходят: в чате остаётся одно меню, а не
+        # стопка живых меню, по которым разные кнопки ведут в разное.
+        await drop_previous_screen(update, context)
         await return_to_main_menu(update, context)
         
         task = asyncio.create_task(update_persistent_backup(context))
@@ -413,10 +415,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     keys = await db.get_users_by_tg_id(user_id)
-    if keys: 
+    if keys:
+        await drop_previous_screen(update, context)
         await client_menu(update, context)
-    else: 
-        await context.bot.send_message(chat_id=user_id, text="⛔️ **Нет доступа**\n\nУ вас нет привязанных ключей.\nПопросите администратора добавить ваш Telegram ID.", parse_mode=ParseMode.MARKDOWN)
+    else:
+        await command_screen(update, context, text="⛔️ **Нет доступа**\n\nУ вас нет привязанных ключей.\nПопросите администратора добавить ваш Telegram ID.", parse_mode=ParseMode.MARKDOWN)
 
 async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not check_admin(update.effective_user.id): return

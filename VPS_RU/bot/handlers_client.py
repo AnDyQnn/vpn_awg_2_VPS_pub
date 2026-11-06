@@ -353,7 +353,11 @@ async def client_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query:
         await update.callback_query.edit_message_text(text=text, reply_markup=markup, parse_mode=mode_)
     else:
-        await context.bot.send_message(chat_id=user_id, text=text, reply_markup=markup, parse_mode=mode_)
+        sent = await context.bot.send_message(chat_id=user_id, text=text, reply_markup=markup, parse_mode=mode_)
+        try:
+            context.user_data["screen_at"] = (user_id, sent.message_id)
+        except Exception:
+            pass
 
 
 async def client_menu_view(user_id, first_name):
@@ -453,7 +457,7 @@ async def client_my_keys_handler(update: Update, context: ContextTypes.DEFAULT_T
         if update.callback_query and not send_new:
             await update.callback_query.answer("У вас нет ключей.", show_alert=True)
         else:
-            await context.bot.send_message(user_id, "У вас нет ключей.")
+            await command_screen(update, context, "❌ У вас нет привязанных ключей VPN.", _TO_MENU, None)
         return
 
     lines = ["🔑 **Мои ключи**", ""]
@@ -482,7 +486,7 @@ async def client_my_keys_handler(update: Update, context: ContextTypes.DEFAULT_T
     if update.callback_query and not send_new:
         await update.callback_query.edit_message_text(text=text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
     else:
-        await context.bot.send_message(chat_id=user_id, text=text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
+        await command_screen(update, context, text, InlineKeyboardMarkup(keyboard))
 
 async def client_key_manage_handler(update: Update, context: ContextTypes.DEFAULT_TYPE, uuid_val: str):
     """Карточка ключа глазами владельца ключа, а не администратора."""
@@ -959,6 +963,62 @@ async def client_notify_off_handler(update: Update, context: ContextTypes.DEFAUL
     )
 
 # --- SLASH-КОМАНДЫ (нативное меню Telegram): входы новым сообщением ---
+#
+# Команда должна вести себя как кнопка, а вела как отдельный бот. Нажатие
+# кнопки меняет экран на месте и забывает незаконченный ввод; команда же
+# присылала новый экран рядом со старым, оставляла в чате само «/keys» и не
+# трогала ожидание ввода. Человек, бросивший «пришлите домен» ради /keys,
+# следующим сообщением отправлял жалобу на сайт, сам того не зная. А экран,
+# открытый командой, бот не запоминал — и ночная чистка удаляла именно его,
+# оставляя старый.
+
+async def drop_previous_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Убирает сообщение с командой и экран, который был до неё.
+
+    Закреплённый архив не трогаем, даже если экраном числится он."""
+    chat_id = update.effective_chat.id
+    gone = set()
+    msg = getattr(update, "message", None)
+    if msg is not None:
+        gone.add(int(msg.message_id))
+    at = context.user_data.pop("screen_at", None)
+    if at and int(at[0]) == int(chat_id):
+        gone.add(int(at[1]))
+    # Главное меню владельца само перерисовывается по таймеру — снимаем его
+    # с перерисовки, иначе счётчик полезет править удалённое сообщение.
+    mid = state_data.get("active_menus", {}).pop(chat_id, None)
+    if mid:
+        gone.add(int(mid))
+    if check_admin(update.effective_user.id):
+        from utils import stop_bg_tasks
+        await stop_bg_tasks()
+    try:
+        keep = str(await db.get_setting("backup_message_id") or "")
+        if keep.isdigit():
+            gone.discard(int(keep))
+    except Exception:
+        pass
+    for m in gone:
+        try:
+            await context.bot.delete_message(chat_id=chat_id, message_id=m)
+        except Exception:
+            pass
+
+
+async def command_screen(update: Update, context: ContextTypes.DEFAULT_TYPE, text,
+                         reply_markup=None, parse_mode=ParseMode.MARKDOWN):
+    """Экран по команде: как по кнопке — один экран в чате, ввод забыт."""
+    context.user_data["state"] = None
+    await drop_previous_screen(update, context)
+    chat_id = update.effective_chat.id
+    sent = await context.bot.send_message(chat_id=chat_id, text=text,
+                                          reply_markup=reply_markup, parse_mode=parse_mode)
+    context.user_data["screen_at"] = (chat_id, sent.message_id)
+    return sent
+
+
+_TO_MENU = InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Меню", callback_data="client_menu")]])
+
 
 async def cmd_keys(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await client_my_keys_handler(update, context, send_new=True)
@@ -967,24 +1027,24 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     keys = await db.get_users_by_tg_id(user_id)
     if not keys:
-        await context.bot.send_message(user_id, "❌ У вас нет привязанных ключей VPN.")
+        await command_screen(update, context, "❌ У вас нет привязанных ключей VPN.", _TO_MENU, None)
         return
     text = "⚡️ **Проверка соединения**\n\nВыберите ключ для диагностики или проверьте все сразу:"
     keyboard = [[InlineKeyboardButton(f"🔎 {k['name']}", callback_data=f"check_conn_{k['uuid']}")] for k in keys]
     keyboard.append([InlineKeyboardButton("🚀 Проверить все ключи", callback_data="client_check_all")])
     keyboard.append([InlineKeyboardButton("🏠 Меню", callback_data="client_menu")])
-    await context.bot.send_message(user_id, text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
+    await command_screen(update, context, text, InlineKeyboardMarkup(keyboard))
 
 async def cmd_support(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     keys = await db.get_users_by_tg_id(user_id)
     if not keys:
-        await context.bot.send_message(user_id, "❌ У вас нет привязанных ключей VPN.")
+        await command_screen(update, context, "❌ У вас нет привязанных ключей VPN.", _TO_MENU, None)
         return
     text = "🆘 **Поддержка**\n\nВыберите ключ, с которым возникла проблема (запущу диагностику):"
     keyboard = [[InlineKeyboardButton(f"🔑 {k['name']}", callback_data=f"support_audit_{k['uuid']}")] for k in keys]
     keyboard.append([InlineKeyboardButton("🏠 Меню", callback_data="client_menu")])
-    await context.bot.send_message(user_id, text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
+    await command_screen(update, context, text, InlineKeyboardMarkup(keyboard))
 
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
@@ -997,8 +1057,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "(по QR или из файла) и включите VPN.\n\n"
         + GOSUSLUGI_APP_WARNING
     )
-    kb = InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Меню", callback_data="client_menu")]])
-    await context.bot.send_message(update.effective_user.id, text, reply_markup=kb, parse_mode=ParseMode.MARKDOWN)
+    await command_screen(update, context, text, _TO_MENU)
 
 async def client_report_site_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
