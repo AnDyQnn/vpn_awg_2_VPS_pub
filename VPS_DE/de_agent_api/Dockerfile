@@ -8,10 +8,13 @@ FROM amneziavpn/amnezia-wg@sha256:ea050861bd2012a6265817636ce7c0c15764ef955782d9
 # Копии wg и wg-quick мимо /usr/bin. В новых Ubuntu (24.10+) у хоста есть
 # профили AppArmor «wg» и «wg-quick»: они цепляются к /usr/bin/wg по пути и
 # действуют даже внутри контейнера — не дают wg подключиться к сокету
-# wireguard-go (/run/wireguard/wg0.sock), и узел падал на старте. Копия в
-# /usr/local/sbin стоит в PATH раньше /usr/bin, все вызовы «wg» попадают на неё,
-# и профиль к ней не цепляется. На старых Ubuntu ничего не меняется.
-RUN for b in wg wg-quick; do [ -x /usr/bin/$b ] && cp /usr/bin/$b /usr/local/sbin/$b; done; true
+# wireguard-go (/run/wireguard/wg0.sock), и узел падал на старте. Профиль
+# ловит wg в любом системном bin/sbin (в /usr/local/sbin тоже — проверено),
+# поэтому копия лежит в /opt/wgtools/bin и стоит в PATH первой: все вызовы
+# «wg» попадают на неё. На старых Ubuntu ничего не меняется.
+RUN mkdir -p /opt/wgtools/bin && \
+    for b in wg wg-quick; do [ -x /usr/bin/$b ] && cp /usr/bin/$b /opt/wgtools/bin/$b; done; true
+ENV PATH="/opt/wgtools/bin:${PATH}"
 
 # Устанавливаем Python и системные зависимости (включая компиляторы для psutil)
 # Устойчивость к блокировке зеркала Alpine (ТСПУ/провайдер иногда режут dl-cdn):
