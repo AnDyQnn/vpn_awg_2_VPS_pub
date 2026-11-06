@@ -5,6 +5,13 @@
 # Обновлять осознанно: docker pull amneziavpn/amnezia-wg:latest, взять новый digest,
 # заменить строку ниже, проверить на стенде.
 FROM amneziavpn/amnezia-wg@sha256:ea050861bd2012a6265817636ce7c0c15764ef955782d953cef42e05c1381250
+# Копии wg и wg-quick мимо /usr/bin. В новых Ubuntu (24.10+) у хоста есть
+# профили AppArmor «wg» и «wg-quick»: они цепляются к /usr/bin/wg по пути и
+# действуют даже внутри контейнера — не дают wg подключиться к сокету
+# wireguard-go (/run/wireguard/wg0.sock), и узел падал на старте. Копия в
+# /usr/local/sbin стоит в PATH раньше /usr/bin, все вызовы «wg» попадают на неё,
+# и профиль к ней не цепляется. На старых Ubuntu ничего не меняется.
+RUN for b in wg wg-quick; do [ -x /usr/bin/$b ] && cp /usr/bin/$b /usr/local/sbin/$b; done; true
 
 # Устанавливаем Python и системные зависимости (включая компиляторы для psutil)
 # Устойчивость к блокировке зеркала Alpine (ТСПУ/провайдер иногда режут dl-cdn):
