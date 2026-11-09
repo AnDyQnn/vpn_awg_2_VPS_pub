@@ -307,6 +307,36 @@ if ! grep -q '^BACKUP_PASSWORD=.\+' "$APP_DIR/.env" 2>/dev/null; then
 fi
 chmod 600 "$APP_DIR/.env"
 
+# --- Логин и пароль базы ---
+# Пустой пароль postgres не принимает: контейнер базы падает на первом же
+# старте и перезапускается по кругу. Снаружи это видно только у бота —
+# «Connect call failed ('172.20.0.5', 5432)» — и выглядит как беда с сетью.
+# Пусто на свежей установке — заполняем сами, случайным паролем. Если же
+# база уже создана, а строки пустые, придумывать нельзя: новый пароль с
+# созданной базой не совпадёт. Тогда останавливаемся и говорим, что делать.
+env_val() { grep -E "^$1=" "$APP_DIR/.env" 2>/dev/null | tail -1 | cut -d= -f2-; }
+env_set() {
+    grep -v "^$1=" "$APP_DIR/.env" > "$APP_DIR/.env.tmp" 2>/dev/null || true
+    mv "$APP_DIR/.env.tmp" "$APP_DIR/.env"
+    echo "$1=$2" >> "$APP_DIR/.env"
+}
+DB_CREATED=0
+[ -s "$APP_DIR/volumes/database/pgdata/PG_VERSION" ] && DB_CREATED=1
+if [ -z "$(env_val POSTGRES_USER)" ] || [ -z "$(env_val POSTGRES_PASSWORD)" ] || [ -z "$(env_val POSTGRES_DB)" ]; then
+    if [ "$DB_CREATED" = 1 ]; then
+        echo "❌ В .env не заполнены POSTGRES_USER / POSTGRES_PASSWORD / POSTGRES_DB,"
+        echo "   а база в $APP_DIR/volumes/database уже создана с какими-то из них."
+        echo "   Впишите те же значения, что были при её создании, или, если данных"
+        echo "   в ней нет, удалите её: rm -rf $APP_DIR/volumes/database — и запустите установку снова."
+        exit 1
+    fi
+    [ -z "$(env_val POSTGRES_USER)" ] && env_set POSTGRES_USER "vpn"
+    [ -z "$(env_val POSTGRES_PASSWORD)" ] && env_set POSTGRES_PASSWORD "$(openssl rand -hex 16 2>/dev/null || head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+    [ -z "$(env_val POSTGRES_DB)" ] && env_set POSTGRES_DB "vpndb"
+    echo "🗄  Логин и пароль базы заполнены в .env автоматически."
+fi
+chmod 600 "$APP_DIR/.env"
+
 echo "🚀 Запуск контейнеров..."
 # Тег образов — версия проекта, а не «dev». Установщик собирал образы без неё,
 # и свежая нода целиком оставалась на `vpn-ru-bot:dev`: по `docker images` было
@@ -376,9 +406,42 @@ done
 docker restart vpn_bot >/dev/null
 sleep 10
 
+# База. Без неё ключ не выпустить, а бот про неё скажет только
+# «Connect call failed» — и не скажет почему. Ждём, пока она примет
+# соединение по сети (во время первичной настройки postgres слушает только
+# локальный сокет), а не поднялась — показываем её собственный журнал.
+echo "⏳ Жду базу данных..."
+DB_OK=0
+for i in $(seq 1 36); do                       # до 3 минут: первая настройка базы небыстрая
+    if docker exec vpn_db pg_isready -q -h 127.0.0.1 2>/dev/null; then
+        DB_OK=1
+        break
+    fi
+    sleep 5
+done
+if [ "$DB_OK" = 1 ]; then
+    echo "✅ База данных работает."
+else
+    echo "================================================================"
+    echo "❌ БАЗА ДАННЫХ НЕ ПОДНЯЛАСЬ ($(docker inspect -f '{{.State.Status}}, рестартов: {{.RestartCount}}' vpn_db 2>/dev/null))."
+    echo "Её журнал:"
+    docker logs --tail 25 vpn_db 2>&1 | sed 's/^/   | /'
+    echo ""
+    echo "Частые причины:"
+    echo " • «password authentication failed» или «role ... does not exist» — база"
+    echo "   создана с другими логином и паролем, чем сейчас в .env. Верните прежние"
+    echo "   или, если данных нет: docker compose down; rm -rf $APP_DIR/volumes/database"
+    echo " • «superuser password is not specified» — пустой POSTGRES_PASSWORD в .env."
+    echo " • «Permission denied» — права на $APP_DIR/volumes/database."
+    echo "После исправления запустите установку снова."
+    echo "================================================================"
+fi
+
 echo "🤖 Генерация ключа для Германии (DE_AGENT)..."
 DE_OK=0
+[ "$DB_OK" = 1 ] || echo "   (без базы ключ не выпустится — пропускаю)"
 for i in $(seq 1 12); do                       # до 2 минут: база и панель стартуют не сразу
+    [ "$DB_OK" = 1 ] || break
     if docker exec vpn_bot python init_de_agent.py; then
         DE_OK=1
         break
