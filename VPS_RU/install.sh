@@ -442,7 +442,11 @@ DE_OK=0
 [ "$DB_OK" = 1 ] || echo "   (без базы ключ не выпустится — пропускаю)"
 for i in $(seq 1 12); do                       # до 2 минут: база и панель стартуют не сразу
     [ "$DB_OK" = 1 ] || break
-    if docker exec vpn_bot python init_de_agent.py; then
+    # Отдельным временным контейнером, а не внутри бота. Бот на свежей
+    # установке перезапускается по кругу: Telegram доступен только через
+    # Германию, а её ещё нет — и `docker exec` в него не попадает.
+    # Временному контейнеру Telegram не нужен: сеть у него та же, узла.
+    if (cd "$APP_DIR" && docker compose run --rm --no-deps -T vpn_bot python init_de_agent.py); then
         DE_OK=1
         break
     fi
@@ -464,8 +468,7 @@ else
     echo "❌ КЛЮЧ ДЛЯ ГЕРМАНИИ НЕ СГЕНЕРИРОВАЛСЯ."
     echo "Остальное установлено. Повторить вручную:"
     echo "   cd $APP_DIR"
-    echo "   docker restart vpn_bot && sleep 15"
-    echo "   docker exec vpn_bot python init_de_agent.py"
+    echo "   docker compose run --rm --no-deps -T vpn_bot python init_de_agent.py"
     echo "   cp volumes/configs/DE_AGENT.conf DE_AGENT_CONFIG.txt"
     echo "Если не выходит — посмотри: docker ps -a; docker logs vpn_wireguard --tail 30"
     echo "================================================================"
