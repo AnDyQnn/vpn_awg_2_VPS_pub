@@ -137,9 +137,12 @@ async def service_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     lines.append("")
     if pending:
-        waiting = sum(1 for p in pending if not p["first_handshake_at"])
+        # Своё имя, не `waiting`: то — список дел для кнопок ниже, и число
+        # на его месте роняло весь экран, как только в очереди перевыпуска
+        # появлялся хоть один ключ.
+        not_yet = sum(1 for p in pending if not p["first_handshake_at"])
         lines.append(f"🔑 *Перевыпуск ключей:* в очереди {len(pending)}, "
-                     f"ещё не подключились {waiting}")
+                     f"ещё не подключились {not_yet}")
     else:
         lines.append("🔑 *Перевыпуск ключей:* очередь пуста")
 
