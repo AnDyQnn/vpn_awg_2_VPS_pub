@@ -6,7 +6,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from telegram.constants import ParseMode
 
-from utils import exit_kb, escape_md, stop_bg_tasks, deregister_menu, ADMIN_ID, CONFIGS_DIR, WG_API_URL, dt_to_moscow, api_session
+from utils import exit_kb, escape_md, stop_bg_tasks, deregister_menu, ADMIN_ID, CONFIGS_DIR, WG_API_URL, dt_to_moscow, api_session, peer_person_uuid
 from database import db
 from acl import grant_text
 from delivery import track_send, describe as delivery_text
@@ -29,7 +29,8 @@ async def users_list_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, pa
                     for p in data:
                         hs = p.get('latest_handshake', 0)
                         if hs > 0 and (now - hs) < 180:
-                            live_peers[p.get('uuid')] = True
+                            # Старый ключ после перевыпуска — тот же человек.
+                            live_peers[peer_person_uuid(p.get('uuid'))] = True
     except: pass
 
     items_per_page = 5

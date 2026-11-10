@@ -889,9 +889,14 @@ async def stats_collector_loop():
                         now = int(time.time())
                         for peer in peers_data:
                             uuid_val, rx, tx, hs = peer.get("uuid"), peer.get("rx", 0), peer.get("tx", 0), peer.get("latest_handshake", 0)
-                            if uuid_val and len(uuid_val) < 40:
-                                await db.save_stats(uuid_val, rx, tx)
-                                if hs > 0 and (now - hs) < 180: await db.execute("UPDATE users SET last_active_at=NOW() WHERE uuid=$1", uuid_val)
+                            # Сбой на одном пире не должен оставлять без учёта
+                            # всех, кто идёт после него в списке.
+                            try:
+                                if uuid_val and len(uuid_val) < 40:
+                                    await db.save_stats(uuid_val, rx, tx)
+                                    if hs > 0 and (now - hs) < 180: await db.execute("UPDATE users SET last_active_at=NOW() WHERE uuid=$1", uuid_val)
+                            except Exception as e:
+                                print(f"Учёт трафика, {uuid_val}: {e}")
         except Exception: pass
         await asyncio.sleep(300)
 

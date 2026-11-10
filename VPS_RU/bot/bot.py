@@ -1005,7 +1005,11 @@ def key_of_callback(data):
 
 
 async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.callback_query.data not in ["start_dashboard", "vpn_graph", "show_online"]:
+    # Живой дашборд и график — у владельца. Раньше их гасило нажатие любой
+    # кнопки любым человеком: открыл кто-то «Мои ключи» — у владельца замерла
+    # панель.
+    if (update.callback_query.data not in ["start_dashboard", "vpn_graph", "show_online"]
+            and check_admin(update.effective_user.id)):
         await stop_bg_tasks()
 
     query = update.callback_query

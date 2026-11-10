@@ -625,10 +625,17 @@ async def online_users_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             secs = int(max(0, secs)); h, rem = divmod(secs, 3600); m, s = divmod(rem, 60)
             return f"{h}ч {m}м" if h else (f"{m}м" if m else f"{s}с")
 
+        seen = set()
         for peer in peers_data:
             last_hs = peer.get('latest_handshake', 0)
             if last_hs > 0 and (now - last_hs) < 180:
-                uuid_val = peer.get('uuid')
+                # Старый ключ после перевыпуска — тот же человек, а не
+                # «Unknown»; и один раз, даже если в сети оба его ключа.
+                from utils import peer_person_uuid
+                uuid_val = peer_person_uuid(peer.get('uuid'))
+                if uuid_val in seen:
+                    continue
+                seen.add(uuid_val)
                 name = uuid_to_name.get(uuid_val, "Unknown")
                 since = online_since.get(uuid_val, last_hs)   # длительность СЕССИИ, а не с хэндшейка
                 start_str = ts_to_moscow(since).strftime('%H:%M')

@@ -660,7 +660,8 @@ async def charts_screen(update: Update, context: ContextTypes.DEFAULT_TYPE, page
                     for p in await resp.json():
                         hs = p.get("latest_handshake", 0)
                         if hs and now - hs < 180 and p.get("uuid"):
-                            online.add(p["uuid"])
+                            from utils import peer_person_uuid
+                            online.add(peer_person_uuid(p["uuid"]))
     except Exception:
         pass
 

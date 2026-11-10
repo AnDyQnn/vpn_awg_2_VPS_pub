@@ -15,7 +15,10 @@ if [ -f "/etc/wireguard/wg0.conf" ]; then
     
     # Страховка: зачищаем DNS-строку, если она туда как-то попала
     sed -i '/^DNS/d' /etc/wireguard/wg0.conf
-    
+    # В файле закрытый ключ туннеля — читать его только root. Был 644:
+    # wg-quick ругался «world accessible», а на хосте ключ видел любой.
+    chmod 600 /etc/wireguard/wg0.conf /etc/amnezia/amneziawg/wg0.conf 2>/dev/null || true
+
     # Удаляем зависший интерфейс
     ip link delete wg0 2>/dev/null || true
     

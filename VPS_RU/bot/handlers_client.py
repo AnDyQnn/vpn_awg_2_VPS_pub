@@ -10,7 +10,7 @@ from utils import (
     exit_kb,
     api_session,
     escape_md, WG_API_URL, state_data, check_admin, CONFIGS_DIR, dt_to_moscow,
-    ts_to_moscow, safe_delete, GOSUSLUGI_APP_WARNING
+    ts_to_moscow, safe_delete, GOSUSLUGI_APP_WARNING, peer_person_uuid
 )
 from database import db
 from delivery import track_send
@@ -133,7 +133,8 @@ async def get_live_peers_status():
                     for p in data:
                         hs = p.get('latest_handshake', 0)
                         if hs > 0 and (now - hs) < 180:
-                            live_map[p.get('uuid')] = True
+                            # Старый ключ после перевыпуска — тот же человек.
+                            live_map[peer_person_uuid(p.get('uuid'))] = True
     except: pass
     return live_map
 
@@ -603,7 +604,7 @@ async def client_regen_all_action_handler(update: Update, context: ContextTypes.
             chat_id=chat_id,
             text=(f"⏸ {names} на паузе — их не перевыпускаю: новый ключ тоже не "
                   "заработает, пока пауза не снята. Напишите владельцу."),
-            parse_mode=ParseMode.MARKDOWN)
+            parse_mode=ParseMode.MARKDOWN, reply_markup=exit_kb(to_client=True))
     for user in keys:
         if not user.get("is_active", True):
             continue
