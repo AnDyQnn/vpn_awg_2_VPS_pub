@@ -2081,7 +2081,16 @@ def resume_peer(uid: str):
             if f"# UUID = {uid}" in b:
                 found = True
                 if not b.strip().startswith("# PAUSED"):
+                    # Ключ, выпущенный, пока человек стоял на паузе: в файле он
+                    # рабочий, а из туннеля его снял сторож. Раньше снятие паузы
+                    # его пропускало — пауза снята, а ключ так и не подключался
+                    # до перезапуска узла. Возвращаем и его.
                     new_blocks.append(b)
+                    pub_match = re.search(r"PublicKey\s*=\s*(\S+)", b)
+                    ip_match = re.search(r"AllowedIPs\s*=\s*(\S+)", b)
+                    if pub_match and ip_match:
+                        try: run_cmd(["wg", "set", "wg0", "peer", pub_match.group(1).strip(), "allowed-ips", ip_match.group(1).strip()])
+                        except: pass
                     continue
                 active_b = "\n".join([line.replace("# PAUSED ", "", 1) for line in b.splitlines()]) + "\n"
                 new_blocks.append(active_b)

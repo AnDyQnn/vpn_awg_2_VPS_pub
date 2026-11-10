@@ -596,7 +596,17 @@ async def client_regen_all_action_handler(update: Update, context: ContextTypes.
 
     # config-first: сначала выдаём ВСЕ новые конфиги, копим старые пиры на снятие
     retire_list = []
+    paused = [k for k in keys if not k.get("is_active", True)]
+    if paused:
+        names = ", ".join(f"«{escape_md(k['name'])}»" for k in paused)
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=(f"⏸ {names} на паузе — их не перевыпускаю: новый ключ тоже не "
+                  "заработает, пока пауза не снята. Напишите владельцу."),
+            parse_mode=ParseMode.MARKDOWN)
     for user in keys:
+        if not user.get("is_active", True):
+            continue
         try:
             retire_list.append(await _issue_new_config(context, chat_id, user))
         except Exception as e:
@@ -774,9 +784,30 @@ async def client_stats_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     keyboard = [[InlineKeyboardButton("🔙 В меню", callback_data="client_menu")]]
     await query.edit_message_text(text=text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
 
+async def _paused_regen_screen(query, uuid_val, user):
+    """Перевыпуск ключа на паузе — честный отказ вместо нерабочего конфига.
+
+    Новый ключ получает того же человека, а человек на паузе: сторож снимал
+    свежий пир из туннеля через секунды после выдачи. Человек получал файл,
+    который не может заработать, и ни слова о причине — так и выглядело
+    «перевыпустил, и ни один не подключается»."""
+    text = (f"⏸ **Ключ «{escape_md(user['name'])}» на паузе** — {await _pause_reason(uuid_val)}\n\n"
+            "Перевыпуск тут не поможет: новый ключ тоже не заработает, пока "
+            "пауза не снята. Напишите владельцу — после снятия паузы ключ "
+            "заработает сам, перевыпускать не нужно.")
+    kb = [[InlineKeyboardButton("🆘 Написать владельцу", callback_data=f"support_ask_{uuid_val}")],
+          [InlineKeyboardButton("🔙 К ключу", callback_data=f"client_key_manage_{uuid_val}")]]
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb),
+                                  parse_mode=ParseMode.MARKDOWN)
+
+
 async def client_regen_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE, uuid_val: str):
     query = update.callback_query
-    keyboard = [[InlineKeyboardButton("✅ Да, перевыпустить", callback_data=f"do_client_regen_{uuid_val}")],[InlineKeyboardButton("🔙 Отмена", callback_data=f"client_key_manage_{uuid_val}")]
+    user = await db.get_user_by_uuid(uuid_val)
+    if user and not user.get("is_active", True):
+        await _paused_regen_screen(query, uuid_val, user)
+        return
+    keyboard =[[InlineKeyboardButton("✅ Да, перевыпустить", callback_data=f"do_client_regen_{uuid_val}")],[InlineKeyboardButton("🔙 Отмена", callback_data=f"client_key_manage_{uuid_val}")]
     ]
     text = ("⚠️ **Смена ключа**\n\nВам выдадут новый файл конфигурации — его "
             "нужно добавить в AmneziaWG. Старый ключ продолжит работать и "
@@ -796,7 +827,10 @@ async def client_regen_action(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not user:
         await query.edit_message_text("❌ Ключ не найден.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 В меню", callback_data="client_menu")]]))
         return
-        
+    if not user.get("is_active", True):
+        await _paused_regen_screen(query, uuid_val, user)
+        return
+
     await query.edit_message_text(
         f"⏳ Готовлю новый конфиг…\n"
         f"Старый ключ останется рабочим, пока новый не заработает — "

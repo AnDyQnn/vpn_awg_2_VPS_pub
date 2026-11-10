@@ -1040,8 +1040,9 @@ async def load_collector_loop(app):
                     dt = ts - prev_ts
                     # Клиент-сервер — не человек: он несёт трафик всех остальных
                     # и под человеческие лимиты попадать не должен.
-                    agent_uuids = {u["uuid"] for u in await db.get_all_users()
-                                   if is_agent(u["name"])}
+                    all_users = await db.get_all_users()
+                    agent_uuids = {u["uuid"] for u in all_users if is_agent(u["name"])}
+                    known_uuids = {u["uuid"] for u in all_users}
                     common = int(await db.get_setting("pps_limit") or DEFAULT_PPS_LIMIT)
                     mode = (await db.get_setting("pps_mode") or "observe")
                     personal = await db.get_peer_limits()
@@ -1050,8 +1051,13 @@ async def load_collector_loop(app):
                     merged = {}
                     for ip, cur in snapshot.items():
                         old = prev_snapshot.get(ip)
-                        uuid_val = ip_to_uuid.get(ip)
-                        if not old or not uuid_val:
+                        # Старый пир после перевыпуска зовётся `retired-<uuid>`,
+                        # а в базе такого нет: запись падала на внешнем ключе и
+                        # роняла весь проход — без учёта оставались все сразу,
+                        # пока старый пир не снимется. Его трафик — трафик того
+                        # же человека. Чужих (пир есть, человека нет) не пишем.
+                        uuid_val = peer_person_uuid(ip_to_uuid.get(ip) or "")
+                        if not old or not uuid_val or uuid_val not in known_uuids:
                             continue
 
                         # Счётчики могли обнулиться — контейнер перезапускали.
