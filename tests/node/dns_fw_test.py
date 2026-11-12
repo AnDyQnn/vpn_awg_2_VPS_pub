@@ -30,6 +30,9 @@ for node in tree.body:
 
 ns = {"subprocess": subprocess, "os": os, "json": json, "time": time}
 exec(compile(ast.Module(body=picked, type_ignores=[]), SRC, "exec"), ns)
+# Сети и маски групп пересборка тоже применяет, но это отдельная цепочка со
+# своей проверкой (pool_nets_test) — здесь только заворот 53-го порта.
+ns["apply_pool_nets"] = lambda *a, **k: None
 os.makedirs(ns["CONF_DIR"], exist_ok=True)
 
 

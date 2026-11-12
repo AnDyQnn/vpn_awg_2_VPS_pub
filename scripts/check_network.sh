@@ -287,7 +287,9 @@ if [ "$NODE" = "ru" ]; then
         *)     warn "ya.ru из контейнера не открылся (HTTP ${YA:-нет})" ;;
     esac
 
-    if running vpn_bot; then
+    # Бот в цикле перезапусков уже отмечен выше, а зайти в него нельзя —
+    # без этой оговорки та же беда второй раз выдавалась за «нет базы».
+    if running vpn_bot && [ "$(docker inspect -f '{{.State.Restarting}}' vpn_bot 2>/dev/null)" != "true" ]; then
         if docker exec vpn_bot python -c "import socket; socket.create_connection(('172.20.0.5', 5432), 3)" 2>/dev/null; then
             ok "Бот видит базу (172.20.0.5:5432)"
         else

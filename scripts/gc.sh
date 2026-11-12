@@ -25,7 +25,10 @@ DRY=0
 
 # Что нельзя трогать ни при каких обстоятельствах. Если удаление чего-либо
 # тянет за собой хоть одну из этих строк — шаг отменяется целиком.
-PROTECTED='^(linux-image-|linux-modules-[0-9]|grub|systemd|docker-ce|containerd|openssh|iproute2|iptables|ipset|wireguard|amneziawg|ca-certificates|libc6)'
+# Метапакеты ядра (linux-generic, linux-virtual, linux-kvm) — тоже: удаление
+# linux-firmware может потянуть за собой linux-generic, и тогда сервер молча
+# перестаёт получать новые ядра.
+PROTECTED='^(linux-image-|linux-modules-[0-9]|linux-(generic|virtual|kvm|oem)|grub|systemd|docker-ce|docker.io|docker-compose|containerd|openssh|iproute2|iptables|ipset|wireguard|amneziawg|ca-certificates|libc6)'
 
 say() { echo "[GC] $*"; }
 

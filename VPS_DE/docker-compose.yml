@@ -1,6 +1,12 @@
 services:
   de_wireguard:
-    build: ./de_agent_api
+    # Сборка — в сети хоста. Через мост докера пакеты (Alpine, pip) не качались
+    # там, где MTU пути меньше 1500 (облака с 1450, PPPoE, туннели): apk
+    # отвечал «temporary error» на всех зеркалах, и установка с обновлением
+    # падали на сборке. Работающие контейнеры это не трогает — только сборку.
+    build:
+      context: ./de_agent_api
+      network: host
     # Тег образа — версия проекта из файла VERSION (экспортирует deploy.sh/install.sh)
     image: vpn-de-agent:${APP_VERSION:-dev}
     container_name: de_vpn_agent

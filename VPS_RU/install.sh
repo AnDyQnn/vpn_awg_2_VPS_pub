@@ -13,19 +13,32 @@ APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 mkdir -p "$APP_DIR/volumes/flags"
 touch "$APP_DIR/volumes/flags/installing"
 trap 'rm -f "$APP_DIR/volumes/flags/installing"' EXIT
+
+# --- apt без вопросов ---------------------------------------------------------
+# Установку запускают по SSH, в терминале, и apt там спрашивает: needrestart
+# выводит диалог «какие службы перезапустить», а обновление пакета с конфигом,
+# который правил хостер (sshd_config), — «оставить свой или взять новый». Оба
+# ждут ответа, и установка стоит. А в первые минуты жизни свежего VPS apt
+# занят unattended-upgrades: без ожидания блокировки apt-get падал сразу с
+# «Could not get lock», и установка шла дальше без пакетов.
+export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a
+APT_OPTS=(-o DPkg::Lock::Timeout=600 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
+apt_get() { apt-get "${APT_OPTS[@]}" "$@"; }
+
+# .env без перевода строки в конце (так лежал .env.example, так оставляют
+# правки через echo и sed) склеивал нашу дозапись с последней строкой:
+# «POSTGRES_DB=vpndbBACKUP_PASSWORD=…» — база с мусорным именем, без
+# таблиц, и потерянный пароль архива. Дописываем недостающий перевод строки.
+[ -s "$APP_DIR/.env" ] && [ "$(tail -c1 "$APP_DIR/.env" | wc -l)" -eq 0 ] && echo >> "$APP_DIR/.env"
 echo "🚀 Установка VPN Dashboard в: $APP_DIR"
 
 echo "🛡️ Базовая настройка безопасности и обновление системы..."
-apt-get update && apt-get upgrade -y
-apt-get install -y fail2ban ufw curl git unattended-upgrades
+apt_get update && apt_get upgrade -y
+apt_get install -y fail2ban ufw curl git unattended-upgrades iproute2 openssl
 
 systemctl enable fail2ban
 systemctl start fail2ban
 
-# Ночные авто-обновления системы (переносим apt на ночь, чтобы не спайкать нагрузку днём)
-if [ -f "$APP_DIR/../scripts/ensure_host_maintenance.sh" ]; then
-    bash "$APP_DIR/../scripts/ensure_host_maintenance.sh" || true
-fi
 
 echo "🛡️ Настройка защиты ядра от DDoS и флуда (sysctl)..."
 cat <<EOF > /etc/sysctl.d/99-vpn-security.conf
@@ -39,7 +52,7 @@ net.ipv4.tcp_rfc1337 = 1
 net.ipv4.conf.all.accept_redirects = 0
 net.ipv4.conf.default.accept_redirects = 0
 EOF
-sysctl --system >/dev/null 2>&1
+sysctl --system >/dev/null 2>&1 || true
 
 echo "💾 Проверка swap (нужен на 1–2 ГБ RAM, чтобы Control Plane/бот не словили OOM)..."
 # единый идемпотентный скрипт — он же вызывается при КАЖДОМ обновлении (deploy.sh),
@@ -56,7 +69,7 @@ echo "🔑 Проверка OpenSSH..."
 SSH_FRESH=0
 if [ ! -x /usr/sbin/sshd ]; then
     echo "--> sshd не найден, ставлю openssh-server..."
-    apt-get install -y openssh-server || echo "❌ openssh-server не поставился."
+    apt_get install -y openssh-server || echo "❌ openssh-server не поставился."
     SSH_FRESH=1
 fi
 if [ -x /usr/sbin/sshd ]; then
@@ -106,8 +119,21 @@ fi
 
 echo ""
 echo "🚨 ЗАЩИТА ОТ БРУТФОРСА (Смена порта SSH)"
-read -p "Введите новый порт для SSH (рекомендуется от 10000 до 65000) или нажмите Enter, чтобы оставить 22: " SSH_PORT
-SSH_PORT=${SSH_PORT:-22}
+# По умолчанию — порт, на котором SSH работает сейчас, а не 22. При повторной
+# установке Enter означал «оставить 22»: установщик писал «порт оставлен
+# стандартным» и открывал в ufw 22-й, хотя SSH давно жил на другом.
+CUR_SSH_PORT=$(sshd -T 2>/dev/null | awk '/^port /{print $2; exit}')
+CUR_SSH_PORT=${CUR_SSH_PORT:-22}
+read -p "Введите новый порт для SSH (рекомендуется от 10000 до 65000) или нажмите Enter, чтобы оставить $CUR_SSH_PORT: " SSH_PORT
+SSH_PORT=${SSH_PORT:-$CUR_SSH_PORT}
+# Только число в допустимых пределах: опечатка ушла бы в sshd_config, и sshd
+# не поднялся бы вовсе.
+case "$SSH_PORT" in
+    ''|*[!0-9]*) echo "⚠️  «$SSH_PORT» — не номер порта, оставляю $CUR_SSH_PORT."; SSH_PORT=$CUR_SSH_PORT ;;
+    *) if [ "$SSH_PORT" -lt 1 ] || [ "$SSH_PORT" -gt 65535 ]; then
+           echo "⚠️  $SSH_PORT вне 1–65535, оставляю $CUR_SSH_PORT."; SSH_PORT=$CUR_SSH_PORT
+       fi ;;
+esac
 
 if [ "$SSH_PORT" != "22" ]; then
     echo "🔧 Смена порта SSH на $SSH_PORT..."
@@ -160,13 +186,40 @@ ufw allow 51820/udp >/dev/null 2>&1 || true
 
 echo "📦 Проверка и настройка Docker..."
 if ! command -v docker &> /dev/null; then
-    curl -fsSL https://get.docker.com -o get-docker.sh
-    sh get-docker.sh
-    rm get-docker.sh
+    echo "--> Установка Docker..."
+    # Для только что вышедшей Ubuntu у Docker может ещё не быть репозитория —
+    # тогда get.docker.com падает, а Docker не ставился вовсе. Запасной путь —
+    # Docker из репозитория самой Ubuntu.
+    if ! { curl -fsSL https://get.docker.com -o get-docker.sh && sh get-docker.sh; }; then
+        echo "⚠️  get.docker.com не справился — ставлю Docker из репозитория Ubuntu."
+    fi
+    rm -f get-docker.sh
 fi
-apt-get update && apt-get install -y docker-compose-plugin git
+if ! command -v docker &> /dev/null; then
+    apt_get update && apt_get install -y docker.io || true
+fi
+# Compose: у Docker он зовётся docker-compose-plugin, у Ubuntu — docker-compose-v2.
+if ! docker compose version >/dev/null 2>&1; then
+    apt_get update
+    apt_get install -y docker-compose-plugin 2>/dev/null || apt_get install -y docker-compose-v2 || true
+fi
+apt_get install -y git
+if ! command -v docker >/dev/null 2>&1 || ! docker compose version >/dev/null 2>&1; then
+    echo "❌ Docker или Docker Compose не установились — дальше узел не собрать."
+    echo "   Проверьте вывод выше (сеть, apt) и запустите установку снова."
+    exit 1
+fi
 systemctl enable docker
 systemctl start docker
+
+# Обслуживание хоста: ночные обновления, модули файрвола, уборка, сторож узла.
+# После Docker, а не до: служба сторожа требует docker.service, и до его
+# установки она не стартовала до первой перезагрузки. И с папкой узла: без
+# неё служба сторожа прописывалась с корнем репозитория и не видела ни метки
+# установки (лечила недостроенный узел), ни своих файлов — до первого деплоя.
+if [ -f "$APP_DIR/../scripts/ensure_host_maintenance.sh" ]; then
+    bash "$APP_DIR/../scripts/ensure_host_maintenance.sh" "$APP_DIR" || true
+fi
 
 echo "🔧 Настройка прав..."
 chmod +x "$APP_DIR/install.sh"
@@ -307,6 +360,23 @@ if ! grep -q '^BACKUP_PASSWORD=.\+' "$APP_DIR/.env" 2>/dev/null; then
 fi
 chmod 600 "$APP_DIR/.env"
 
+# --- Токен бота и ID владельца: опечатка видна сразу, а не по боту-молчуну ---
+# Бот с неверным токеном падает при каждом старте и перезапускается по кругу, а
+# снаружи это просто бот, который не отвечает. Проверяем хотя бы вид значений:
+# дозвониться до Telegram отсюда нельзя — до подключения Германии он недоступен.
+BT=$(grep -E '^BOT_TOKEN=' "$APP_DIR/.env" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '"'"'"' \r')
+AID=$(grep -E '^ADMIN_ID=' "$APP_DIR/.env" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '"'"'"' \r')
+if ! printf '%s' "$BT" | grep -qE '^[0-9]{5,}:[A-Za-z0-9_-]{30,}$'; then
+    if [ -z "$BT" ]; then W="пуст"; else W="выглядит неверно"; fi
+    echo "⚠️  BOT_TOKEN в $APP_DIR/.env $W: нужен вид 123456789:AAE…"
+    echo "   (его выдаёт @BotFather). Без верного токена бот не запустится."
+fi
+if ! printf '%s' "$AID" | grep -qE '^-?[0-9]{5,}$'; then
+    if [ -z "$AID" ]; then W="пуст"; else W="не число («$AID»)"; fi
+    echo "⚠️  ADMIN_ID в $APP_DIR/.env $W: нужен ваш числовой Telegram ID"
+    echo "   (его покажет @userinfobot). Без него бот не узнает владельца."
+fi
+
 # --- Логин и пароль базы ---
 # Пустой пароль postgres не принимает: контейнер базы падает на первом же
 # старте и перезапускается по кругу. Снаружи это видно только у бота —
@@ -380,7 +450,24 @@ else
     echo "   Модуль недоступен — остаёмся на прежнем способе."
 fi
 
-BUILDKIT_PROGRESS=plain docker compose up -d --build --remove-orphans
+# Сборка тянет пакеты из сети (зеркала Alpine, pip), и разовый сбой сети здесь
+# обычное дело — второй заход обычно проходит. Не прошёл и он — останавливаемся:
+# раньше установщик после упавшей сборки ждал узел пять минут, базу три,
+# не выпускал ключ и в конце писал «установка завершена».
+compose_up() { BUILDKIT_PROGRESS=plain docker compose up -d --build --remove-orphans; }
+if ! compose_up; then
+    echo "⚠️  Сборка не удалась — повторяю через 30 секунд (часто это разовый сбой сети)..."
+    sleep 30
+    if ! compose_up; then
+        echo "================================================================"
+        echo "❌ КОНТЕЙНЕРЫ НЕ СОБРАЛИСЬ — установка остановлена."
+        echo "   Причина — в выводе сборки выше (строки ERROR / failed to solve)."
+        echo "   Чаще всего это сеть: недоступно зеркало пакетов. Запустите"
+        echo "   установку ещё раз: всё уже сделанное повторно не выполняется."
+        echo "================================================================"
+        exit 1
+    fi
+fi
 
 # --- КЛЮЧ ДЛЯ ГЕРМАНИИ (DE_AGENT) ------------------------------------------
 # Ключ выпускает бот: просит панель узла (vpn_wireguard) завести пир и пишет

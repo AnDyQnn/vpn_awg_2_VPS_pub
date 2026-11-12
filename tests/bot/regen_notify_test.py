@@ -32,9 +32,9 @@ class Resp:
 class Session:
     def get(self, url, **kw):
         return Resp([{"uuid": "rn-1", "latest_handshake": 1790000000,
-                      "endpoint": "95.24.1.2:5555"},
+                      "endpoint": "203.0.113.24:5555"},
                      {"uuid": "retired-rn-1", "latest_handshake": 1789999000,
-                      "endpoint": "95.24.1.2:4444"}])
+                      "endpoint": "203.0.113.24:4444"}])
 
     async def __aenter__(self):
         return self
@@ -67,7 +67,7 @@ async def main():
     await run_once()
     msgs = [m for m in SENT if "новому ключу" in (m or "")]
     assert len(msgs) == 1, SENT
-    assert "Перевыпущенный" in msgs[0] and "95.24.1.2" in msgs[0], msgs[0]
+    assert "Перевыпущенный" in msgs[0] and "203.0.113.24" in msgs[0], msgs[0]
     print("владелец узнал о подключении по новому ключу: ок")
     print("  ---\n  " + msgs[0].replace("\n", "\n  "))
 

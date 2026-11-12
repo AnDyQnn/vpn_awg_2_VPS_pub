@@ -379,6 +379,8 @@ for ENV_DIR in "$(dirname "$SELF_DIR")"/VPS_RU "$(dirname "$SELF_DIR")"/VPS_DE; 
     ENV_FILE="$ENV_DIR/.env"
     [ -f "$ENV_FILE" ] || continue
     chmod 600 "$ENV_FILE" 2>/dev/null || true
+    # Без перевода строки в конце дозапись склеилась бы с последней строкой.
+    [ -s "$ENV_FILE" ] && [ "$(tail -c1 "$ENV_FILE" | wc -l)" -eq 0 ] && echo >> "$ENV_FILE"
     # API_TOKEN общий для обоих узлов, пароль архива — только у мастера. Лишняя
     # пустая строка ничему не мешает, а недостающая прячет проблему.
     for KEY in API_TOKEN BACKUP_PASSWORD; do

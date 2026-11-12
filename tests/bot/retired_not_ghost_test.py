@@ -72,7 +72,7 @@ PEERS = [
     # Света: новый ключ ещё не подключён, старый держит связь.
     {"uuid": "rg-sveta", "public_key": "NEWKEY", "latest_handshake": 0, "endpoint": "(none)"},
     {"uuid": "retired-rg-sveta", "public_key": "OLDKEY", "latest_handshake": NOW - 5,
-     "endpoint": "193.0.2.41:55597"},
+     "endpoint": "198.51.100.41:55597"},
     # Замороженный человек со старым ключом перевыпуска.
     {"uuid": "retired-rg-paused", "public_key": "PAUSEDOLD", "latest_handshake": NOW - 5,
      "endpoint": "198.51.100.7:4000"},
@@ -100,7 +100,7 @@ async def main():
     print("  снято:", sorted(killed), "| тревог:", len(SENT))
 
     assert "OLDKEY" not in killed, "старый ключ перевыпуска убит как призрак"
-    assert not any("OLDKEY" in s or "193.0.2.41" in s for s in SENT), \
+    assert not any("OLDKEY" in s or "198.51.100.41" in s for s in SENT), \
         "тревога о «несанкционированном доступе» с адреса самого человека"
     print("старый ключ перевыпуска живёт, тревоги нет: ок")
 

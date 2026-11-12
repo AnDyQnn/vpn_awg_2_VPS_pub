@@ -12,8 +12,11 @@ import os
 import re
 import subprocess
 import time
+import sys
 import typing
 
+# Узел подтягивает соседние модули (dnsfilter) по ходу работы — им нужен путь.
+sys.path.insert(0, "/app")
 SRC = "/app/api.py"
 tree = ast.parse(io.open(SRC, encoding="utf-8").read())
 picked = []
@@ -93,6 +96,8 @@ ns["set_dns_filters"](type("R", (), {"clients": {"10.13.13.9": ["adult"]},
                                      "allow_common": [], "allow_clients": {},
                                      "except_clients": {},
                                      "pools": {},
+                                     # мягкий контроль — тоже поле настоящей модели
+                                     "watch": [],
                                      "bot_link": ""})())
 ns["set_dns_names"](type("R", (), {"names": {"panel.vpn": "10.13.13.1"},
                                     "upstreams": {}, "zone": "vpn"})())

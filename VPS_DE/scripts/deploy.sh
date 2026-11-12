@@ -45,8 +45,16 @@ echo "[Deploy] Шаг 1: Обновление кода из Git..."
 cd "$PROJECT_ROOT" || { echo "Ошибка: не могу перейти в корень $PROJECT_ROOT"; exit 1; }
 
 # Подтягиваем переменные из .env ноды (если там лежит GIT_TOKEN для приватных репо)
+# Построчно, а не `export $(grep … | xargs)`: xargs падал на кавычке в
+# значении («unmatched single quote») и резал значения с пробелами — пароль
+# архива `my pass` уезжал в окружение как две переменные.
 if [ -f "$NODE_DIR/.env" ]; then
-    export $(grep -E -v '^#' "$NODE_DIR/.env" | xargs)
+    while IFS= read -r _line || [ -n "$_line" ]; do
+        _line="${_line%$'\r'}"
+        case "$_line" in ''|'#'*) continue ;; esac
+        case "${_line%%=*}" in *[!A-Za-z0-9_]*|'') continue ;; esac
+        export "${_line%%=*}=${_line#*=}"
+    done < "$NODE_DIR/.env"
 fi
 
 # ЗАЩИТА .env (креды бота/БД): бэкапим перед reset --hard и восстанавливаем после, если
@@ -155,6 +163,8 @@ if [ -f "$NODE_DIR/.env" ]; then
     if grep -q "^APP_VERSION=" "$NODE_DIR/.env"; then
         sed -i "s|^APP_VERSION=.*|APP_VERSION=$APP_VERSION|" "$NODE_DIR/.env"
     else
+        # Без перевода строки в конце версия склеилась бы с последней строкой.
+        [ -s "$NODE_DIR/.env" ] && [ "$(tail -c1 "$NODE_DIR/.env" | wc -l)" -eq 0 ] && echo >> "$NODE_DIR/.env"
         echo "APP_VERSION=$APP_VERSION" >> "$NODE_DIR/.env"
     fi
 fi
@@ -174,7 +184,9 @@ echo "[Deploy] Шаг 3: Сборка новых образов (старые к
 # десятки раз в секунду. В терминале это одна строка, а в журнале —
 # отдельная запись на каждую перерисовку: на узле выхода за один деплой
 # так набежало 2,5 миллиона строк и полгигабайта syslog при диске в 10 ГБ.
-# `--progress plain` пишет по строке на шаг, а не на кадр.
+# Построчный вывод — переменной BUILDKIT_PROGRESS=plain, а не флагом: у `docker
+# compose` флаг --progress переезжает между подкомандой и общими флагами, и
+# на какой-то версии выкладка упала бы с «unknown flag», как упала установка.
 # Сборка идёт с пониженным приоритетом. На одном ядре она иначе забирает узел
 # себе: замеренная средняя нагрузка доходила до пяти, и люди в этот момент
 # чувствовали VPN тормозящим — хотя ничего не ломалось, просто очередь.
@@ -187,7 +199,7 @@ BUILD_NICE=""
 command -v nice >/dev/null 2>&1 && BUILD_NICE="nice -n 15"
 command -v ionice >/dev/null 2>&1 && BUILD_NICE="$BUILD_NICE ionice -c2 -n7"
 
-if ! env BUILDKIT_MAX_PARALLELISM=1 $BUILD_NICE docker compose build --progress plain; then
+if ! env BUILDKIT_PROGRESS=plain BUILDKIT_MAX_PARALLELISM=1 $BUILD_NICE docker compose build; then
     echo "[Deploy] ❌ Сборка не удалась — работающие контейнеры НЕ трогаю."
     echo "[Deploy] Деплой отменён, VPN продолжает работать на старой версии."
     exit 1

@@ -95,7 +95,7 @@ while true; do
         echo "[Updater] Найдена метка рестарта WG. Перезапуск контейнеров..."
         rm -f "$RESTART_WG_FLAG"
         # Ищем контейнер по имени или через docker compose
-        cd "$NODE_DIR" && docker compose restart ru_wireguard || docker compose restart de_vpn_agent
+        cd "$NODE_DIR" && docker compose restart de_wireguard   # имя сервиса в compose, не контейнера
     fi
     
     # 4.5 ЗАПИСЬ ПЕРЕМЕННОЙ В .env ПО ПРОСЬБЕ БОТА
@@ -110,6 +110,8 @@ while true; do
         echo "[Updater] Обновляю .env по запросу бота..."
         ENV_FILE="$NODE_DIR/.env"
         touch "$ENV_FILE"; chmod 600 "$ENV_FILE"
+        # Без перевода строки в конце новая переменная склеилась бы с последней.
+        [ -s "$ENV_FILE" ] && [ "$(tail -c1 "$ENV_FILE" | wc -l)" -eq 0 ] && echo >> "$ENV_FILE"
         for REQ in $ENV_REQUESTS; do
             [ -f "$REQ" ] || continue
             while IFS= read -r line; do
