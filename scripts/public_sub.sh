@@ -427,11 +427,27 @@ case "${1:-status}" in
         "$CB" renew --cert-name "$CERT_NAME" --standalone --non-interactive \
             >/tmp/certbot-renew.log 2>&1
     fi
-    if copy_cert; then
-        UNTIL=$(openssl x509 -in "$CERT_DIR/fullchain.pem" -noout -enddate 2>/dev/null | cut -d= -f2)
-        report "on" "сертификат действует до $UNTIL"
-    else
+    RENEW_RC=$?
+    # Действующий сертификат копируем в любом случае: не продлился — значит,
+    # старый ещё жив, и пусть работает до последнего.
+    #
+    # Но неудачу продления больше не выдаём за успех. Раньше код certbot здесь
+    # не смотрелся вовсе: продление падало, а состояние писалось «действует до…»
+    # по старому сертификату — и выглядело здоровым, пока срок не кончался. У
+    # сертификата на адрес запас всего около двух суток, у доменного — месяц,
+    # но в обоих случаях узнать об этом было неоткуда.
+    if ! copy_cert; then
         report "error" "продление не удалось, подробности в /tmp/certbot-renew.log"
+    else
+        UNTIL=$(openssl x509 -in "$CERT_DIR/fullchain.pem" -noout -enddate 2>/dev/null | cut -d= -f2)
+        if [ "$RENEW_RC" -ne 0 ]; then
+            WHY=$(grep -iE "error|fail|problem|Detail:|unauthorized|timeout|refused" /tmp/certbot-renew.log 2>/dev/null |
+                  grep -v "^Saving debug" | tail -1 | tr -d '"\\' | cut -c1-160)
+            report "warning" "продлить не вышло, действующий — до $UNTIL; ${WHY:-подробности в /tmp/certbot-renew.log}"
+            tail -8 /tmp/certbot-renew.log | sed 's/^/[сертификат]   /'
+        else
+            report "on" "сертификат действует до $UNTIL"
+        fi
     fi
     ;;
 

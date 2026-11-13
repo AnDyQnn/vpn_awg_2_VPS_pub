@@ -1737,6 +1737,9 @@ async def post_init(application):
         asyncio.create_task(watch_api_token(application)),
         # Смена токена по расписанию — если владелец её включил.
         asyncio.create_task(rotate_loop(application)),
+        # Сертификат узла: не провалилось ли продление — владельцу сразу, а не
+        # строкой на экране в последние сутки.
+        asyncio.create_task(__import__("handlers_pubsub").cert_alert_loop(application)),
         # Подписка Clash Mi на 443: тот же ключ AmneziaWG ссылкой. Без
         # сертификата порт не открывается.
         asyncio.create_task(clashsub.serve()),

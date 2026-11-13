@@ -147,7 +147,7 @@ async def screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines += ["", "Всё настроено."]
 
     msg = (st.get("msg") or "").strip()
-    if msg and st.get("state") == "error":
+    if msg and st.get("state") in ("error", "warning"):
         lines += ["", f"⚠️ Последняя попытка: _{msg}_"]
 
     # --- Кнопки. Невыполненный шаг назван шагом и стоит первым ---
@@ -271,6 +271,65 @@ async def _wait_screen(update, context, what):
         return
 
     await screen(update, context)
+
+
+# --- Сторож сертификата --------------------------------------------------------
+#
+# Продление идёт само, таймером на хосте. Но о неудаче раньше никто не узнавал:
+# срок был виден только на этом экране и только в последние сутки. У сертификата
+# на адрес между «certbot начал продлевать» и «кончился» около двух суток, у
+# доменного — месяц, и в обоих случаях проваленное продление молчало до конца.
+#
+# Пороги — по тому, когда certbot продлевает сам: доменный за 30 дней до конца,
+# на адрес — при трети срока (~53 часа). Сертификат, у которого осталось меньше,
+# значит, продлиться не смог.
+CERT_ALERT_KEY = "cert_alert_day"
+NAMED_ALERT_DAYS = 21
+IP_ALERT_DAYS = 1.5
+
+
+def cert_problem():
+    """Текст тревоги или None, если с сертификатом всё в порядке."""
+    if not is_on():
+        return None
+    st = state()
+    left = cert_days_left()
+    named = bool(st.get("named"))
+    if st.get("state") in ("warning", "error") and st.get("msg"):
+        # Текст берётся из лога certbot — в нём бывают «_acme-challenge» и
+        # прочие символы разметки, на которых сообщение не отправилось бы.
+        from utils import escape_md
+        why = escape_md(st["msg"])
+    elif left is not None and left < (NAMED_ALERT_DAYS if named else IP_ALERT_DAYS):
+        why = "не продлился вовремя"
+    else:
+        return None
+    what = "на имя" if named else "на адрес"
+    srok = ("осталось %.1f сут." % left) if left is not None else "срок не читается"
+    return ("🔐 **Сертификат узла**\n\n"
+            "Сертификат %s: %s.\n%s\n\n"
+            "Продление идёт само дважды в сутки; если не выйдет до конца срока, "
+            "страница отказа и подписка откроются с предупреждением браузера. "
+            "Подробности — «Администрирование → Домен и сертификаты»."
+            % (what, srok, why))
+
+
+async def cert_alert_loop(app):
+    """Раз в час: не продлился ли сертификат. Владельцу — не чаще раза в сутки."""
+    import asyncio
+    from monitor import notify_admin
+    from utils import get_moscow_now
+    await asyncio.sleep(600)
+    while True:
+        try:
+            text = cert_problem()
+            today = get_moscow_now().strftime("%Y-%m-%d")
+            if text and await db.get_setting(CERT_ALERT_KEY) != today:
+                await db.set_setting(CERT_ALERT_KEY, today)
+                await notify_admin(app, text=text, parse_mode=ParseMode.MARKDOWN)
+        except Exception as e:
+            print(f"Сторож сертификата: {e}")
+        await asyncio.sleep(3600)
 
 
 def status_line():
