@@ -325,6 +325,36 @@ if command -v ufw >/dev/null 2>&1; then
     done
 fi
 
+# 4c. fail2ban: тот порт, на котором SSH на самом деле, и журнал, который есть.
+#
+# Проверено на стенде (Ubuntu 22.04–26.04): после смены порта SSH бан ставился
+# на 22-й — перебор fail2ban видел, адрес банил, а на настоящий порт этот адрес
+# продолжал ломиться. А на 22.04 без rsyslog fail2ban не запускался вовсе: ждал
+# /var/log/auth.log, которого нет. Защита, которая молча не защищает.
+#
+# Порт берём у самого sshd, а не из установщика: так это работает и на узлах,
+# где порт меняли руками, и чинится обычным обновлением.
+if command -v fail2ban-client >/dev/null 2>&1; then
+    F2B_PORTS=$(sshd -T 2>/dev/null | awk '/^port /{print $2}' | sort -un | paste -sd, -)
+    F2B_PORTS=${F2B_PORTS:-22}
+    # Журнал systemd читает python3-systemd; без него backend=systemd не встанет.
+    if ! python3 -c 'import systemd.journal' >/dev/null 2>&1; then
+        DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 install -y python3-systemd >/dev/null 2>&1 || true
+    fi
+    F2B_FILE=/etc/fail2ban/jail.d/zz-vpn-sshd.local
+    F2B_WANT=$(printf '[sshd]\nenabled = true\nport = %s\nbackend = systemd\n' "$F2B_PORTS")
+    if [ "$(cat "$F2B_FILE" 2>/dev/null)" != "$F2B_WANT" ]; then
+        mkdir -p /etc/fail2ban/jail.d
+        printf '%s\n' "$F2B_WANT" > "$F2B_FILE"
+        systemctl restart fail2ban >/dev/null 2>&1 || true
+        echo "[maintenance] fail2ban: бан ставится на порт SSH $F2B_PORTS, журнал — systemd."
+    elif ! systemctl is-active --quiet fail2ban 2>/dev/null; then
+        systemctl restart fail2ban >/dev/null 2>&1 || true
+    fi
+    systemctl is-active --quiet fail2ban 2>/dev/null \
+        || echo "[maintenance] ⚠️  fail2ban не запустился: journalctl -u fail2ban -n 20"
+fi
+
 # 5. Сторож узла — отдельной службой, а не внутри бота.
 #    Раньше за здоровьем следил сам бот: падал бот — лечить было некому. Служба
 #    поднимается сама после перезагрузки и переживает падение любого контейнера.

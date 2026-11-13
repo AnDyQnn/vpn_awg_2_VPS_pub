@@ -122,7 +122,7 @@ echo "🚨 ЗАЩИТА ОТ БРУТФОРСА (Смена порта SSH)"
 # стандартным» и открывал в ufw 22-й, хотя SSH давно жил на другом.
 CUR_SSH_PORT=$(sshd -T 2>/dev/null | awk '/^port /{print $2; exit}')
 CUR_SSH_PORT=${CUR_SSH_PORT:-22}
-read -p "Введите новый порт для SSH (рекомендуется от 10000 до 65000) или нажмите Enter, чтобы оставить $CUR_SSH_PORT: " SSH_PORT
+read -p "Введите новый порт для SSH (рекомендуется от 10000 до 65000) или нажмите Enter, чтобы оставить $CUR_SSH_PORT: " SSH_PORT || true   # под set -e: без терминала read кончается EOF, и установка обрывалась молча
 SSH_PORT=${SSH_PORT:-$CUR_SSH_PORT}
 # Только число в допустимых пределах: опечатка ушла бы в sshd_config, и sshd
 # не поднялся бы вовсе.
