@@ -11,9 +11,13 @@
 #   • остановленные контейнеры;
 #   • образы прежних версий проекта, которыми не пользуется ни один контейнер;
 #   • висячие слои;
-#   • кэш сборки сверх потолка — самый старый первым.
-# Потолок зависит от диска: на большом 3 ГБ, на маленьком 1,5 ГБ. И в любом
-# случае на диске остаётся не меньше 2 ГБ свободного места.
+#   • кэш сборки: на большом диске — сверх потолка в 3 ГБ (самый старый первым,
+#     и на диске остаётся не меньше 2 ГБ); на маленьком — целиком.
+#
+# Маленький диск (меньше 20 ГБ, узел выхода на 10 ГБ) кэш не держит вовсе:
+# полтора гигабайта кэша там — седьмая часть диска ради того, чтобы выкладка
+# шла быстрее. Владелец решил: пусть обновление подольше качает пакеты, а
+# место на тесном диске остаётся свободным.
 #
 #   docker_gc.sh            — убрать
 #   docker_gc.sh --dry-run  — только показать, что занято
@@ -25,12 +29,13 @@ DRY=0
 CAP="${DOCKER_CACHE_CAP:-}"
 if [ -z "$CAP" ]; then
     TOTAL_KB=$(df -Pk / 2>/dev/null | awk 'NR==2 {print $2}')
-    if [ "${TOTAL_KB:-0}" -gt 20000000 ]; then CAP=3gb; else CAP=1500mb; fi
+    if [ "${TOTAL_KB:-0}" -gt 20000000 ]; then CAP=3gb; else CAP=0; fi
 fi
 
 if [ "$DRY" = "1" ]; then
     docker system df 2>/dev/null
-    echo "потолок кэша сборки: $CAP"
+    if [ "$CAP" = "0" ]; then echo "кэш сборки: не держим (маленький диск)"
+    else echo "потолок кэша сборки: $CAP"; fi
     exit 0
 fi
 
@@ -48,6 +53,10 @@ docker images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null \
 
 docker image prune -f >/dev/null 2>&1
 
-docker builder prune -af --max-used-space "$CAP" --min-free-space 2gb >/dev/null 2>&1 \
-    || docker builder prune -af --keep-storage "$CAP" >/dev/null 2>&1
+if [ "$CAP" = "0" ]; then
+    docker builder prune -af >/dev/null 2>&1
+else
+    docker builder prune -af --max-used-space "$CAP" --min-free-space 2gb >/dev/null 2>&1 \
+        || docker builder prune -af --keep-storage "$CAP" >/dev/null 2>&1
+fi
 exit 0
