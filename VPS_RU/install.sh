@@ -500,7 +500,7 @@ sleep 10
 echo "⏳ Жду базу данных..."
 DB_OK=0
 for i in $(seq 1 36); do                       # до 3 минут: первая настройка базы небыстрая
-    if docker exec vpn_db pg_isready -q -h 127.0.0.1 2>/dev/null; then
+    if docker exec vpn_db sh -c 'pg_isready -q -h 127.0.0.1 -U "$POSTGRES_USER"' 2>/dev/null; then
         DB_OK=1
         break
     fi

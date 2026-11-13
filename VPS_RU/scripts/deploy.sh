@@ -63,12 +63,18 @@ echo "[Deploy] Текущая версия (для возможного отка
 
 # Шаг 0: БЭКАП БД перед обновлением (страховка). pg_dumpall из работающего postgres —
 # быстро, без остановки; обе базы (vpndb бота + cpdb CP). Ротация: храним последние 5.
-if docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^vpn_db$'; then
+# При передаче работы новой версии скрипта (см. 1b ниже) дамп уже снят первым
+# проходом: второй ложился рядом через семь секунд, и ротация на пять копий
+# хранила историю двух обновлений вместо пяти. Путь к дампу передаётся дальше.
+if [ -n "${DEPLOY_HANDOVER:-}" ]; then
+    echo "[Deploy] Шаг 0: бэкап уже снят до передачи — ${PRE_BACKUP:-нет}"
+elif docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^vpn_db$'; then
     echo "[Deploy] Шаг 0: Бэкап БД перед обновлением..."
     BK_DIR="$NODE_DIR/volumes/backups"; mkdir -p "$BK_DIR"
     PRE_BACKUP="$BK_DIR/pre_update_$(date +%Y%m%d_%H%M%S).sql.gz"
     if docker exec vpn_db sh -c 'pg_dumpall -U "$POSTGRES_USER"' 2>/dev/null | gzip > "$PRE_BACKUP"; then
         echo "[Deploy] ✅ Бэкап: $PRE_BACKUP ($(du -h "$PRE_BACKUP" | cut -f1))"
+        export PRE_BACKUP
         ls -1t "$BK_DIR"/pre_update_*.sql.gz 2>/dev/null | tail -n +6 | xargs -r rm -f
     else
         echo "[Deploy] ⚠️ Бэкап не удался — продолжаю (данные в томе сохраняются и так)"
@@ -330,7 +336,7 @@ if [ -n "$problem" ] && [ -n "$PREV_HASH" ]; then
     done
     echo "[Deploy] ↩️  ОТКАТ на предыдущую версию ${PREV_HASH:0:7}..."
     cd "$PROJECT_ROOT" && git reset --hard "$PREV_HASH"
-    cd "$NODE_DIR"
+    cd "$NODE_DIR" || exit 1
     if env BUILDKIT_PROGRESS=plain BUILDKIT_MAX_PARALLELISM=1 $BUILD_NICE docker compose build \
             && docker compose up -d; then
         echo "${PREV_HASH:0:7}" > "$NODE_DIR/volumes/VERSION"

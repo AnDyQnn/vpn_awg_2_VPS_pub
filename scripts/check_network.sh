@@ -170,7 +170,9 @@ else
 fi
 
 if [ "$NODE" = "ru" ] && running vpn_db; then
-    if docker exec vpn_db pg_isready -q 2>/dev/null; then
+    # Под своим пользователем: без -U утилита ходит как root, а такой роли в
+    # базе нет — postgres пишет FATAL в журнал на каждую проверку.
+    if docker exec vpn_db sh -c 'pg_isready -q -U "$POSTGRES_USER"' 2>/dev/null; then
         ok "База данных принимает соединения"
     else
         fail "База данных не принимает соединения"

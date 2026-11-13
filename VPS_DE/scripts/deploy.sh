@@ -241,7 +241,7 @@ if [ -n "$problem" ] && [ -n "$PREV_HASH" ]; then
     echo "[Deploy] ↩️  ОТКАТ на предыдущую версию ${PREV_HASH:0:7}..."
     cd "$PROJECT_ROOT" && git reset --hard "$PREV_HASH"
     [ ! -f "$NODE_DIR/.env" ] && [ -f "$ENV_BAK" ] && cp -f "$ENV_BAK" "$NODE_DIR/.env"
-    cd "$NODE_DIR"
+    cd "$NODE_DIR" || exit 1
     BUILDKIT_PROGRESS=plain docker compose up -d --build --remove-orphans
     echo "${PREV_HASH:0:7}" > "$NODE_DIR/volumes/VERSION"
     docker image prune -f
