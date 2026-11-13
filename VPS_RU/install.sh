@@ -241,7 +241,7 @@ mkdir -p "$APP_DIR/volumes/secrets"
 chmod 700 "$APP_DIR/volumes/secrets"
 
 # ИСПРАВЛЕНИЕ: Умный поиск Git-репозитория
-cd "$APP_DIR"
+cd "$APP_DIR" || exit 1
 if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     git rev-parse HEAD | cut -c1-7 > "$APP_DIR/volumes/VERSION"
 else
