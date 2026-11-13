@@ -1414,6 +1414,24 @@ class Database:
         можно сделать с ошибочным, это убрать его."""
         await self.execute("DELETE FROM pps_events WHERE id=$1", int(event_id))
 
+    async def delete_pps_events(self, hours=24, user_uuid=None):
+        """Снять разом все события за срок — одного ключа или всех.
+
+        Экран нагрузки показывает человека одной карточкой, сколько бы раз он ни
+        превысил, — и снимать его надо так же, одним нажатием, а не по событию.
+        Возвращает, сколько снято."""
+        if user_uuid:
+            rows = await self.fetch_all(
+                "DELETE FROM pps_events WHERE user_uuid=$1 AND "
+                "started_at > NOW() - ($2 || ' hours')::interval RETURNING id",
+                user_uuid, str(hours))
+        else:
+            rows = await self.fetch_all(
+                "DELETE FROM pps_events WHERE "
+                "started_at > NOW() - ($1 || ' hours')::interval RETURNING id",
+                str(hours))
+        return len(rows or [])
+
     # ------------------------ ЧАСОВЫЕ СРЕЗЫ ------------------------
     async def find_inverted_spans(self, min_bytes=50 * 1024 * 1024,
                                   min_run=12):

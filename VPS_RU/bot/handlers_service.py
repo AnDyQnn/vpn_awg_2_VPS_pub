@@ -361,22 +361,27 @@ async def load_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"Разрешено `{limit}` пакетов в секунду на человека, "
                 f"сервер в сумме тянет около `{ceiling}`.")
     else:
+        # Одна карточка на ключ, а не строка на каждое превышение: один и тот
+        # же человек за сутки упирался в лимит по десятку раз, и список
+        # превращался в столбик одного имени. Под именем — счётчик и последние
+        # случаи; ключи — по самому сильному пику.
+        people = group_events(events)
         lines = ["📊 **Нагрузка за сутки**", ""]
-        seen = set()
-        for e in events:
-            if e["user_uuid"] in seen:
-                continue
-            seen.add(e["user_uuid"])
-            when = dt_to_moscow(e["ended_at"] or e["started_at"])
-            verdict, worrying = event_verdict(dict(e), short=True)
+        for p in people[:LOAD_PEOPLE]:
+            worrying = any(event_verdict(dict(e), short=True)[1] for e in p["events"])
             mark = "⚠️" if worrying else "•"
-            # Одна строка на человека: кто, что это было, пик, когда.
-            # Подробности — в его карточке, здесь они только мешают смотреть.
-            lines.append(
-                f"{mark} **{escape_md(e['name'] or 'без имени')}** — {verdict} · "
-                f"`{e['peak_pps']}` пак/с · {when.strftime('%d.%m %H:%M')}")
-            if len(seen) >= 8:
-                break
+            n = len(p["events"])
+            lines.append(f"{mark} **{escape_md(p['name'] or 'без имени')}** — "
+                         f"{_times_word(n)}, пик `{p['peak']}` пак/с")
+            for e in p["events"][:LOAD_CASES]:
+                when = dt_to_moscow(e["ended_at"] or e["started_at"])
+                verdict, _ = event_verdict(dict(e), short=True)
+                lines.append(f"     · {verdict} · `{e['peak_pps']}` · "
+                             f"{when.strftime('%d.%m %H:%M')}")
+            if n > LOAD_CASES:
+                lines.append(f"     · и ещё {n - LOAD_CASES}")
+        if len(people) > LOAD_PEOPLE:
+            lines.append(f"\n_…и ещё {len(people) - LOAD_PEOPLE} чел._")
         lines.append("")
         lines.append(f"Лимит `{limit}` пак/с на человека, узел тянет `{ceiling}`.")
         text = "\n".join(lines)
@@ -386,13 +391,17 @@ async def load_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # вывод, — поэтому ошибочный можно только убрать. Такое случается: события,
     # посчитанные до исправления направлений трафика, показывали качающего
     # человека раздающим и висели сутки.
-    for e in (events or [])[:8]:
-        if not e.get("id"):
-            continue
-        who = (e["name"] or "без имени")[:16]
-        when = dt_to_moscow(e["ended_at"] or e["started_at"]).strftime("%d.%m %H:%M")
-        kb.append([InlineKeyboardButton(f"🗑 Снять: {who} · {when}",
-                                        callback_data=f"svc_ev_del_{e['id']}")])
+    #
+    # Снимаем ключом целиком — как и показываем: кнопка на каждое событие
+    # повторяла одно имя столько раз, сколько он превысил.
+    if events:
+        for p in group_events(events)[:LOAD_PEOPLE]:
+            who = (p["name"] or "без имени")[:18]
+            kb.append([InlineKeyboardButton(
+                f"🗑 Снять: {who} · {len(p['events'])}",
+                callback_data=f"svc_ev_delu_{p['uuid']}")])
+        kb.append([InlineKeyboardButton("🧹 Снять все за сутки",
+                                        callback_data="svc_ev_delall")])
     kb += [[InlineKeyboardButton("📈 График нагрузки", callback_data="svc_chart")],
            [InlineKeyboardButton("⚖️ Лимиты", callback_data="svc_limits")],
            [InlineKeyboardButton("🔙 Назад", callback_data="svc_menu")]]
@@ -400,10 +409,65 @@ async def load_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                   parse_mode=ParseMode.MARKDOWN)
 
 
+LOAD_PEOPLE = 8      # карточек на экране
+LOAD_CASES = 3       # случаев под именем, остальные — числом
+
+
+def group_events(events):
+    """События за сутки — по ключам. Ключи по самому сильному пику, случаи
+    внутри — от свежего к старому: смотрят обычно, что было последним."""
+    people = {}
+    for e in events:
+        p = people.setdefault(e["user_uuid"], {
+            "uuid": e["user_uuid"], "name": e["name"], "events": [], "peak": 0})
+        p["events"].append(e)
+        p["peak"] = max(p["peak"], int(e["peak_pps"] or 0))
+    for p in people.values():
+        p["events"].sort(key=lambda e: e["ended_at"] or e["started_at"], reverse=True)
+    return sorted(people.values(), key=lambda p: -p["peak"])
+
+
+def _times_word(n):
+    if n % 10 == 1 and n % 100 != 11:
+        return f"{n} раз"
+    if n % 10 in (2, 3, 4) and n % 100 not in (12, 13, 14):
+        return f"{n} раза"
+    return f"{n} раз"
+
+
 async def event_delete(update: Update, context: ContextTypes.DEFAULT_TYPE, event_id):
     await db.delete_pps_event(event_id)
     await db.log_event("Нагрузка", f"Вердикт снят вручную (событие {event_id})")
     await update.callback_query.answer("Снято")
+    await load_screen(update, context)
+
+
+async def events_delete_user(update: Update, context: ContextTypes.DEFAULT_TYPE, user_uuid):
+    """Все превышения ключа за сутки — одним нажатием."""
+    n = await db.delete_pps_events(24, user_uuid=user_uuid)
+    user = await db.get_user_by_uuid(user_uuid)
+    name = (user or {}).get("name") or user_uuid[:8]
+    await db.log_event("Нагрузка", f"Сняты вручную превышения ключа {name}: {n}")
+    await update.callback_query.answer(f"Снято: {n}")
+    await load_screen(update, context)
+
+
+async def events_delete_all_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    kb = [[InlineKeyboardButton("✅ Да, снять все", callback_data="svc_ev_delall_do")],
+          [InlineKeyboardButton("🔙 Отмена", callback_data="svc_load")]]
+    await show_screen(query, context,
+                      "🧹 **Снять все превышения за сутки?**\n\n"
+                      "Список «Нагрузка за сутки» опустеет. Ограничения и лимиты "
+                      "это не трогает — уходят только записи о превышениях.",
+                      reply_markup=InlineKeyboardMarkup(kb), parse_mode=ParseMode.MARKDOWN)
+
+
+async def events_delete_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    n = await db.delete_pps_events(24)
+    await db.log_event("Нагрузка", f"Сняты вручную все превышения за сутки: {n}")
+    await update.callback_query.answer(f"Снято: {n}")
     await load_screen(update, context)
 
 

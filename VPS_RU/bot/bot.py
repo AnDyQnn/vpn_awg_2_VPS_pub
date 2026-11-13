@@ -55,7 +55,7 @@ from handlers_service import (
     ensure_api_token, watch_api_token, rotate_loop, charts_screen,
     token_screen, token_toggle, token_now, token_rollback,
     pick_peer_screen, graphs_menu,
-    event_delete,
+    event_delete, events_delete_user, events_delete_all_confirm, events_delete_all,
     peer_limit_screen
 )
 from handlers_admin import (
@@ -1163,6 +1163,10 @@ async def button_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "svc_load": await load_screen(update, context); return
     if data.startswith("svc_ev_del_"):
         await event_delete(update, context, data.split("svc_ev_del_")[1]); return
+    if data.startswith("svc_ev_delu_"):
+        await events_delete_user(update, context, data[len("svc_ev_delu_"):]); return
+    if data == "svc_ev_delall": await events_delete_all_confirm(update, context); return
+    if data == "svc_ev_delall_do": await events_delete_all(update, context); return
     if data == "svc_chart": await load_chart(update, context); return
     if data == "vpn_graph": await graphs_menu(update, context); return
     if data == "svc_charts": await charts_screen(update, context); return
