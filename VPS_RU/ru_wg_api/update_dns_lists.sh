@@ -63,7 +63,16 @@ for cat in $CATS; do
         echo "[dns-lists] неизвестная категория: $cat"
         continue
     fi
-    if [ "${FORCE:-0}" != "1" ] && [ -s "$CACHE_DIR/$cat.txt" ]; then
+    # Источник категории сменился (новая версия поменяла список) — кэш от
+    # прежнего источника не считается свежим, иначе новый список доехал бы
+    # только через полсуток.
+    if [ "$(cat "$CACHE_DIR/$cat.src" 2>/dev/null)" != "$urls" ]; then
+        rm -f "$CACHE_DIR/$cat.src"
+        FORCE_THIS=1
+    else
+        FORCE_THIS=0
+    fi
+    if [ "${FORCE:-0}" != "1" ] && [ "$FORCE_THIS" != "1" ] && [ -s "$CACHE_DIR/$cat.txt" ]; then
         age=$(( now - $(date -r "$CACHE_DIR/$cat.txt" +%s 2>/dev/null || echo 0) ))
         if [ "$age" -lt "$FRESH_SECONDS" ]; then
             continue
@@ -71,16 +80,29 @@ for cat in $CATS; do
     fi
     tmp="$(mktemp)"
     ok=0
-    for url in $urls; do
-        if curl -fsSL --max-time 60 "$url" >> "$tmp" 2>/dev/null; then
-            ok=1
-        else
+    # Источник может быть записан как «основной|запасной»: тот же список с
+    # зеркала. Берём первый, кто ответил, — дважды одно и то же не качаем.
+    for spec in $urls; do
+        IFS='|' read -ra alts <<< "$spec"
+        got=0
+        for url in "${alts[@]}"; do
+            part="$(mktemp)"
+            if curl -fsSL --max-time 60 "$url" > "$part" 2>/dev/null && [ -s "$part" ]; then
+                # Перевод строки в конце: иначе последняя строка этого списка
+                # склеилась бы с первой строкой следующего.
+                cat "$part" >> "$tmp"; echo >> "$tmp"
+                rm -f "$part"; got=1; ok=1
+                break
+            fi
+            rm -f "$part"
             echo "[dns-lists] не скачалось: $url"
-        fi
+        done
+        [ "$got" = 1 ] || echo "[dns-lists] источник недоступен целиком: ${alts[0]}"
     done
     lines="$(wc -l < "$tmp" 2>/dev/null || echo 0)"
     if [ "$ok" = "1" ] && [ "$lines" -ge "$MIN_LINES" ]; then
         mv "$tmp" "$CACHE_DIR/$cat.txt"
+        printf '%s' "$urls" > "$CACHE_DIR/$cat.src"
         echo "[dns-lists] $cat обновлён: $lines строк"
     else
         rm -f "$tmp"

@@ -1329,7 +1329,8 @@ def gc_dns_cache(pool_keys):
                 drop = now - os.path.getmtime(path) > 3600
             except OSError:
                 drop = False
-        elif fn.endswith(".txt"):
+        elif fn.endswith(".txt") or fn.endswith(".src"):
+            # .src — откуда скачан список категории; уходит вместе с ним.
             drop = fn[:-4] not in keep
         elif fn.endswith(".nets"):
             drop = fn[:-5] not in keep
