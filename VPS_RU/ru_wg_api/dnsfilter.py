@@ -95,10 +95,13 @@ CATEGORIES = {
     #
     # «основной|запасной»: GitHub из России открывается не всегда, то же самое
     # отдаёт jsdelivr. Качается первый, кто ответил.
+    # Pro, а не Pro++: Pro++ режет и то, без чего приложения не работают —
+    # graph.instagram.com, startup.mobile.yandex.net, чат поддержки Intercom на
+    # сайтах. Категория обычно общая на всех, ломать её никому нельзя.
     "ads": {
         "title": "Реклама и слежка",
-        "urls": ["https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro.plus-onlydomains.txt"
-                 "|https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/pro.plus-onlydomains.txt"],
+        "urls": ["https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro-onlydomains.txt"
+                 "|https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/pro-onlydomains.txt"],
     },
     "adult": {
         "title": "Для взрослых",
@@ -815,6 +818,11 @@ _hit_seen = {}
 # совпадать с записанным в журнал.
 _hit_refs = {}
 HIT_QUIET_SECONDS = 60
+# Категории, которые режем молча, без записи в журнал. К рекламе и трекерам
+# телефон стучится сам, сотнями доменов в фоне, — человек ничего не открывал.
+# Включённая на всех, она за ночь дала десять тысяч «инцидентов», в которых
+# утонули настоящие.
+SILENT_CATEGORIES = {"ads", "tracking"}
 
 
 def hit_ref(client_ip, name, ts):
@@ -830,6 +838,8 @@ def hit_ref(client_ip, name, ts):
 
 
 def record_hit(client_ip, name, category, watch=False):
+    if category in SILENT_CATEGORIES:
+        return
     now = time.time()
     # Наблюдение и запрет считаем врозь: иначе одно молчаливое обращение к
     # мягкой категории закрыло бы на минуту запись настоящего запрета того же
@@ -1258,7 +1268,8 @@ async def handle_http(reader, writer):
         # Запрос на адрес самого узла — не попытка попасть в закрытое: там
         # нечего закрывать. Страницу показываем, инцидент не пишем.
         host_is_node = host == BLOCK_IP
-        if ip and host and not host_is_node:
+        # Реклама пишется молча — номера у неё нет, и показывать нечего.
+        if ip and host and not host_is_node and category not in SILENT_CATEGORIES:
             # Запись делаем и здесь: закрытый доступ к своему сервису режется
             # не фильтром, а правилами, и в журнал он до сих пор не попадал —
             # инцидента с этим номером просто не существовало бы. Повтора не

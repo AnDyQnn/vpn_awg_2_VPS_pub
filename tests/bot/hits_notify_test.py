@@ -100,23 +100,30 @@ async def main():
     assert sent == 0 and len(app.bot.sent) == 1, "тишина между сводками нарушена"
     print("промежуток соблюдается: ок")
 
-    print("\n=== реклама и трекеры не будят, но считаются ===")
+    print("\n=== реклама и трекеры — не инциденты вовсе ===")
     await db.execute("DELETE FROM settings WHERE key=$1", hh.AT_KEY)
-    before = int(await db.get_setting(hh.LAST_KEY))
     for i in range(12):
         await add(now, "Ника", "10.13.13.5", "track%d.example" % i, "ads")
+        await add(now, "Ника", "10.13.13.5", "trk%d.example" % i, "tracking")
+    n = await db.fetch_val(
+        "SELECT COUNT(*) FROM filter_hits WHERE category IN ('ads','tracking')")
+    assert n == 0, "реклама не должна попадать в журнал: %s" % n
     sent = await hh.notify_new(app)
     print("  отправлено:", sent, "| сообщений всего:", len(app.bot.sent))
-    # Одна «шумная» пачка вместе с одним обычным: сообщение уходит, но реклама
-    # в нём только числом.
     assert len(app.bot.sent) == 2, "обычный инцидент обязан был разбудить"
     text = app.bot.sent[1]
     assert "ещё.example" in text
     assert "track0.example" not in text, "трекеры не должны попадать в строки"
-    assert "12" in text, "но их число обязано быть видно"
-    after = int(await db.get_setting(hh.LAST_KEY))
-    assert after > before, "отметка должна двигаться и по тихим"
-    print("шум не будит, но цифры сходятся: ок")
+    print("реклама в журнал не попадает: ок")
+
+    print("\n=== накопленная реклама убирается при старте ===")
+    await db.execute(
+        "INSERT INTO filter_hits (happened_at, tunnel_ip, domain, category) "
+        "VALUES ($1,'10.13.13.5','old-ad.example','ads')", now)
+    await db._check_migrations()
+    n = await db.fetch_val("SELECT COUNT(*) FROM filter_hits WHERE category='ads'")
+    assert n == 0, "старая реклама осталась: %s" % n
+    print("старое убрано: ок")
 
     print("\n=== только реклама — сообщения нет вовсе ===")
     await db.execute("DELETE FROM settings WHERE key=$1", hh.AT_KEY)

@@ -379,6 +379,10 @@ class Database:
                 await self.execute("ALTER TABLE filter_hits ADD COLUMN ref TEXT;")
             await self.execute(
                 "CREATE INDEX IF NOT EXISTS idx_hits_ref ON filter_hits(ref);")
+            # Реклама больше не инцидент: узел режет её молча. Накопленное до
+            # этого — фон от телефонов, а не попытки людей; убираем.
+            await self.execute(
+                "DELETE FROM filter_hits WHERE category IN ('ads','tracking');")
 
 
             # --- ПОДДЕРЖКА ПРОЕКТА ---
@@ -754,7 +758,12 @@ class Database:
     async def add_filter_hit(self, happened_at, uuid_val, name, tunnel_ip,
                              public_ip, domain, category, ref=None, watch=False):
         """Повтор одного и того же события не плодит записей: узел отдаёт
-        историю целиком, и при повторном заборе мы просто ничего не добавляем."""
+        историю целиком, и при повторном заборе мы просто ничего не добавляем.
+
+        Рекламу не берём: в файле узла она лежит со старой версии, а заново
+        её туда никто не пишет."""
+        if category in ("ads", "tracking"):
+            return
         await self.execute(
             """INSERT INTO filter_hits
                    (happened_at, user_uuid, name, tunnel_ip, public_ip,
